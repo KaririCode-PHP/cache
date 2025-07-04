@@ -15,3 +15,42 @@ services:
     working_dir: /app
     ports:
       - "${KARIRI_PHP_PORT}:9003"
+    depends_on:
+      - redis
+      - memcached
+
+  redis:
+    container_name: kariricode-redis
+    image: redis:alpine
+    ports:
+      - "${KARIRI_REDIS_PORT}:6379"
+    volumes:
+      - redis-data:/data
+    command:
+      [
+        "redis-server",
+        "--appendonly",
+        "yes",
+        "--requirepass",
+        "${KARIRI_REDIS_PASSWORD}",
+      ]
+
+  memcached:
+    container_name: kariricode-memcached
+    image: bitnami/memcached:latest
+    ports:
+      - "${KARIRI_MEMCACHED_PORT}:11211"
+    environment:
+      - MEMCACHED_USERNAME=${KARIRI_MEMCACHED_USERNAME}
+      - MEMCACHED_PASSWORD=${KARIRI_MEMCACHED_PASSWORD}
+    volumes:
+      - memcached-data:/bitnami/memcached
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  redis-data:
+  memcached-data:

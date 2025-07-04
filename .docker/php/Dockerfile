@@ -2,10 +2,18 @@ ARG PHP_VERSION=8.3
 
 FROM php:${PHP_VERSION}-alpine
 
-RUN apk update && apk add --no-cache $PHPIZE_DEPS linux-headers \
-    && pecl install xdebug \
-    && docker-php-ext-enable xdebug
+# Install system dependencies
+RUN apk update && apk add --no-cache \
+    $PHPIZE_DEPS \
+    linux-headers \
+    zlib-dev \
+    libmemcached-dev \
+    cyrus-sasl-dev
 
+RUN pecl install xdebug redis memcached \
+    && docker-php-ext-enable xdebug redis memcached
+
+# Copy custom PHP configuration
 COPY .docker/php/kariricode-php.ini /usr/local/etc/php/conf.d/
 
 # Instalação do Composer
