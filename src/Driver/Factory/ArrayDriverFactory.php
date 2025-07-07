@@ -6,6 +6,7 @@ namespace KaririCode\Cache\Driver\Factory;
 
 use KaririCode\Cache\Contract\CacheDriver;
 use KaririCode\Cache\Contract\CacheDriverFactory;
+use KaririCode\Cache\Contract\DriverManager;
 use KaririCode\Cache\Driver\ArrayDriver;
 
 /**
@@ -13,25 +14,18 @@ use KaririCode\Cache\Driver\ArrayDriver;
  */
 final class ArrayDriverFactory implements CacheDriverFactory
 {
-    public function create(array $config): CacheDriver
+    public function createDriver(array $options, DriverManager $manager): CacheDriver
     {
         return new ArrayDriver();
     }
 
-    public function createDriver(array $config): CacheDriver
-    {
-        return $this->create($config);
-    }
-
     public function getSupportedOptions(): array
     {
-        // ArrayDriver typicaslly has no configurable options
         return [];
     }
 
     public function validateOptions(array $options): bool
     {
-        // No options to validate for ArrayDriver
         return true;
     }
 }

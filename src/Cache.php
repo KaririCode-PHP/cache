@@ -21,16 +21,6 @@ use Psr\Log\NullLogger;
 
 /**
  * Enhanced Cache implementation with advanced features and excellent DX.
- *
- * This cache implementation provides:
- * - Hybrid API (PSR-16 simple + PSR-6 advanced)
- * - Native stampede protection
- * - Intelligent tagging
- * - Atomic operations
- * - Event-driven invalidation
- * - Comprehensive metrics
- * - Sliding expiration
- * - Cache warming capabilities
  */
 final class Cache implements CacheContract
 {
@@ -54,23 +44,39 @@ final class Cache implements CacheContract
     }
 
     /**
-     * Primary cache method with built-in stampede protection.
-     *
-     * This method encapsulates the "get or create" pattern with automatic
-     * stampede protection. If the key exists, returns the value. If not,
-     * executes the callback to generate the value, stores it, and returns it.
-     *
-     * @param string $key The cache key
-     * @param callable $callback Function to generate the value if not cached
-     * @param \DateInterval|int|null $ttl Time to live
-     * @param array $tags Tags for invalidation grouping
-     *
-     * @throws InvalidArgumentException If key is invalid
-     * @throws CacheException If cache operation fails
-     *
-     * @return mixed The cached or generated value
+     * PSR-16 compatible get method.
      */
-    public function get(string $key, ?callable $callback = null, $ttl = null, array $tags = []): mixed
+    public function get(string $key, mixed $default = null): mixed
+    {
+        try {
+            $this->validateKey($key);
+
+            $item = $this->layeredCache->getItem($key);
+
+            if ($item->isHit()) {
+                $value = $this->serializer->unserialize($item->get());
+                $this->metricsCollector->recordHit($key, 0);
+
+                return $value;
+            }
+
+            $this->metricsCollector->recordMiss($key);
+
+            return $default;
+        } catch (\Exception $e) {
+            $this->logger->error('Cache get operation failed', [
+                'key' => $key,
+                'error' => $e->getMessage(),
+            ]);
+
+            return $default;
+        }
+    }
+
+    /**
+     * Enhanced get method with callback and stampede protection.
+     */
+    public function getWithCallback(string $key, ?callable $callback = null, $ttl = null, array $tags = []): mixed
     {
         $startTime = microtime(true);
 
@@ -99,16 +105,15 @@ final class Cache implements CacheContract
             // Use stampede protection to generate value
             return $this->stampedeProtector->get($key, function () use ($callback, $key, $ttl, $tags, $startTime) {
                 $value = $callback();
-                $this->setValue($key, $value, $ttl, $tags);
+                $this->setWithTags($key, $value, $ttl, $tags);
                 $this->metricsCollector->recordGeneration($key, microtime(true) - $startTime);
 
                 return $value;
             });
         } catch (\Exception $e) {
-            $this->logger->error('Cache get operation failed', [
+            $this->logger->error('Cache getWithCallback operation failed', [
                 'key' => $key,
                 'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
             ]);
 
             // If callback provided, try to execute it as fallback
@@ -116,37 +121,34 @@ final class Cache implements CacheContract
                 try {
                     return $callback();
                 } catch (\Exception $callbackException) {
-                    throw CacheException::operationFailed('get', $key, $callbackException);
+                    throw CacheException::operationFailed('getWithCallback', $key, $callbackException);
                 }
             }
 
-            throw CacheException::operationFailed('get', $key, $e);
+            throw CacheException::operationFailed('getWithCallback', $key, $e);
         }
     }
 
     /**
-     * Simple get method (PSR-16 style).
+     * Simple get method (alias for get).
      */
     public function getSimple(string $key, mixed $default = null): mixed
     {
-        try {
-            $value = $this->get($key);
+        return $this->get($key, $default);
+    }
 
-            return $value ?? $default;
-        } catch (CacheException $e) {
-            $this->logger->warning('Cache get failed, returning default', [
-                'key' => $key,
-                'error' => $e->getMessage(),
-            ]);
-
-            return $default;
-        }
+    /**
+     * PSR-16 compatible set method.
+     */
+    public function set(string $key, mixed $value, $ttl = null): bool
+    {
+        return $this->setWithTags($key, $value, $ttl, []);
     }
 
     /**
      * Set a value in cache with optional tagging.
      */
-    public function set(string $key, mixed $value, $ttl = null, array $tags = []): bool
+    public function setWithTags(string $key, mixed $value, $ttl = null, array $tags = []): bool
     {
         try {
             $this->validateKey($key);
@@ -162,6 +164,103 @@ final class Cache implements CacheContract
     }
 
     /**
+     * PSR-16 compatible delete method.
+     */
+    public function delete(string $key): bool
+    {
+        try {
+            $this->validateKey($key);
+
+            return $this->layeredCache->deleteItem($key);
+        } catch (\Exception $e) {
+            $this->logger->error('Cache delete operation failed', [
+                'key' => $key,
+                'error' => $e->getMessage(),
+            ]);
+            throw CacheException::operationFailed('delete', $key, $e);
+        }
+    }
+
+    /**
+     * PSR-16 compatible clear method.
+     */
+    public function clear(): bool
+    {
+        try {
+            $this->metricsCollector->recordClear();
+
+            return $this->layeredCache->clear();
+        } catch (\Exception $e) {
+            $this->logger->error('Cache clear operation failed', [
+                'error' => $e->getMessage(),
+            ]);
+            throw CacheException::operationFailed('clear', 'all', $e);
+        }
+    }
+
+    /**
+     * PSR-16 compatible getMultiple method.
+     */
+    public function getMultiple(iterable $keys, mixed $default = null): iterable
+    {
+        $result = [];
+        foreach ($keys as $key) {
+            $result[$key] = $this->get($key, $default);
+        }
+
+        return $result;
+    }
+
+    /**
+     * PSR-16 compatible setMultiple method.
+     */
+    public function setMultiple(iterable $values, $ttl = null): bool
+    {
+        $success = true;
+        foreach ($values as $key => $value) {
+            if (!$this->set($key, $value, $ttl)) {
+                $success = false;
+            }
+        }
+
+        return $success;
+    }
+
+    /**
+     * PSR-16 compatible deleteMultiple method.
+     */
+    public function deleteMultiple(iterable $keys): bool
+    {
+        $success = true;
+        foreach ($keys as $key) {
+            if (!$this->delete($key)) {
+                $success = false;
+            }
+        }
+
+        return $success;
+    }
+
+    /**
+     * PSR-16 compatible has method.
+     */
+    public function has(string $key): bool
+    {
+        try {
+            $this->validateKey($key);
+
+            return $this->layeredCache->hasItem($key);
+        } catch (\Exception $e) {
+            $this->logger->error('Cache has operation failed', [
+                'key' => $key,
+                'error' => $e->getMessage(),
+            ]);
+
+            return false;
+        }
+    }
+
+    /**
      * Atomic increment operation.
      */
     public function increment(string $key, int $step = 1, int $initialValue = 0, $ttl = null): int
@@ -171,8 +270,8 @@ final class Cache implements CacheContract
         try {
             return $this->layeredCache->increment($key, $step, $initialValue, $ttl);
         } catch (\Exception $e) {
-            // Fallback to non-atomic increment for backends that don't support it
-            $current = $this->getSimple($key, $initialValue);
+            // Fallback to non-atomic increment
+            $current = $this->get($key, $initialValue);
             if (!is_int($current)) {
                 $current = $initialValue;
             }
@@ -211,58 +310,6 @@ final class Cache implements CacheContract
     }
 
     /**
-     * Check if a key exists in cache.
-     */
-    public function has(string $key): bool
-    {
-        try {
-            $this->validateKey($key);
-
-            return $this->layeredCache->hasItem($key);
-        } catch (\Exception $e) {
-            $this->logger->error('Cache has operation failed', [
-                'key' => $key,
-                'error' => $e->getMessage(),
-            ]);
-
-            return false;
-        }
-    }
-
-    /**
-     * Delete a specific key.
-     */
-    public function delete(string $key): bool
-    {
-        try {
-            $this->validateKey($key);
-
-            return $this->layeredCache->deleteItem($key);
-        } catch (\Exception $e) {
-            $this->logger->error('Cache delete operation failed', [
-                'key' => $key,
-                'error' => $e->getMessage(),
-            ]);
-            throw CacheException::operationFailed('delete', $key, $e);
-        }
-    }
-
-    /**
-     * Delete multiple keys.
-     */
-    public function deleteMultiple(iterable $keys): bool
-    {
-        $success = true;
-        foreach ($keys as $key) {
-            if (!$this->delete($key)) {
-                $success = false;
-            }
-        }
-
-        return $success;
-    }
-
-    /**
      * Invalidate all cache items with specific tags.
      */
     public function invalidateTags(array $tags): bool
@@ -276,51 +323,6 @@ final class Cache implements CacheContract
             ]);
             throw CacheException::tagInvalidationFailed($tags, $e);
         }
-    }
-
-    /**
-     * Clear all cache items.
-     */
-    public function clear(): bool
-    {
-        try {
-            $this->metricsCollector->recordClear();
-
-            return $this->layeredCache->clear();
-        } catch (\Exception $e) {
-            $this->logger->error('Cache clear operation failed', [
-                'error' => $e->getMessage(),
-            ]);
-            throw CacheException::operationFailed('clear', 'all', $e);
-        }
-    }
-
-    /**
-     * Get multiple values at once.
-     */
-    public function getMultiple(iterable $keys, mixed $default = null): iterable
-    {
-        $result = [];
-        foreach ($keys as $key) {
-            $result[$key] = $this->getSimple($key, $default);
-        }
-
-        return $result;
-    }
-
-    /**
-     * Set multiple values at once.
-     */
-    public function setMultiple(iterable $values, $ttl = null): bool
-    {
-        $success = true;
-        foreach ($values as $key => $value) {
-            if (!$this->set($key, $value, $ttl)) {
-                $success = false;
-            }
-        }
-
-        return $success;
     }
 
     /**

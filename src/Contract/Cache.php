@@ -18,13 +18,22 @@ interface Cache extends PsrSimpleCacheInterface
 
     /**
      * Enhanced get method with callback and stampede protection.
+     *
+     * @param \DateInterval|int|null $ttl
      */
     public function getWithCallback(string $key, ?callable $callback = null, $ttl = null, array $tags = []): mixed;
 
     /**
-     * Simple get method (PSR-16 style).
+     * Simple get method (alias for get).
      */
     public function getSimple(string $key, mixed $default = null): mixed;
+
+    /**
+     * Set value with tags for grouped invalidation.
+     *
+     * @param \DateInterval|int|null $ttl
+     */
+    public function setWithTags(string $key, mixed $value, $ttl = null, array $tags = []): bool;
 
     /**
      * Atomic increment operation.
@@ -40,11 +49,6 @@ interface Cache extends PsrSimpleCacheInterface
      * Add value only if key doesn't exist.
      */
     public function add(string $key, mixed $value, $ttl = null): bool;
-
-    /**
-     * Set value with tags for grouped invalidation.
-     */
-    public function set(string $key, mixed $value, $ttl = null, array $tags = []): bool;
 
     /**
      * Invalidate all items with specified tags.

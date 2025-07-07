@@ -6,12 +6,13 @@ namespace KaririCode\Cache\Driver\Factory;
 
 use KaririCode\Cache\Contract\CacheDriver;
 use KaririCode\Cache\Contract\CacheDriverFactory;
+use KaririCode\Cache\Contract\DriverManager;
 use KaririCode\Cache\Exception\ConfigurationException;
 
 /**
  * Registry for cache driver factories with auto-discovery.
  */
-final class DriverFactoryRegistry implements CacheDriverFactory
+final class DriverFactoryRegistry
 {
     /** @var array<string, string> */
     private array $factories = [];
@@ -30,6 +31,10 @@ final class DriverFactoryRegistry implements CacheDriverFactory
             throw ConfigurationException::factoryNotFound($factoryClass);
         }
 
+        if (!is_subclass_of($factoryClass, CacheDriverFactory::class)) {
+            throw ConfigurationException::invalidFactory($name, $factoryClass, CacheDriverFactory::class);
+        }
+
         $this->factories[$name] = $factoryClass;
     }
 
@@ -43,9 +48,28 @@ final class DriverFactoryRegistry implements CacheDriverFactory
         }
 
         $factoryClass = $this->factories[$name];
+        /** @var CacheDriverFactory $factory */
         $factory = new $factoryClass();
 
-        return $factory->create($config);
+        // Create a simple DriverManager for compatibility
+        $manager = new class implements DriverManager {
+            public function getSerializer(): ?\KaririCode\Cache\Contract\Serializer
+            {
+                return null;
+            }
+
+            public function getTransactionManager(): ?\KaririCode\Cache\Contract\CacheTransactionManager
+            {
+                return null;
+            }
+
+            public function getDriverOptions(string $driver): array
+            {
+                return [];
+            }
+        };
+
+        return $factory->createDriver($config, $manager);
     }
 
     /**

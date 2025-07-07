@@ -6,6 +6,7 @@ namespace KaririCode\Cache\Driver\Factory;
 
 use KaririCode\Cache\Contract\CacheDriver;
 use KaririCode\Cache\Contract\CacheDriverFactory;
+use KaririCode\Cache\Contract\DriverManager;
 use KaririCode\Cache\Driver\ApcuDriver;
 use KaririCode\Cache\Exception\ConfigurationException;
 
@@ -14,30 +15,27 @@ use KaririCode\Cache\Exception\ConfigurationException;
  */
 final class ApcuDriverFactory implements CacheDriverFactory
 {
-    public function create(array $config): CacheDriver
+    public function createDriver(array $options, DriverManager $manager): CacheDriver
     {
         if (!extension_loaded('apcu')) {
             throw ConfigurationException::invalidConfiguration('apcu', 'APCu extension is not loaded');
         }
 
-        if (!apcu_enabled()) {
+        if (!\apcu_enabled()) {
             throw ConfigurationException::invalidConfiguration('apcu', 'APCu is not enabled');
         }
 
-        return new ApcuDriver($config['key_prefix'] ?? 'cache:');
+        return new ApcuDriver($options['key_prefix'] ?? 'cache:');
     }
 
     public function getSupportedOptions(): array
     {
-        return [
-            'host', 'port', 'password', 'database', 'timeout',
-            'persistent', 'compression', 'key_prefix',
-        ];
+        return ['key_prefix'];
     }
 
     public function validateOptions(array $options): bool
     {
-        // validação das opções
+        // APCu has minimal configuration requirements
         return true;
     }
 }

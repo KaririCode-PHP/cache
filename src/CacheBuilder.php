@@ -4,12 +4,12 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache;
 
+use KaririCode\Cache\Config\DriverManager;
 use KaririCode\Cache\Contract\Cache;
 use KaririCode\Cache\Contract\LayeredCache;
 use KaririCode\Cache\Contract\MetricsCollector as MetricsCollectorContract;
 use KaririCode\Cache\Contract\Serializer;
 use KaririCode\Cache\Contract\StampedeProtector as StampedeProtectorContract;
-use KaririCode\Cache\Driver\Factory\DriverFactoryRegistry;
 use KaririCode\Cache\Exception\ConfigurationException;
 use KaririCode\Cache\Metrics\MetricsCollector;
 use KaririCode\Cache\Protection\StampedeProtector;
@@ -28,11 +28,11 @@ final class CacheBuilder
     private ?MetricsCollectorContract $metricsCollector = null;
     private ?LoggerInterface $logger = null;
     private array $config = [];
-    private DriverFactoryRegistry $factoryRegistry;
+    private DriverManager $driverManager;
 
     public function __construct()
     {
-        $this->factoryRegistry = new DriverFactoryRegistry();
+        $this->driverManager = new DriverManager();
         $this->config = $this->getDefaultConfig();
     }
 
@@ -243,7 +243,7 @@ final class CacheBuilder
         usort($this->layers, fn ($a, $b) => $a['priority'] <=> $b['priority']);
 
         foreach ($this->layers as $layerConfig) {
-            $driver = $this->factoryRegistry->createDriver(
+            $driver = $this->driverManager->createDriver(
                 $layerConfig['driver'],
                 $layerConfig['config']
             );
