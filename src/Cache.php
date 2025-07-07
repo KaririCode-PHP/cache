@@ -8,9 +8,9 @@ use KaririCode\Cache\Contract\Cache as CacheContract;
 use KaririCode\Cache\Contract\CacheItem;
 use KaririCode\Cache\Contract\CacheItemPool;
 use KaririCode\Cache\Contract\LayeredCache as LayeredCacheContract;
-use KaririCode\Cache\Contract\MetricsCollector;
+use KaririCode\Cache\Contract\MetricsCollector as MetricsCollectorContract;
 use KaririCode\Cache\Contract\Serializer;
-use KaririCode\Cache\Contract\StampedeProtector;
+use KaririCode\Cache\Contract\StampedeProtector as StampedeProtectorContract;
 use KaririCode\Cache\Exception\CacheException;
 use KaririCode\Cache\Exception\InvalidArgumentException;
 use KaririCode\Cache\Metrics\MetricsCollector;
@@ -37,20 +37,13 @@ final class Cache implements CacheContract
     private const DEFAULT_TTL = 3600;
     private const KEY_PATTERN = '/^[a-zA-Z0-9_.:-]+$/';
 
-    private LayeredCacheContract $layeredCache;
-    private Serializer $serializer;
-    private StampedeProtector $stampedeProtector;
-    private MetricsCollector $metricsCollector;
-    private LoggerInterface $logger;
-    private array $config;
-
     public function __construct(
-        LayeredCacheContract $layeredCache,
-        ?Serializer $serializer = null,
-        ?StampedeProtector $stampedeProtector = null,
-        ?MetricsCollector $metricsCollector = null,
-        ?LoggerInterface $logger = null,
-        array $config = []
+        private LayeredCacheContract $layeredCache,
+        private ?Serializer $serializer = null,
+        private ?StampedeProtectorContract $stampedeProtector = null,
+        private ?MetricsCollectorContract $metricsCollector = null,
+        private ?LoggerInterface $logger = null,
+        private array $config = []
     ) {
         $this->layeredCache = $layeredCache;
         $this->serializer = $serializer ?? new NativeSerializer();

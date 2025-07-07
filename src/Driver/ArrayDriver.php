@@ -4,13 +4,12 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Driver;
 
-use KaririCode\Cache\Contract\CacheDriverInterface;
-use KaririCode\Cache\Contract\CacheDriverInterface;
+use KaririCode\Cache\Contract\CacheDriver;
 
 /**
  * In-memory array driver for testing and request-scoped caching.
  */
-final class ArrayDriver implements CacheDriverInterface
+final class ArrayDriver implements CacheDriver
 {
     private array $data = [];
     private array $expirations = [];

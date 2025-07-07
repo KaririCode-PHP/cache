@@ -43,18 +43,20 @@ final class CacheItem implements CacheItemContract
     public function set(mixed $value): static
     {
         $this->value = $value;
+
         return $this;
     }
 
     public function expiresAt(?\DateTimeInterface $expiration): static
     {
         $this->expiration = $expiration;
+
         return $this;
     }
 
     public function expiresAfter(\DateInterval|int|null $time): static
     {
-        if ($time === null) {
+        if (null === $time) {
             $this->expiration = null;
         } elseif ($time instanceof \DateInterval) {
             $this->expiration = (new \DateTime())->add($time);
@@ -73,6 +75,7 @@ final class CacheItem implements CacheItemContract
     public function tag(array $tags): static
     {
         $this->tags = array_merge($this->tags, $tags);
+
         return $this;
     }
 
@@ -84,6 +87,7 @@ final class CacheItem implements CacheItemContract
     public function subscribeTo(array $topics): static
     {
         $this->topics = array_merge($this->topics, $topics);
+
         return $this;
     }
 

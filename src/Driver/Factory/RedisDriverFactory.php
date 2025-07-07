@@ -4,16 +4,17 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Driver\Factory;
 
-use KaririCode\Cache\Contract\CacheDriverInterface;
+use KaririCode\Cache\Contract\CacheDriver;
+use KaririCode\Cache\Contract\CacheDriverFactory;
 use KaririCode\Cache\Driver\RedisDriver;
 use KaririCode\Cache\Exception\ConfigurationException;
 
 /**
  * Redis driver factory with connection pooling and optimization.
  */
-final class RedisDriverFactory
+final class RedisDriverFactory implements CacheDriverFactory
 {
-    public function create(array $config): CacheDriverInterface
+    public function create(array $config): CacheDriver
     {
         $redis = new \Redis();
 

@@ -4,12 +4,12 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Driver;
 
-use KaririCode\Cache\Contract\CacheDriverInterface;
+use KaririCode\Cache\Contract\CacheDriver;
 
 /**
  * Optimized Memcached driver with simulated tagging.
  */
-final class MemcachedDriver implements CacheDriverInterface
+final class MemcachedDriver implements CacheDriver
 {
     private \Memcached $memcached;
     private string $keyPrefix;

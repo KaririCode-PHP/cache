@@ -4,13 +4,13 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Driver;
 
-use KaririCode\Cache\Contract\CacheDriverInterface;
+use KaririCode\Cache\Contract\CacheDriver;
 use KaririCode\Cache\Exception\CacheException;
 
 /**
  * Filesystem driver with automatic cleanup and size management.
  */
-final class FilesystemDriver implements CacheDriverInterface
+final class FilesystemDriver implements CacheDriver
 {
     private string $directory;
     private string $keyPrefix;

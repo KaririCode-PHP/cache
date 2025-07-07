@@ -4,12 +4,12 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Driver;
 
-use KaririCode\Cache\Contract\CacheDriverInterface;
+use KaririCode\Cache\Contract\CacheDriver;
 
 /**
  * High-performance APCu driver with LRU eviction simulation.
  */
-final class ApcuDriver implements CacheDriverInterface
+final class ApcuDriver implements CacheDriver
 {
     private string $keyPrefix;
     private array $tagIndex = [];

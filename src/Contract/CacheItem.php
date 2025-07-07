@@ -4,10 +4,12 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Contract;
 
+use Psr\Cache\CacheItemInterface;
+
 /**
  * Enhanced cache item interface with tagging and topic subscription.
  */
-interface CacheItem extends \Psr\Cache\CacheItemInterface
+interface CacheItem extends CacheItemInterface
 {
     /**
      * Add tags to this cache item.

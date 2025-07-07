@@ -4,13 +4,14 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Driver\Factory;
 
-use KaririCode\Cache\Contract\CacheDriverInterface;
+use KaririCode\Cache\Contract\CacheDriver;
+use KaririCode\Cache\Contract\CacheDriverFactory;
 use KaririCode\Cache\Exception\ConfigurationException;
 
 /**
  * Registry for cache driver factories with auto-discovery.
  */
-final class DriverFactoryRegistry
+final class DriverFactoryRegistry implements CacheDriverFactory
 {
     /** @var array<string, string> */
     private array $factories = [];
@@ -35,7 +36,7 @@ final class DriverFactoryRegistry
     /**
      * Create a driver instance.
      */
-    public function createDriver(string $name, array $config = []): CacheDriverInterface
+    public function createDriver(string $name, array $config = []): CacheDriver
     {
         if (!isset($this->factories[$name])) {
             throw ConfigurationException::missingDriver($name);

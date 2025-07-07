@@ -4,10 +4,12 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Contract;
 
+use Psr\Cache\CacheItemPoolInterface;
+
 /**
  * Enhanced cache pool interface with advanced operations.
  */
-interface CacheItemPool extends PsrCacheItemPoolInterface
+interface CacheItemPool extends CacheItemPoolInterface
 {
     /**
      * Atomic increment operation.

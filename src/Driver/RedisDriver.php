@@ -1,16 +1,15 @@
 <?php
-s
-declare(strict_types=1);
 
+declare(strict_types=1);
 
 namespace KaririCode\Cache\Driver;
 
-use KaririCode\Cache\Contract\CacheDriverInterface;
+use KaririCode\Cache\Contract\CacheDriver;
 
 /**
  * Optimized Redis driver with native tagging and atomic operations.
  */
-final class RedisDriver implements CacheDriverInterface
+final class RedisDriver implements CacheDriver
 {
     private \Redis $redis;
     private string $keyPrefix;
@@ -29,7 +28,7 @@ final class RedisDriver implements CacheDriverInterface
     {
         $value = $this->redis->get($this->keyPrefix . $key);
 
-        if ($value === false) {
+        if (false === $value) {
             return null;
         }
 
@@ -43,6 +42,7 @@ final class RedisDriver implements CacheDriverInterface
 
         if ($expiration) {
             $ttl = $expiration->getTimestamp() - time();
+
             return $this->redis->setex($fullKey, max(1, $ttl), $serialized);
         }
 
@@ -104,7 +104,7 @@ final class RedisDriver implements CacheDriverInterface
         $result = $this->redis->incrBy($fullKey, $step);
 
         // Set TTL if specified and key was just created
-        if ($ttl && $this->redis->ttl($fullKey) === -1) {
+        if ($ttl && -1 === $this->redis->ttl($fullKey)) {
             $this->redis->expire($fullKey, $ttl);
         }
 
@@ -220,7 +220,7 @@ final class RedisDriver implements CacheDriverInterface
             $this->redis->sRem($tagKey, $fullKey);
 
             // If tag set is empty, remove it
-            if ($this->redis->sCard($tagKey) === 0) {
+            if (0 === $this->redis->sCard($tagKey)) {
                 $this->redis->del($tagKey);
             }
         }

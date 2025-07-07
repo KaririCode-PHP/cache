@@ -41,4 +41,15 @@ final class ConfigurationException extends CacheException
             ['factory_class' => $factoryClass]
         );
     }
+
+    public static function invalidFactory(string $name, string $factoryClass, string $expectedInterface): static
+    {
+        return static::createException(
+            static::ERROR_CODE_BASE + 23,
+            'INVALID_FACTORY',
+            "Cache factory '{$name}' must implement '{$expectedInterface}', got '{$factoryClass}'",
+            null,
+            ['name' => $name, 'factory_class' => $factoryClass, 'expected_interface' => $expectedInterface]
+        );
+    }
 }

@@ -7,10 +7,11 @@ namespace KaririCode\Cache\Config;
 use KaririCode\Cache\Contract\CacheDriver;
 use KaririCode\Cache\Contract\CacheDriverFactory;
 use KaririCode\Cache\Contract\CacheTransactionManager;
+use KaririCode\Cache\Contract\DriverManager as DriverManagerContract;
 use KaririCode\Cache\Contract\Serializer;
 use KaririCode\Cache\Exception\ConfigurationException;
 
-class DriverManager
+class DriverManager implements DriverManagerContract
 {
     /** @var array<string, class-string<CacheDriverFactory>> */
     private array $factories = [];
@@ -22,7 +23,7 @@ class DriverManager
     public function addFactory(string $driver, string $factoryClass): void
     {
         if (!is_subclass_of($factoryClass, CacheDriverFactory::class)) {
-            throw new ConfigurationException("Invalid factory class for driver: $driver");
+            throw ConfigurationException::invalidFactory($driver, $factoryClass, CacheDriverFactory::class);
         }
         $this->factories[$driver] = $factoryClass;
     }

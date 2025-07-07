@@ -17,6 +17,17 @@ interface MetricsCollector
 
     public function recordClear(): void;
 
+    /**
+     * @return array{
+     *     hits: int,
+     *     misses: int,
+     *     hit_rate: float,
+     *     total_operations: int,
+     *     average_hit_time: float,
+     *     average_generation_time: float,
+     *     uptime: float
+     * }
+     */
     public function getMetrics(): array;
 
     public function reset(): void;

@@ -4,16 +4,17 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Driver\Factory;
 
-use KaririCode\Cache\Contract\CacheDriverInterface;
+use KaririCode\Cache\Contract\CacheDriver;
+use KaririCode\Cache\Contract\CacheDriverFactory;
 use KaririCode\Cache\Driver\MemcachedDriver;
 use KaririCode\Cache\Exception\ConfigurationException;
 
 /**
  * Memcached driver factory with connection pooling.
  */
-final class MemcachedDriverFactory
+final class MemcachedDriverFactory implements CacheDriverFactory
 {
-    public function create(array $config): CacheDriverInterface
+    public function create(array $config): CacheDriver
     {
         if (!extension_loaded('memcached')) {
             throw ConfigurationException::invalidConfiguration('memcached', 'Memcached extension is not loaded');

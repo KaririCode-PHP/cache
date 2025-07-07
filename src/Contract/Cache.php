@@ -12,9 +12,19 @@ use Psr\SimpleCache\CacheInterface as PsrSimpleCacheInterface;
 interface Cache extends PsrSimpleCacheInterface
 {
     /**
+     * PSR-16 get method.
+     */
+    public function get(string $key, mixed $default = null): mixed;
+
+    /**
      * Enhanced get method with callback and stampede protection.
      */
-    public function get(string $key, ?callable $callback = null, $ttl = null, array $tags = []): mixed;
+    public function getWithCallback(string $key, ?callable $callback = null, $ttl = null, array $tags = []): mixed;
+
+    /**
+     * Simple get method (PSR-16 style).
+     */
+    public function getSimple(string $key, mixed $default = null): mixed;
 
     /**
      * Atomic increment operation.
@@ -49,7 +59,7 @@ interface Cache extends PsrSimpleCacheInterface
     /**
      * Access to advanced PSR-6 compatible API.
      */
-    public function advanced(): CacheItemPoolInterface;
+    public function advanced(): CacheItemPool;
 
     /**
      * Warm cache with predefined data.
