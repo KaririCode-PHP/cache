@@ -49,44 +49,98 @@ final class RedisDriver implements CacheDriver
         return $this->redis->set($fullKey, $serialized);
     }
 
+    public function getMultiple(array $keys): array
+    {
+        if (empty($keys)) {
+            return [];
+        }
+        $prefixedKeys = array_map(fn ($k) => $this->keyPrefix . $k, $keys);
+        $rawValues = $this->redis->mget($prefixedKeys);
+
+        $results = [];
+        foreach ($keys as $index => $key) {
+            // Redis mget retorna `false` para chaves não encontradas no array de resultados
+            if (false !== $rawValues[$index]) {
+                $results[$key] = unserialize($rawValues[$index]);
+            } else {
+                $results[$key] = null;
+            }
+        }
+
+        return $results;
+    }
+
+    public function setMultiple(array $values, ?\DateTimeInterface $expiration = null): bool
+    {
+        $pipe = $this->redis->multi(\Redis::PIPELINE);
+
+        $ttl = $expiration ? ($expiration->getTimestamp() - time()) : 0;
+        $ttl = max(1, $ttl);
+
+        foreach ($values as $key => $value) {
+            $fullKey = $this->keyPrefix . $key;
+            $serializedValue = serialize($value);
+
+            if ($ttl > 0) {
+                $pipe->setex($fullKey, $ttl, $serializedValue);
+            } else {
+                $pipe->set($fullKey, $serializedValue);
+            }
+        }
+
+        $results = $pipe->exec();
+
+        return !in_array(false, $results, true);
+    }
+
+    public function deleteMultiple(array $keys): bool
+    {
+        if (empty($keys)) {
+            return true;
+        }
+        $prefixedKeys = array_map(fn ($k) => $this->keyPrefix . $k, $keys);
+
+        // Remove from all tags before deleting keys
+        foreach ($prefixedKeys as $fullKey) {
+            $this->removeFromAllTags($fullKey);
+        }
+
+        return $this->redis->del($prefixedKeys) > 0;
+    }
+
+    public function delete(string $key): bool
+    {
+        // Remove from all tags before deleting the key
+        return $this->deleteMultiple([$key]);
+    }
+
     public function has(string $key): bool
     {
         return $this->redis->exists($this->keyPrefix . $key) > 0;
     }
 
-    public function delete(string $key): bool
-    {
-        $fullKey = $this->keyPrefix . $key;
-
-        // Remove from any tag sets
-        $this->removeFromAllTags($fullKey);
-
-        return $this->redis->del($fullKey) > 0;
-    }
-
     public function clear(): bool
     {
-        // Get all cache keys
-        $pattern = $this->keyPrefix . '*';
-        $keys = $this->redis->keys($pattern);
-
-        if (empty($keys)) {
-            return true;
-        }
-
-        // Delete in batches to avoid memory issues
-        $batchSize = 1000;
-        $batches = array_chunk($keys, $batchSize);
-
-        foreach ($batches as $batch) {
-            $this->redis->del(...$batch);
-        }
-
-        // Clear tag and topic data
-        $this->redis->del(...$this->redis->keys($this->tagPrefix . '*'));
-        $this->redis->del(...$this->redis->keys($this->topicPrefix . '*'));
+        $this->scanAndDelete($this->keyPrefix . '*');
+        $this->scanAndDelete($this->tagPrefix . '*');
+        $this->scanAndDelete($this->topicPrefix . '*');
 
         return true;
+    }
+
+    /**
+     * Helper method to scan and delete keys in batches without blocking Redis.
+     */
+    private function scanAndDelete(string $pattern): void
+    {
+        $iterator = null;
+        // Use SCAN to iterate over keys matching the pattern
+        while ($keys = $this->redis->scan($iterator, $pattern, 500)) {
+            if (!empty($keys)) {
+                // Delete keys in batches
+                $this->redis->del($keys);
+            }
+        }
     }
 
     public function increment(string $key, int $step = 1, int $initialValue = 0, $ttl = null): int

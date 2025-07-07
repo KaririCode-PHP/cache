@@ -43,6 +43,35 @@ final class ArrayDriver implements CacheDriver
         return isset($this->data[$key]);
     }
 
+    public function getMultiple(array $keys): array
+    {
+        $this->cleanupExpired();
+        $results = [];
+        foreach ($keys as $key) {
+            $results[$key] = $this->data[$key] ?? null;
+        }
+
+        return $results;
+    }
+
+    public function setMultiple(array $values, ?\DateTimeInterface $expiration = null): bool
+    {
+        foreach ($values as $key => $value) {
+            $this->set($key, $value, $expiration);
+        }
+
+        return true;
+    }
+
+    public function deleteMultiple(array $keys): bool
+    {
+        foreach ($keys as $key) {
+            $this->delete($key);
+        }
+
+        return true;
+    }
+
     public function delete(string $key): bool
     {
         unset($this->data[$key], $this->expirations[$key]);

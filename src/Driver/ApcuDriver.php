@@ -7,25 +7,31 @@ namespace KaririCode\Cache\Driver;
 use KaririCode\Cache\Contract\CacheDriver;
 
 /**
- * High-performance APCu driver with LRU eviction simulation.
+ * High-performance APCu driver with cross-process tagging and batch operations.
  */
 final class ApcuDriver implements CacheDriver
 {
     private string $keyPrefix;
-    private array $tagIndex = [];
 
-    public function __construct(string $keyPrefix = 'cache:')
+    private const TAG_INDEX_PREFIX = 'tag_index::';
+    private const TOPIC_INDEX_PREFIX = 'topic_index::';
+
+    /**
+     * @throws \RuntimeException if the APCu extension is not loaded or enabled
+     */
+    public function __construct(string $keyPrefix = 'cache::')
     {
-        $this->keyPrefix = $keyPrefix;
-
         if (!extension_loaded('apcu')) {
-            throw new \RuntimeException('APCu extension is not loaded');
+            throw new \RuntimeException('APCu extension is not loaded.');
         }
+        if (!apcu_enabled()) {
+            throw new \RuntimeException('APCu is not enabled in php.ini.');
+        }
+        $this->keyPrefix = $keyPrefix;
     }
 
     public function get(string $key): mixed
     {
-        $success = false;
         $value = apcu_fetch($this->keyPrefix . $key, $success);
 
         return $success ? $value : null;
@@ -33,9 +39,9 @@ final class ApcuDriver implements CacheDriver
 
     public function set(string $key, mixed $value, ?\DateTimeInterface $expiration = null): bool
     {
-        $ttl = $expiration ? $expiration->getTimestamp() - time() : 0;
+        $ttl = $expiration ? ($expiration->getTimestamp() - time()) : 0;
 
-        return apcu_store($this->keyPrefix . $key, $value, $ttl);
+        return apcu_store($this->keyPrefix . $key, $value, max(0, $ttl));
     }
 
     public function has(string $key): bool
@@ -45,25 +51,62 @@ final class ApcuDriver implements CacheDriver
 
     public function delete(string $key): bool
     {
-        $fullKey = $this->keyPrefix . $key;
-        $this->removeFromTagIndex($fullKey);
+        return $this->deleteMultiple([$key]);
+    }
 
-        return apcu_delete($fullKey);
+    public function getMultiple(array $keys): array
+    {
+        if (empty($keys)) {
+            return [];
+        }
+
+        $prefixedKeys = array_map(fn ($k) => $this->keyPrefix . $k, $keys);
+        $fetchedValues = apcu_fetch($prefixedKeys) ?: [];
+
+        $results = [];
+        foreach ($keys as $key) {
+            $prefixedKey = $this->keyPrefix . $key;
+            $results[$key] = $fetchedValues[$prefixedKey] ?? null;
+        }
+
+        return $results;
+    }
+
+    public function setMultiple(array $values, ?\DateTimeInterface $expiration = null): bool
+    {
+        $prefixedValues = [];
+        foreach ($values as $key => $value) {
+            $prefixedValues[$this->keyPrefix . $key] = $value;
+        }
+
+        $ttl = $expiration ? ($expiration->getTimestamp() - time()) : 0;
+        $failedKeys = apcu_store($prefixedValues, null, max(0, $ttl));
+
+        return empty($failedKeys);
+    }
+
+    public function deleteMultiple(array $keys): bool
+    {
+        if (empty($keys)) {
+            return true;
+        }
+        $prefixedKeys = array_map(fn ($k) => $this->keyPrefix . $k, $keys);
+
+        return empty(apcu_delete($prefixedKeys));
     }
 
     public function clear(): bool
     {
-        // Clear only our prefixed keys
-        $info = apcu_cache_info();
-        $pattern = '/^' . preg_quote($this->keyPrefix, '/') . '/';
+        // Use an iterator to safely clear only keys with our prefixes
+        $prefixes = [
+            $this->keyPrefix,
+            self::TAG_INDEX_PREFIX,
+            self::TOPIC_INDEX_PREFIX,
+        ];
+        $pattern = '/^(' . implode('|', array_map('preg_quote', $prefixes)) . ')/';
+        $iterator = new \APCUIterator($pattern, \APC_ITER_KEY);
 
-        foreach ($info['cache_list'] as $entry) {
-            if (preg_match($pattern, $entry['info'])) {
-                apcu_delete($entry['info']);
-            }
-        }
-
-        $this->tagIndex = [];
+        apcu_delete($iterator);
 
         return true;
     }
@@ -71,116 +114,88 @@ final class ApcuDriver implements CacheDriver
     public function increment(string $key, int $step = 1, int $initialValue = 0, $ttl = null): int
     {
         $fullKey = $this->keyPrefix . $key;
+        $ttlValue = $ttl ?? 0;
 
-        // Try atomic increment
-        $result = apcu_inc($fullKey, $step);
-
-        if (false === $result) {
-            // Key doesn't exist, create it
-            apcu_store($fullKey, $initialValue, $ttl ?: 0);
-            $result = apcu_inc($fullKey, $step);
+        if (!apcu_exists($fullKey)) {
+            apcu_store($fullKey, $initialValue, $ttlValue);
         }
 
-        return $result ?: $initialValue + $step;
+        return apcu_inc($fullKey, $step);
     }
 
     public function add(string $key, mixed $value, $ttl = null): bool
     {
-        $fullKey = $this->keyPrefix . $key;
-
-        if (apcu_exists($fullKey)) {
-            return false;
-        }
-
         $expiration = is_int($ttl) ? $ttl : ($ttl ? $ttl->getTimestamp() - time() : 0);
 
-        return apcu_store($fullKey, $value, $expiration);
+        return apcu_add($this->keyPrefix . $key, $value, max(0, $expiration));
     }
 
     public function invalidateTags(array $tags): bool
     {
-        $keysToDelete = [];
-
-        foreach ($tags as $tag) {
-            if (isset($this->tagIndex[$tag])) {
-                $keysToDelete = array_merge($keysToDelete, $this->tagIndex[$tag]);
-                unset($this->tagIndex[$tag]);
-            }
-        }
-
-        if (!empty($keysToDelete)) {
-            foreach (array_unique($keysToDelete) as $key) {
-                apcu_delete($key);
-                $this->removeFromTagIndex($key);
-            }
-        }
-
-        return true;
+        return $this->invalidateByPrefix(self::TAG_INDEX_PREFIX, $tags);
     }
 
     public function subscribeTo(string $key, array $topics): void
     {
-        // Store topic subscription in shared memory
-        $fullKey = $this->keyPrefix . $key;
-
-        foreach ($topics as $topic) {
-            $topicKey = 'topic:' . $topic;
-            $subscribers = apcu_fetch($topicKey) ?: [];
-            $subscribers[] = $fullKey;
-            apcu_store($topicKey, array_unique($subscribers));
-        }
+        $this->updateIndex(self::TOPIC_INDEX_PREFIX, $topics, $this->keyPrefix . $key);
     }
 
     public function invalidateTopics(array $topics): bool
     {
-        $keysToDelete = [];
-
-        foreach ($topics as $topic) {
-            $topicKey = 'topic:' . $topic;
-            $subscribers = apcu_fetch($topicKey);
-
-            if ($subscribers) {
-                $keysToDelete = array_merge($keysToDelete, $subscribers);
-                apcu_delete($topicKey);
-            }
-        }
-
-        if (!empty($keysToDelete)) {
-            foreach (array_unique($keysToDelete) as $key) {
-                apcu_delete($key);
-            }
-        }
-
-        return true;
+        return $this->invalidateByPrefix(self::TOPIC_INDEX_PREFIX, $topics);
     }
 
     /**
-     * Add key to tag index (internal method).
+     * Associates an item key with a set of tags.
+     * This method would typically be called by a higher-level cache pool.
      */
     public function tagItem(string $key, array $tags): void
     {
-        $fullKey = $this->keyPrefix . $key;
+        $this->updateIndex(self::TAG_INDEX_PREFIX, $tags, $this->keyPrefix . $key);
+    }
 
-        foreach ($tags as $tag) {
-            if (!isset($this->tagIndex[$tag])) {
-                $this->tagIndex[$tag] = [];
+    private function updateIndex(string $indexPrefix, array $indexNames, string $fullKey): void
+    {
+        foreach ($indexNames as $name) {
+            $indexKey = $indexPrefix . $name;
+            // Use a lock to prevent race conditions on index updates
+            if (apcu_add($indexKey . '.lock', 1, 5)) {
+                $keysInIndex = apcu_fetch($indexKey) ?: [];
+                if (!in_array($fullKey, $keysInIndex)) {
+                    $keysInIndex[] = $fullKey;
+                    apcu_store($indexKey, $keysInIndex);
+                }
+                apcu_delete($indexKey . '.lock');
             }
-            $this->tagIndex[$tag][] = $fullKey;
         }
     }
 
-    private function removeFromTagIndex(string $fullKey): void
+    private function invalidateByPrefix(string $indexPrefix, array $names): bool
     {
-        foreach ($this->tagIndex as $tag => $keys) {
-            $index = array_search($fullKey, $keys);
-            if (false !== $index) {
-                unset($this->tagIndex[$tag][$index]);
-                $this->tagIndex[$tag] = array_values($this->tagIndex[$tag]);
+        if (empty($names)) {
+            return true;
+        }
 
-                if (empty($this->tagIndex[$tag])) {
-                    unset($this->tagIndex[$tag]);
-                }
+        $indexKeys = array_map(fn ($name) => $indexPrefix . $name, $names);
+        $keysFromIndexes = apcu_fetch($indexKeys);
+
+        if (empty($keysFromIndexes)) {
+            return true;
+        }
+
+        $itemKeysToDelete = [];
+        foreach ($keysFromIndexes as $keys) {
+            if (is_array($keys)) {
+                $itemKeysToDelete = array_merge($itemKeysToDelete, $keys);
             }
         }
+
+        if (!empty($itemKeysToDelete)) {
+            apcu_delete(array_unique($itemKeysToDelete));
+        }
+
+        apcu_delete($indexKeys);
+
+        return true;
     }
 }

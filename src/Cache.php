@@ -22,12 +22,9 @@ use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
 
 /**
- * Enhanced Cache implementation with integrated event system and centralized validation.
- *
- * This refactored version properly integrates:
- * - CacheEventListener for comprehensive event tracking
- * - CacheKeyValidator for centralized key validation
- * - Improved error handling and logging
+ * Main Cache class implementing PSR-16 and advanced features with event dispatching.
+ * This class provides a unified interface for caching operations, including
+ * automatic key sanitization, sliding expiration, and metrics collection.
  */
 final class Cache implements CacheContract
 {
@@ -66,7 +63,6 @@ final class Cache implements CacheContract
                 $value = $this->serializer->unserialize($item->get());
                 $this->metricsCollector->recordHit($key, 0);
 
-                // Dispatch cache hit event
                 $this->eventListener?->onCacheHit($key, $value);
 
                 $this->handleSlidingExpiration($key, $item, null);
@@ -75,8 +71,6 @@ final class Cache implements CacheContract
             }
 
             $this->metricsCollector->recordMiss($key);
-
-            // Dispatch cache miss event
             $this->eventListener?->onCacheMiss($key);
 
             return $default;
@@ -100,14 +94,12 @@ final class Cache implements CacheContract
         try {
             $this->validateKey($key);
 
-            // Try to get from cache first
             $item = $this->layeredCache->getItem($key);
 
             if ($item->isHit()) {
                 $value = $this->serializer->unserialize($item->get());
                 $this->metricsCollector->recordHit($key, microtime(true) - $startTime);
 
-                // Dispatch cache hit event
                 $this->eventListener?->onCacheHit($key, $value);
 
                 $this->handleSlidingExpiration($key, $item, $ttl);
@@ -115,16 +107,13 @@ final class Cache implements CacheContract
                 return $value;
             }
 
-            // Cache miss - record metrics and dispatch event
             $this->metricsCollector->recordMiss($key);
             $this->eventListener?->onCacheMiss($key);
 
-            // If no callback provided, return null
             if (null === $callback) {
                 return null;
             }
 
-            // Use stampede protection to generate value
             return $this->stampedeProtector->get($key, function () use ($callback, $key, $ttl, $tags, $startTime) {
                 $value = $callback();
                 $this->setWithTags($key, $value, $ttl, $tags);
@@ -138,7 +127,6 @@ final class Cache implements CacheContract
                 'error' => $e->getMessage(),
             ]);
 
-            // If callback provided, try to execute it as fallback
             if (null !== $callback) {
                 try {
                     return $callback();
@@ -159,7 +147,6 @@ final class Cache implements CacheContract
         $result = $this->setWithTags($key, $value, $ttl, []);
 
         if ($result) {
-            // Dispatch cache set event
             $this->eventListener?->onCacheSet($key, $value);
         }
 
@@ -173,11 +160,9 @@ final class Cache implements CacheContract
     {
         try {
             $this->validateKey($key);
-
             $result = $this->setValue($key, $value, $ttl, $tags);
 
             if ($result) {
-                // Dispatch cache set event
                 $this->eventListener?->onCacheSet($key, $value);
             }
 
@@ -198,11 +183,9 @@ final class Cache implements CacheContract
     {
         try {
             $this->validateKey($key);
-
             $result = $this->layeredCache->deleteItem($key);
 
             if ($result) {
-                // Dispatch cache delete event
                 $this->eventListener?->onCacheDelete($key);
             }
 
@@ -223,11 +206,9 @@ final class Cache implements CacheContract
     {
         try {
             $this->metricsCollector->recordClear();
-
             $result = $this->layeredCache->clear();
 
             if ($result) {
-                // Dispatch cache clear event
                 $this->eventListener?->onCacheClear();
             }
 
@@ -285,7 +266,7 @@ final class Cache implements CacheContract
     /**
      * Get the key validator instance.
      */
-    public function getKeyValidator(): CacheKeyValidator
+    public function getKeyValidator(): CacheKeyValidatorContract
     {
         return $this->keyValidator;
     }
@@ -297,7 +278,6 @@ final class Cache implements CacheContract
     {
         $metrics = $this->metricsCollector->getMetrics();
 
-        // Add event statistics if available
         if ($this->eventListener && method_exists($this->eventListener, 'getStats')) {
             $metrics['events'] = $this->eventListener->getStats();
         }
@@ -305,95 +285,30 @@ final class Cache implements CacheContract
         return $metrics;
     }
 
-    // ... (outros métodos PSR-16 permanecem inalterados)
-
     /**
-     * Centralized key validation using the injected validator.
+     * PSR-16 methods implementation...
      */
-    private function validateKey(string $key): void
-    {
-        if (!$this->keyValidator->validateKey($key)) {
-            $errors = $this->keyValidator->getValidationErrors($key);
-            $error = reset($errors);
-
-            // Map validation errors to specific exceptions
-            match (true) {
-                str_contains($error, 'empty') => throw InvalidArgumentException::emptyKey(),
-                str_contains($error, 'too long') => throw InvalidArgumentException::keyTooLong($key),
-                str_contains($error, 'invalid characters') => throw InvalidArgumentException::invalidKeyFormat($key),
-                str_contains($error, 'reserved') => throw InvalidArgumentException::invalidKeyFormat($key),
-                default => throw new InvalidArgumentException($error)
-            };
-        }
-    }
-
-    private function setValue(string $key, mixed $value, $ttl, array $tags): bool
-    {
-        $serializedValue = $this->serializer->serialize($value);
-        $expiration = $this->calculateExpiration($ttl);
-
-        $item = new CacheItem($key, $serializedValue, true);
-        $item->expiresAt($expiration);
-
-        if (!empty($tags)) {
-            $item->tag($tags);
-        }
-
-        return $this->layeredCache->save($item);
-    }
-
-    private function handleSlidingExpiration(string $key, CacheItem $item, $ttl): void
-    {
-        if ($this->config['sliding_expiration'] && null !== $ttl) {
-            $newExpiration = $this->calculateExpiration($ttl);
-            $item->expiresAt($newExpiration);
-            $this->layeredCache->save($item);
-        }
-    }
-
-    private function calculateExpiration($ttl): ?\DateTimeInterface
-    {
-        if (null === $ttl) {
-            $ttl = $this->config['default_ttl'] ?? self::DEFAULT_TTL;
-        }
-
-        if ($ttl instanceof \DateInterval) {
-            return (new \DateTime())->add($ttl);
-        }
-
-        if (is_int($ttl)) {
-            return new \DateTime('+' . $ttl . ' seconds');
-        }
-
-        return null;
-    }
-
-    private function getDefaultConfig(): array
-    {
-        return [
-            'default_ttl' => self::DEFAULT_TTL,
-            'sliding_expiration' => false,
-            'stampede_protection' => true,
-            'metrics_enabled' => true,
-        ];
-    }
-
-    // PSR-16 methods implementation...
     public function getMultiple(iterable $keys, mixed $default = null): iterable
     {
-        $result = [];
+        $keys = is_array($keys) ? $keys : iterator_to_array($keys);
+        $results = [];
+
         foreach ($keys as $key) {
-            $result[$key] = $this->get($key, $default);
+            // Re-use the existing `get` method to ensure all logic (validation, events) is applied.
+            $results[$key] = $this->get($key, $default);
         }
 
-        return $result;
+        return $results;
     }
 
     public function setMultiple(iterable $values, $ttl = null): bool
     {
+        $values = is_array($values) ? $values : iterator_to_array($values);
         $success = true;
+
         foreach ($values as $key => $value) {
-            if (!$this->set($key, $value, $ttl)) {
+            // Re-use the existing `set` method.
+            if (!$this->set((string) $key, $value, $ttl)) {
                 $success = false;
             }
         }
@@ -403,8 +318,11 @@ final class Cache implements CacheContract
 
     public function deleteMultiple(iterable $keys): bool
     {
+        $keys = is_array($keys) ? $keys : iterator_to_array($keys);
         $success = true;
+
         foreach ($keys as $key) {
+            // Re-use the existing `delete` method.
             if (!$this->delete($key)) {
                 $success = false;
             }
@@ -489,9 +407,7 @@ final class Cache implements CacheContract
 
     public function warm(array $data, $ttl = null): void
     {
-        foreach ($data as $key => $value) {
-            $this->set($key, $value, $ttl);
-        }
+        $this->setMultiple($data, $ttl);
         $this->logger->info('Cache warmed', ['keys' => array_keys($data)]);
     }
 
@@ -503,5 +419,79 @@ final class Cache implements CacheContract
     public function invalidateTopics(array $topics): bool
     {
         return $this->layeredCache->invalidateTopics($topics);
+    }
+
+    /**
+     * Centralized key validation using the injected validator.
+     */
+    private function validateKey(string $key): void
+    {
+        if (!$this->keyValidator->validateKey($key)) {
+            $errors = $this->keyValidator->getValidationErrors($key);
+            $error = reset($errors);
+
+            match (true) {
+                str_contains($error, 'empty') => throw InvalidArgumentException::emptyKey(),
+                str_contains($error, 'too long') => throw InvalidArgumentException::keyTooLong($key),
+                str_contains($error, 'invalid characters') => throw InvalidArgumentException::invalidKeyFormat($key),
+                str_contains($error, 'reserved') => throw InvalidArgumentException::invalidKeyFormat($key),
+                default => throw new InvalidArgumentException($error)
+            };
+        }
+    }
+
+    private function setValue(string $key, mixed $value, $ttl, array $tags): bool
+    {
+        $serializedValue = $this->serializer->serialize($value);
+        $expiration = $this->calculateExpiration($ttl);
+
+        $item = new CacheItem($key, $serializedValue, true);
+        $item->expiresAt($expiration);
+
+        if (!empty($tags)) {
+            $item->tag($tags);
+        }
+
+        return $this->layeredCache->save($item);
+    }
+
+    private function handleSlidingExpiration(string $key, Contract\CacheItem $item, $ttl): void
+    {
+        if (($this->config['sliding_expiration'] ?? false) && null !== $ttl) {
+            $newExpiration = $this->calculateExpiration($ttl);
+            $item->expiresAt($newExpiration);
+            $this->layeredCache->save($item);
+        }
+    }
+
+    private function calculateExpiration($ttl): ?\DateTimeInterface
+    {
+        if (null === $ttl) {
+            $ttl = $this->config['default_ttl'] ?? self::DEFAULT_TTL;
+        }
+
+        if ($ttl instanceof \DateInterval) {
+            return (new \DateTimeImmutable())->add($ttl);
+        }
+
+        if (is_int($ttl)) {
+            if ($ttl <= 0) {
+                return null; // A TTL of 0 or less means it expires immediately or is already expired.
+            }
+
+            return (new \DateTimeImmutable())->add(new \DateInterval('PT' . $ttl . 'S'));
+        }
+
+        return null;
+    }
+
+    private function getDefaultConfig(): array
+    {
+        return [
+            'default_ttl' => self::DEFAULT_TTL,
+            'sliding_expiration' => false,
+            'stampede_protection' => true,
+            'metrics_enabled' => true,
+        ];
     }
 }

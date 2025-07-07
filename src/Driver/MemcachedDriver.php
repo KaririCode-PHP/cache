@@ -45,6 +45,54 @@ final class MemcachedDriver implements CacheDriver
         return \Memcached::RES_NOTFOUND !== $this->memcached->getResultCode();
     }
 
+    public function getMultiple(array $keys): array
+    {
+        if (empty($keys)) {
+            return [];
+        }
+        $prefixedKeys = array_map(fn ($k) => $this->keyPrefix . $k, $keys);
+        $results = $this->memcached->getMulti($prefixedKeys);
+
+        // Mapear de volta para as chaves originais
+        $finalResults = [];
+        foreach ($keys as $key) {
+            $prefixedKey = $this->keyPrefix . $key;
+            $finalResults[$key] = $results[$prefixedKey] ?? null;
+        }
+
+        return $finalResults;
+    }
+
+    public function setMultiple(array $values, ?\DateTimeInterface $expiration = null): bool
+    {
+        $prefixedValues = [];
+        foreach ($values as $key => $value) {
+            $prefixedValues[$this->keyPrefix . $key] = $value;
+        }
+
+        $ttl = $expiration ? $expiration->getTimestamp() : 0;
+
+        return $this->memcached->setMulti($prefixedValues, $ttl);
+    }
+
+    public function deleteMultiple(array $keys): bool
+    {
+        if (empty($keys)) {
+            return true;
+        }
+        $prefixedKeys = array_map(fn ($k) => $this->keyPrefix . $k, $keys);
+        // Remove from all tags before deleting keys
+        // Memcached doesn't support native tagging, so this is a no-op
+        $success = true;
+        foreach ($prefixedKeys as $key) {
+            if (!$this->memcached->delete($key)) {
+                $success = false;
+            }
+        }
+
+        return $success;
+    }
+
     public function delete(string $key): bool
     {
         return $this->memcached->delete($this->keyPrefix . $key);

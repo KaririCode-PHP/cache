@@ -15,4 +15,11 @@ interface CacheEventListener
     public function onCacheDelete(string $key): void;
 
     public function onCacheClear(): void;
+
+    /**
+     * Returns statistics about the events that have occurred.
+     *
+     * @return array<string, int> an associative array of event types to their counts
+     */
+    public function getStats(): array;
 }
