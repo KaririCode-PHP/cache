@@ -8,6 +8,7 @@ use KaririCode\Cache\Contract\CacheItem;
 use KaririCode\Cache\Contract\CacheItemPool;
 use KaririCode\Cache\Contract\LayeredCache;
 use KaririCode\Cache\Contract\Serializer;
+use Psr\Cache\CacheItemInterface;
 
 /**
  * Advanced cache proxy providing full PSR-6 compatibility with enhanced features.
@@ -80,7 +81,7 @@ final class AdvancedCacheProxy implements CacheItemPool
         return $this->layeredCache->deleteItems($keys);
     }
 
-    public function save(CacheItem $item): bool
+    public function save(CacheItemInterface $item): bool
     {
         // Clone the item to avoid modifying the original
         $serializedItem = clone $item;
@@ -89,7 +90,7 @@ final class AdvancedCacheProxy implements CacheItemPool
         return $this->layeredCache->save($serializedItem);
     }
 
-    public function saveDeferred(CacheItem $item): bool
+    public function saveDeferred(CacheItemInterface $item): bool
     {
         $this->deferred[$item->getKey()] = $item;
 

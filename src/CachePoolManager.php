@@ -4,10 +4,12 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache;
 
+use KaririCode\Cache\CacheItem as CacheCacheItem;
 use KaririCode\Cache\Contract\CacheDriver;
 use KaririCode\Cache\Contract\CacheItem;
 use KaririCode\Cache\Contract\CacheItemPool;
 use KaririCode\Cache\Exception\InvalidArgumentException;
+use Psr\Cache\CacheItemInterface;
 
 /**
  * Enhanced cache pool manager with atomic operations and tagging support.
@@ -80,7 +82,7 @@ final class CachePoolManager implements CacheItemPool
         return $success;
     }
 
-    public function save(CacheItem $item): bool
+    public function save(CacheCacheItem|CacheItemInterface $item): bool
     {
         return $this->driver->set(
             $item->getKey(),
@@ -89,7 +91,7 @@ final class CachePoolManager implements CacheItemPool
         );
     }
 
-    public function saveDeferred(CacheItem $item): bool
+    public function saveDeferred(CacheItemInterface $item): bool
     {
         $this->deferred[$item->getKey()] = $item;
 

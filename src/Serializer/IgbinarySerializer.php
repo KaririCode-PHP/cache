@@ -21,7 +21,7 @@ final class IgbinarySerializer implements Serializer
 
     public function serialize(mixed $data): string
     {
-        $result = igbinary_serialize($data);
+        $result = \igbinary_serialize($data);
 
         if (null === $result) {
             throw CacheException::serializationFailed('unknown');
@@ -32,9 +32,9 @@ final class IgbinarySerializer implements Serializer
 
     public function unserialize(string $data): mixed
     {
-        $result = igbinary_unserialize($data);
+        $result = \igbinary_unserialize($data);
 
-        if (null === $result && $data !== igbinary_serialize(null)) {
+        if (null === $result && $data !== \igbinary_serialize(null)) {
             throw CacheException::deserializationFailed('unknown');
         }
 
@@ -44,7 +44,7 @@ final class IgbinarySerializer implements Serializer
     public function canSerialize(mixed $data): bool
     {
         try {
-            igbinary_serialize($data);
+            \igbinary_serialize($data);
 
             return true;
         } catch (\Exception) {

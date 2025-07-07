@@ -128,11 +128,6 @@ final class RateLimitedCache implements Cache
         return $this->cache->getWithCallback($key, $callback, $ttl, $tags);
     }
 
-    public function getSimple(string $key, mixed $default = null): mixed
-    {
-        return $this->get($key, $default);
-    }
-
     public function setWithTags(string $key, mixed $value, $ttl = null, array $tags = []): bool
     {
         if (!$this->canPerformOperation()) {

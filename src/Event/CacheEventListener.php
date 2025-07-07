@@ -4,12 +4,12 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Event;
 
-use KaririCode\Cache\Contract\CacheEventListener;
+use KaririCode\Cache\Contract\CacheEventListener as CacheEventListenerContract;
 
 /**
  * Event listener for cache operations with logging and metrics.
  */
-final class CacheEventListener implements CacheEventListener
+final class CacheEventListener implements CacheEventListenerContract
 {
     private array $events = [];
     private int $maxEvents = 1000;

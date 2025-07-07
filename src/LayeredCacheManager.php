@@ -8,6 +8,7 @@ use KaririCode\Cache\Contract\CacheItem;
 use KaririCode\Cache\Contract\CacheItemPool;
 use KaririCode\Cache\Contract\LayeredCache;
 use KaririCode\Cache\Exception\CacheException;
+use Psr\Cache\CacheItemInterface;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
 
@@ -126,7 +127,7 @@ final class LayeredCacheManager implements LayeredCache
         return $success;
     }
 
-    public function save(CacheItem $item): bool
+    public function save(CacheItemInterface $item): bool
     {
         $success = true;
 
@@ -145,7 +146,7 @@ final class LayeredCacheManager implements LayeredCache
         return $success;
     }
 
-    public function saveDeferred(CacheItem $item): bool
+    public function saveDeferred(CacheItemInterface $item): bool
     {
         $success = true;
         foreach ($this->layers as $layer) {

@@ -24,11 +24,6 @@ interface Cache extends PsrSimpleCacheInterface
     public function getWithCallback(string $key, ?callable $callback = null, $ttl = null, array $tags = []): mixed;
 
     /**
-     * Simple get method (alias for get).
-     */
-    public function getSimple(string $key, mixed $default = null): mixed;
-
-    /**
      * Set value with tags for grouped invalidation.
      *
      * @param \DateInterval|int|null $ttl

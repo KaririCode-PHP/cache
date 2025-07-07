@@ -10,7 +10,18 @@ RUN apk update && apk add --no-cache \
     libmemcached-dev \
     cyrus-sasl-dev
 
-RUN pecl install xdebug redis memcached \
+RUN pecl install \
+    igbinary \
+    memcached \
+    redis \
+    apcu \
+    xdebug \
+    && docker-php-ext-enable \
+    igbinary \
+    memcached \
+    redis \
+    apcu \
+    xdebug \
     && docker-php-ext-enable xdebug redis memcached
 
 # Copy custom PHP configuration

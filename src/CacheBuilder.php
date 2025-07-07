@@ -6,19 +6,23 @@ namespace KaririCode\Cache;
 
 use KaririCode\Cache\Config\DriverManager;
 use KaririCode\Cache\Contract\Cache;
+use KaririCode\Cache\Contract\CacheEventListener;
+use KaririCode\Cache\Contract\CacheKeyValidator as CacheKeyValidatorContract;
 use KaririCode\Cache\Contract\LayeredCache;
 use KaririCode\Cache\Contract\MetricsCollector as MetricsCollectorContract;
 use KaririCode\Cache\Contract\Serializer;
 use KaririCode\Cache\Contract\StampedeProtector as StampedeProtectorContract;
+use KaririCode\Cache\Event\CacheEventListener as DefaultEventListener;
 use KaririCode\Cache\Exception\ConfigurationException;
 use KaririCode\Cache\Metrics\MetricsCollector;
 use KaririCode\Cache\Protection\StampedeProtector;
 use KaririCode\Cache\Serializer\NativeSerializer;
+use KaririCode\Cache\Validation\CacheKeyValidator;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
 
 /**
- * Modern cache builder with fluent API and intelligent defaults.
+ * Modern cache builder with fluent API, intelligent defaults, and integrated event/validation system.
  */
 final class CacheBuilder
 {
@@ -27,6 +31,8 @@ final class CacheBuilder
     private ?StampedeProtectorContract $stampedeProtector = null;
     private ?MetricsCollectorContract $metricsCollector = null;
     private ?LoggerInterface $logger = null;
+    private ?CacheEventListener $eventListener = null;
+    private ?CacheKeyValidatorContract $keyValidator = null;
     private array $config = [];
     private DriverManager $driverManager;
 
@@ -157,6 +163,70 @@ final class CacheBuilder
     }
 
     /**
+     * Enable event listening with default event listener.
+     */
+    public function withEventLogging(bool $enabled = true): self
+    {
+        if ($enabled) {
+            $this->eventListener = new DefaultEventListener();
+        } else {
+            $this->eventListener = null;
+        }
+
+        return $this;
+    }
+
+    /**
+     * Set custom event listener.
+     */
+    public function withEventListener(CacheEventListener $eventListener): self
+    {
+        $this->eventListener = $eventListener;
+
+        return $this;
+    }
+
+    /**
+     * Enable comprehensive event and metrics collection.
+     */
+    public function withFullObservability(bool $enabled = true): self
+    {
+        if ($enabled) {
+            $this->withMetrics(true);
+            $this->withEventLogging(true);
+        } else {
+            $this->withMetrics(false);
+            $this->withEventLogging(false);
+        }
+
+        return $this;
+    }
+
+    /**
+     * Set custom key validator.
+     */
+    public function withKeyValidator(CacheKeyValidator $keyValidator): self
+    {
+        $this->keyValidator = $keyValidator;
+
+        return $this;
+    }
+
+    /**
+     * Enable strict key validation (default validator with strict rules).
+     */
+    public function withStrictKeyValidation(bool $enabled = true): self
+    {
+        if ($enabled) {
+            $this->keyValidator = new CacheKeyValidator();
+        } else {
+            $this->keyValidator = null;
+        }
+
+        return $this;
+    }
+
+    /**
      * Set configuration options.
      */
     public function withConfig(array $config): self
@@ -187,7 +257,7 @@ final class CacheBuilder
     }
 
     /**
-     * Build the cache instance.
+     * Build the cache instance with all configured components.
      */
     public function build(): Cache
     {
@@ -203,25 +273,28 @@ final class CacheBuilder
             $this->stampedeProtector ?? new StampedeProtector(),
             $this->metricsCollector ?? new MetricsCollector(),
             $this->logger ?? new NullLogger(),
+            $this->eventListener, // Can be null - events are optional
+            $this->keyValidator ?? new CacheKeyValidator(), // Always provide validator
             $this->config
         );
     }
 
     /**
-     * Quick build for development with sensible defaults.
+     * Quick build for development with sensible defaults and full observability.
      */
     public function buildForDevelopment(): Cache
     {
         return $this
             ->withApcu(5)
             ->withFilesystem(null, 90)
-            ->withMetrics(true)
+            ->withFullObservability(true)
+            ->withStrictKeyValidation(true)
             ->withStampedeProtection(true)
             ->build();
     }
 
     /**
-     * Quick build for production with Redis + APCu.
+     * Quick build for production with Redis + APCu and comprehensive monitoring.
      */
     public function buildForProduction(array $redisConfig = []): Cache
     {
@@ -229,9 +302,49 @@ final class CacheBuilder
             ->withApcu(5)
             ->withRedis($redisConfig, 10)
             ->withFilesystem(null, 90)
-            ->withMetrics(true)
+            ->withFullObservability(true)
+            ->withStrictKeyValidation(true)
             ->withStampedeProtection(true)
             ->withSlidingExpiration(true)
+            ->build();
+    }
+
+    /**
+     * Build for testing with array driver and full event tracking.
+     */
+    public function buildForTesting(): Cache
+    {
+        return $this
+            ->addLayer('array', [], 5)
+            ->withFullObservability(true)
+            ->withStrictKeyValidation(true)
+            ->withStampedeProtection(false) // Simplify for testing
+            ->build();
+    }
+
+    /**
+     * Build high-performance cache with minimal overhead.
+     */
+    public function buildHighPerformance(array $redisConfig = []): Cache
+    {
+        return $this
+            ->withApcu(5)
+            ->withRedis($redisConfig, 10)
+            ->withMetrics(false) // Disable for maximum performance
+            ->withEventLogging(false) // Disable for maximum performance
+            ->withStrictKeyValidation(false) // Use basic validation for performance
+            ->withStampedeProtection(true)
+            ->build();
+    }
+
+    /**
+     * Create a cache instance with custom event listener for specialized monitoring.
+     */
+    public function buildWithCustomEventListener(CacheEventListener $eventListener): Cache
+    {
+        return $this
+            ->withEventListener($eventListener)
+            ->withMetrics(true)
             ->build();
     }
 
@@ -262,6 +375,8 @@ final class CacheBuilder
             'sliding_expiration' => false,
             'stampede_protection' => true,
             'metrics_enabled' => true,
+            'events_enabled' => true,
+            'strict_validation' => true,
             'key_prefix' => '',
             'namespace_separator' => ':',
         ];

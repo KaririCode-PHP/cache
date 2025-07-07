@@ -135,11 +135,6 @@ final class EncryptedCache implements Cache
         return $value;
     }
 
-    public function getSimple(string $key, mixed $default = null): mixed
-    {
-        return $this->get($key, $default);
-    }
-
     public function setWithTags(string $key, mixed $value, $ttl = null, array $tags = []): bool
     {
         try {
