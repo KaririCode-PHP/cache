@@ -4,23 +4,33 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Contract;
 
-interface CacheItemPool
+/**
+ * Enhanced cache pool interface with advanced operations.
+ */
+interface CacheItemPool extends PsrCacheItemPoolInterface
 {
-    public function getItem(string $key): CacheItem;
+    /**
+     * Atomic increment operation.
+     */
+    public function increment(string $key, int $step = 1, int $initialValue = 0, $ttl = null): int;
 
-    public function getItems(array $keys = []): iterable;
+    /**
+     * Add value only if key doesn't exist.
+     */
+    public function add(string $key, mixed $value, $ttl = null): bool;
 
-    public function hasItem(string $key): bool;
+    /**
+     * Invalidate items by tags.
+     */
+    public function invalidateTags(array $tags): bool;
 
-    public function clear(): bool;
+    /**
+     * Subscribe cache item to topics.
+     */
+    public function subscribeTo(string $key, array $topics): void;
 
-    public function deleteItem(string $key): bool;
-
-    public function deleteItems(array $keys): bool;
-
-    public function save(CacheItem $item): bool;
-
-    public function saveDeferred(CacheItem $item): bool;
-
-    public function commit(): bool;
+    /**
+     * Invalidate items by topics.
+     */
+    public function invalidateTopics(array $topics): bool;
 }

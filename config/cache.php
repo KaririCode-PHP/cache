@@ -1,44 +1,58 @@
 <?php
 
+
 return [
-    'default_driver' => 'redis',
-    'default_ttl' => 3600,
-    'drivers' => [
-        'file' => [
-            'enabled' => 'env:KARIRI_FILE_DRIVER_ENABLED',
-            'directory' => 'env:KARIRI_CACHE_FILE_DIRECTORY',
-        ],
-        'redis' => [
-            'enabled' => 'env:KARIRI_REDIS_DRIVER_ENABLED',
-            'host' => 'env:KARIRI_REDIS_HOST',
-            'port' => 'env:KARIRI_REDIS_PORT',
-            'timeout' => 'env:KARIRI_REDIS_TIMEOUT',
-            'retry_interval' => 'env:KARIRI_REDIS_RETRY_INTERVAL',
-            'read_timeout' => 'env:KARIRI_REDIS_READ_TIMEOUT',
-            'password' => 'env:KARIRI_REDIS_PASSWORD',
-            'database' => 'env:KARIRI_REDIS_DATABASE',
-            'prefix' => 'env:KARIRI_REDIS_PREFIX',
-            'compression' => 'env:KARIRI_REDIS_COMPRESSION',
-            'compression_level' => 'env:KARIRI_REDIS_COMPRESSION_LEVEL',
-        ],
-        'memcached' => [
-            'enabled' => 'env:KARIRI_MEMCACHED_DRIVER_ENABLED',
-            'servers' => [
-                [
-                    'host' => 'env:KARIRI_MEMCACHED_HOST',
-                    'port' => 'env:KARIRI_MEMCACHED_PORT',
-                    'weight' => 'env:KARIRI_MEMCACHED_WEIGHT',
-                ],
+    'default_ttl' => (int)($_ENV['CACHE_DEFAULT_TTL'] ?? 3600),
+
+    // Multi-layer cache configuration
+    'layers' => [
+        // Level 1: APCu for ultra-fast local cache
+        [
+            'driver' => 'apcu',
+            'priority' => 5,
+            'config' => [
+                'key_prefix' => 'app:',
             ],
-            'persistent_id' => 'env:KARIRI_MEMCACHED_PERSISTENT_ID',
-            'options' => [
-                \Memcached::OPT_COMPRESSION => 'env:KARIRI_MEMCACHED_COMPRESSION',
-                \Memcached::OPT_BINARY_PROTOCOL => 'env:KARIRI_MEMCACHED_BINARY_PROTOCOL',
-                \Memcached::OPT_TCP_NODELAY => 'env:KARIRI_MEMCACHED_TCP_NODELAY',
-                \Memcached::OPT_LIBKETAMA_COMPATIBLE => 'env:KARIRI_MEMCACHED_LIBKETAMA_COMPATIBLE',
+        ],
+
+        // Level 2: Redis for shared, persistent cache
+        [
+            'driver' => 'redis',
+            'priority' => 10,
+            'config' => [
+                'host' => '${REDIS_HOST:localhost}',
+                'port' => '${REDIS_PORT:6379}',
+                'password' => '${REDIS_PASSWORD:}',
+                'database' => '${REDIS_DB:0}',
+                'persistent' => true,
+                'compression' => true,
+                'key_prefix' => 'app:',
+                'tag_prefix' => 'tags:',
+                'topic_prefix' => 'topics:',
             ],
-            'username' => 'env:KARIRI_MEMCACHED_USERNAME',
-            'password' => 'env:KARIRI_MEMCACHED_PASSWORD',
+        ],
+
+        // Level 3: Filesystem fallback
+        [
+            'driver' => 'filesystem',
+            'priority' => 90,
+            'config' => [
+                'directory' => '${CACHE_DIR:/var/cache/app}',
+                'max_size' => 500 * 1024 * 1024, // 500MB
+                'cleanup_probability' => 0.02, // 2%
+            ],
         ],
     ],
+
+    // Serialization strategy
+    'serializer' => '${CACHE_SERIALIZER:compressed_igbinary}',
+
+    // Advanced features
+    'stampede_protection' => true,
+    'metrics' => true,
+    'sliding_expiration' => '${CACHE_SLIDING_EXPIRATION:true}',
+
+    // Namespace configuration
+    'key_prefix' => '${APP_NAME:app}:',
+    'namespace_separator' => ':',
 ];

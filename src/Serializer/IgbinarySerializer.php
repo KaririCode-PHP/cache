@@ -1,0 +1,54 @@
+<?php
+
+declare(strict_types=1);
+
+namespace KaririCode\Cache\Serializer;
+
+use KaririCode\Cache\Contract\Serializer;
+use KaririCode\Cache\Exception\CacheException;
+
+/**
+ * High-performance igbinary serializer.
+ */
+final class IgbinarySerializer implements Serializer
+{
+    public function __construct()
+    {
+        if (!extension_loaded('igbinary')) {
+            throw new \RuntimeException('igbinary extension is not loaded');
+        }
+    }
+
+    public function serialize(mixed $data): string
+    {
+        $result = igbinary_serialize($data);
+
+        if (null === $result) {
+            throw CacheException::serializationFailed('unknown');
+        }
+
+        return $result;
+    }
+
+    public function unserialize(string $data): mixed
+    {
+        $result = igbinary_unserialize($data);
+
+        if (null === $result && $data !== igbinary_serialize(null)) {
+            throw CacheException::deserializationFailed('unknown');
+        }
+
+        return $result;
+    }
+
+    public function canSerialize(mixed $data): bool
+    {
+        try {
+            igbinary_serialize($data);
+
+            return true;
+        } catch (\Exception) {
+            return false;
+        }
+    }
+}

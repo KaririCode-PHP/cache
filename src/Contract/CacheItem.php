@@ -4,19 +4,28 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Contract;
 
-interface CacheItem
+/**
+ * Enhanced cache item interface with tagging and topic subscription.
+ */
+interface CacheItem extends \Psr\Cache\CacheItemInterface
 {
-    public function getKey(): string;
+    /**
+     * Add tags to this cache item.
+     */
+    public function tag(array $tags): static;
 
-    public function get(): mixed;
+    /**
+     * Get tags associated with this item.
+     */
+    public function getTags(): array;
 
-    public function isHit(): bool;
+    /**
+     * Subscribe to invalidation topics.
+     */
+    public function subscribeTo(array $topics): static;
 
-    public function set(mixed $value): static;
-
-    public function expiresAt(?\DateTimeInterface $expiration): static;
-
-    public function expiresAfter(\DateInterval|int|null $time): static;
-
-    public function getExpiration(): ?\DateTimeInterface;
+    /**
+     * Get subscribed topics.
+     */
+    public function getTopics(): array;
 }
