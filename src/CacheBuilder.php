@@ -6,23 +6,26 @@ namespace KaririCode\Cache;
 
 use KaririCode\Cache\Config\DriverManager;
 use KaririCode\Cache\Contract\Cache;
-use KaririCode\Cache\Contract\CacheEventListener;
+use KaririCode\Cache\Contract\CacheEventListener as CacheEventListenerContract;
 use KaririCode\Cache\Contract\CacheKeyValidator as CacheKeyValidatorContract;
 use KaririCode\Cache\Contract\LayeredCache;
 use KaririCode\Cache\Contract\MetricsCollector as MetricsCollectorContract;
 use KaririCode\Cache\Contract\Serializer;
 use KaririCode\Cache\Contract\StampedeProtector as StampedeProtectorContract;
-use KaririCode\Cache\Event\CacheEventListener as DefaultEventListener;
+use KaririCode\Cache\Event\CacheEventFactory;
+use KaririCode\Cache\Event\DefaultCacheEventListener;
 use KaririCode\Cache\Exception\ConfigurationException;
 use KaririCode\Cache\Metrics\MetricsCollector;
 use KaririCode\Cache\Protection\StampedeProtector;
 use KaririCode\Cache\Serializer\NativeSerializer;
 use KaririCode\Cache\Validation\CacheKeyValidator;
+use Psr\EventDispatcher\EventDispatcherInterface;
+use Psr\EventDispatcher\ListenerProviderInterface;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
 
 /**
- * Modern cache builder with fluent API, intelligent defaults, and integrated event/validation system.
+ * Modern cache builder with fluent API, intelligent defaults, and PSR-14 event system integration.
  */
 final class CacheBuilder
 {
@@ -31,8 +34,10 @@ final class CacheBuilder
     private ?StampedeProtectorContract $stampedeProtector = null;
     private ?MetricsCollectorContract $metricsCollector = null;
     private ?LoggerInterface $logger = null;
-    private ?CacheEventListener $eventListener = null;
+    private ?CacheEventListenerContract $eventListener = null;
     private ?CacheKeyValidatorContract $keyValidator = null;
+    private ?EventDispatcherInterface $eventDispatcher = null;
+    private ?ListenerProviderInterface $listenerProvider = null;
     private array $config = [];
     private DriverManager $driverManager;
 
@@ -168,7 +173,7 @@ final class CacheBuilder
     public function withEventLogging(bool $enabled = true): self
     {
         if ($enabled) {
-            $this->eventListener = new DefaultEventListener();
+            $this->eventListener = new DefaultCacheEventListener();
         } else {
             $this->eventListener = null;
         }
@@ -179,9 +184,56 @@ final class CacheBuilder
     /**
      * Set custom event listener.
      */
-    public function withEventListener(CacheEventListener $eventListener): self
+    public function withEventListener(CacheEventListenerContract $eventListener): self
     {
         $this->eventListener = $eventListener;
+
+        return $this;
+    }
+
+    /**
+     * Set PSR-14 event dispatcher.
+     */
+    public function withEventDispatcher(EventDispatcherInterface $eventDispatcher): self
+    {
+        $this->eventDispatcher = $eventDispatcher;
+
+        return $this;
+    }
+
+    /**
+     * Set PSR-14 listener provider.
+     */
+    public function withListenerProvider(ListenerProviderInterface $listenerProvider): self
+    {
+        $this->listenerProvider = $listenerProvider;
+
+        return $this;
+    }
+
+    /**
+     * Enable PSR-14 events with optional configuration.
+     */
+    public function withPsr14Events(bool $enabled = true, ?EventDispatcherInterface $eventDispatcher = null): self
+    {
+        if ($enabled) {
+            if ($eventDispatcher) {
+                $this->eventDispatcher = $eventDispatcher;
+            } elseif (!$this->eventDispatcher) {
+                // Create default PSR-14 event system
+                $eventSystem = CacheEventFactory::createCompleteEventSystem();
+                $this->eventDispatcher = $eventSystem['eventDispatcher'];
+                $this->listenerProvider = $eventSystem['listenerProvider'];
+
+                // If no event listener is set, use the one created by the factory
+                if (!$this->eventListener) {
+                    $this->eventListener = $eventSystem['eventListener'];
+                }
+            }
+        } else {
+            $this->eventDispatcher = null;
+            $this->listenerProvider = null;
+        }
 
         return $this;
     }
@@ -194,9 +246,11 @@ final class CacheBuilder
         if ($enabled) {
             $this->withMetrics(true);
             $this->withEventLogging(true);
+            $this->withPsr14Events(true);
         } else {
             $this->withMetrics(false);
             $this->withEventLogging(false);
+            $this->withPsr14Events(false);
         }
 
         return $this;
@@ -275,6 +329,7 @@ final class CacheBuilder
             $this->logger ?? new NullLogger(),
             $this->eventListener, // Can be null - events are optional
             $this->keyValidator ?? new CacheKeyValidator(), // Always provide validator
+            $this->eventDispatcher, // PSR-14 event dispatcher (can be null)
             $this->config
         );
     }
@@ -332,18 +387,32 @@ final class CacheBuilder
             ->withRedis($redisConfig, 10)
             ->withMetrics(false) // Disable for maximum performance
             ->withEventLogging(false) // Disable for maximum performance
+            ->withPsr14Events(false) // Disable for maximum performance
             ->withStrictKeyValidation(false) // Use basic validation for performance
             ->withStampedeProtection(true)
             ->build();
     }
 
     /**
-     * Create a cache instance with custom event listener for specialized monitoring.
+     * Build cache with comprehensive PSR-14 event system.
      */
-    public function buildWithCustomEventListener(CacheEventListener $eventListener): Cache
+    public function buildWithPsr14Events(?EventDispatcherInterface $externalDispatcher = null): Cache
     {
         return $this
-            ->withEventListener($eventListener)
+            ->withPsr14Events(true, $externalDispatcher)
+            ->withEventLogging(true) // Also enable legacy event system for compatibility
+            ->withMetrics(true)
+            ->build();
+    }
+
+    /**
+     * Create a cache instance with custom PSR-14 event dispatcher.
+     */
+    public function buildWithCustomEventDispatcher(EventDispatcherInterface $eventDispatcher): Cache
+    {
+        return $this
+            ->withEventDispatcher($eventDispatcher)
+            ->withEventLogging(true)
             ->withMetrics(true)
             ->build();
     }
@@ -376,6 +445,7 @@ final class CacheBuilder
             'stampede_protection' => true,
             'metrics_enabled' => true,
             'events_enabled' => true,
+            'psr14_events_enabled' => false,
             'strict_validation' => true,
             'key_prefix' => '',
             'namespace_separator' => ':',

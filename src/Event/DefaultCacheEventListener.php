@@ -1,0 +1,130 @@
+<?php
+
+declare(strict_types=1);
+
+namespace KaririCode\Cache\Event;
+
+use KaririCode\Cache\Contract\CacheEventListener;
+use Psr\EventDispatcher\EventDispatcherInterface;
+
+/**
+ * Enhanced DefaultCacheEventListener with configurable max events.
+ */
+final class DefaultCacheEventListener implements CacheEventListener
+{
+    private array $events = [];
+    private ?EventDispatcherInterface $eventDispatcher = null;
+
+    public function __construct(private int $maxEvents = 1000)
+    {
+    }
+
+    public function setEventDispatcher(?EventDispatcherInterface $eventDispatcher): void
+    {
+        $this->eventDispatcher = $eventDispatcher;
+    }
+
+    public function getEventDispatcher(): ?EventDispatcherInterface
+    {
+        return $this->eventDispatcher;
+    }
+
+    public function onCacheHit(string $key, mixed $value): void
+    {
+        $this->recordEvent('hit', $key, ['value_type' => gettype($value)]);
+
+        // Dispatch PSR-14 event if dispatcher is available
+        if ($this->eventDispatcher) {
+            $event = new CacheHitEvent($key, $value);
+            $this->eventDispatcher->dispatch($event);
+        }
+    }
+
+    public function onCacheMiss(string $key): void
+    {
+        $this->recordEvent('miss', $key);
+
+        // Dispatch PSR-14 event if dispatcher is available
+        if ($this->eventDispatcher) {
+            $event = new CacheMissEvent($key);
+            $this->eventDispatcher->dispatch($event);
+        }
+    }
+
+    public function onCacheSet(string $key, mixed $value): void
+    {
+        $this->recordEvent('set', $key, [
+            'value_type' => gettype($value),
+            'value_size' => is_string($value) ? strlen($value) : null,
+        ]);
+
+        // Dispatch PSR-14 event if dispatcher is available
+        if ($this->eventDispatcher) {
+            $event = new CacheSetEvent($key, $value);
+            $this->eventDispatcher->dispatch($event);
+        }
+    }
+
+    public function onCacheDelete(string $key): void
+    {
+        $this->recordEvent('delete', $key);
+
+        // Dispatch PSR-14 event if dispatcher is available
+        if ($this->eventDispatcher) {
+            $event = new CacheDeleteEvent($key);
+            $this->eventDispatcher->dispatch($event);
+        }
+    }
+
+    public function onCacheClear(): void
+    {
+        $this->recordEvent('clear', 'all');
+
+        // Dispatch PSR-14 event if dispatcher is available
+        if ($this->eventDispatcher) {
+            $event = new CacheClearEvent();
+            $this->eventDispatcher->dispatch($event);
+        }
+    }
+
+    public function getEvents(): array
+    {
+        return $this->events;
+    }
+
+    public function getEventsByType(string $type): array
+    {
+        return array_filter($this->events, fn ($event) => $event['type'] === $type);
+    }
+
+    public function clearEvents(): void
+    {
+        $this->events = [];
+    }
+
+    public function getStats(): array
+    {
+        $stats = [];
+        foreach ($this->events as $event) {
+            $type = $event['type'];
+            $stats[$type] = ($stats[$type] ?? 0) + 1;
+        }
+
+        return $stats;
+    }
+
+    private function recordEvent(string $type, string $key, array $data = []): void
+    {
+        $this->events[] = [
+            'type' => $type,
+            'key' => $key,
+            'timestamp' => microtime(true),
+            'data' => $data,
+        ];
+
+        // Keep only the last N events to prevent memory issues
+        if (count($this->events) > $this->maxEvents) {
+            array_shift($this->events);
+        }
+    }
+}

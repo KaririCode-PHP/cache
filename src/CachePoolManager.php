@@ -8,7 +8,9 @@ use KaririCode\Cache\CacheItem as CacheCacheItem;
 use KaririCode\Cache\Contract\CacheDriver;
 use KaririCode\Cache\Contract\CacheItem;
 use KaririCode\Cache\Contract\CacheItemPool;
+use KaririCode\Cache\Contract\CacheKeyValidator as CacheKeyValidatorContract;
 use KaririCode\Cache\Exception\InvalidArgumentException;
+use KaririCode\Cache\Validation\CacheKeyValidator;
 use Psr\Cache\CacheItemInterface;
 
 /**
@@ -17,16 +19,20 @@ use Psr\Cache\CacheItemInterface;
 final class CachePoolManager implements CacheItemPool
 {
     private CacheDriver $driver;
+    private CacheKeyValidatorContract $keyValidator;
     private array $deferred = [];
 
-    public function __construct(CacheDriver $driver)
+    public function __construct(CacheDriver $driver, ?CacheKeyValidatorContract $keyValidator = null)
     {
         $this->driver = $driver;
+        $this->keyValidator = $keyValidator ?? new CacheKeyValidator(); // Usa o validador padrão
     }
 
     public function getItem(string $key): CacheItem
     {
-        $this->validateKey($key);
+        if (!$this->keyValidator->validateKey($key)) {
+            throw InvalidArgumentException::invalidKeyFormat($key);
+        }
 
         // Check deferred items first
         if (isset($this->deferred[$key])) {
@@ -50,7 +56,9 @@ final class CachePoolManager implements CacheItemPool
 
     public function hasItem(string $key): bool
     {
-        $this->validateKey($key);
+        if (!$this->keyValidator->validateKey($key)) {
+            throw InvalidArgumentException::invalidKeyFormat($key);
+        }
 
         return isset($this->deferred[$key]) || $this->driver->has($key);
     }
@@ -64,7 +72,10 @@ final class CachePoolManager implements CacheItemPool
 
     public function deleteItem(string $key): bool
     {
-        $this->validateKey($key);
+        if (!$this->keyValidator->validateKey($key)) {
+            throw InvalidArgumentException::invalidKeyFormat($key);
+        }
+
         unset($this->deferred[$key]);
 
         return $this->driver->delete($key);
@@ -168,20 +179,5 @@ final class CachePoolManager implements CacheItemPool
         }
 
         return true;
-    }
-
-    private function validateKey(string $key): void
-    {
-        if (empty($key)) {
-            throw InvalidArgumentException::emptyKey();
-        }
-
-        if (strlen($key) > 250) {
-            throw InvalidArgumentException::keyTooLong($key);
-        }
-
-        if (!preg_match('/^[a-zA-Z0-9_.:-]+$/', $key)) {
-            throw InvalidArgumentException::invalidKeyFormat($key);
-        }
     }
 }
