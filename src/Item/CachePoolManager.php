@@ -2,14 +2,14 @@
 
 declare(strict_types=1);
 
-namespace KaririCode\Cache;
+namespace KaririCode\Cache\Item;
 
-use KaririCode\Cache\CacheItem as CacheCacheItem;
 use KaririCode\Cache\Contract\CacheDriver;
 use KaririCode\Cache\Contract\CacheItem;
 use KaririCode\Cache\Contract\CacheItemPool;
 use KaririCode\Cache\Contract\CacheKeyValidator as CacheKeyValidatorContract;
 use KaririCode\Cache\Exception\InvalidArgumentException;
+use KaririCode\Cache\Item\CacheItem as CacheCacheItem;
 use KaririCode\Cache\Validation\CacheKeyValidator;
 use Psr\Cache\CacheItemInterface;
 

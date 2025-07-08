@@ -2,18 +2,21 @@
 
 declare(strict_types=1);
 
-namespace KaririCode\Cache\Event;
+namespace KaririCode\Cache\Event\Decorator;
+
+use KaririCode\Cache\Contract\Cache;
+use KaririCode\Cache\Event\Dispatcher\CacheEventBridge;
 
 /**
  * Event-aware cache decorator that adds PSR-14 compatibility.
  */
-final class EventAwareCache implements \KaririCode\Cache\Contract\Cache
+final class EventAwareCache implements Cache
 {
-    private \KaririCode\Cache\Contract\Cache $cache;
+    private Cache $cache;
     private CacheEventBridge $eventBridge;
 
     public function __construct(
-        \KaririCode\Cache\Contract\Cache $cache,
+        Cache $cache,
         CacheEventBridge $eventBridge
     ) {
         $this->cache = $cache;

@@ -2,9 +2,21 @@
 
 declare(strict_types=1);
 
-namespace KaririCode\Cache\Event;
+namespace KaririCode\Cache\Event\Factory;
 
 use KaririCode\Cache\Contract\CacheEventListener;
+use KaririCode\Cache\Event\CacheClearEvent;
+use KaririCode\Cache\Event\CacheDeleteEvent;
+use KaririCode\Cache\Event\CacheHitEvent;
+use KaririCode\Cache\Event\CacheMissEvent;
+use KaririCode\Cache\Event\CacheSetEvent;
+use KaririCode\Cache\Event\CacheWarmupEvent;
+use KaririCode\Cache\Event\Dispatcher\CacheEventDispatcher;
+use KaririCode\Cache\Event\Listener\DefaultCacheEventListener;
+use KaririCode\Cache\Event\Listener\PerformanceEventListener;
+use KaririCode\Cache\Event\Listener\SecurityEventListener;
+use KaririCode\Cache\Event\Provider\CacheListenerProvider;
+use KaririCode\Cache\Event\TagInvalidationEvent;
 use Psr\EventDispatcher\EventDispatcherInterface;
 use Psr\EventDispatcher\ListenerProviderInterface;
 

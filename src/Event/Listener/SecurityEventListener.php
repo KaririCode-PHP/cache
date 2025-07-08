@@ -2,9 +2,10 @@
 
 declare(strict_types=1);
 
-namespace KaririCode\Cache\Event;
+namespace KaririCode\Cache\Event\Listener;
 
 use KaririCode\Cache\Contract\CacheEventListener;
+use KaririCode\Cache\Event\CacheSecurityEvent;
 use Psr\EventDispatcher\EventDispatcherInterface;
 use Psr\Log\LoggerInterface;
 use Psr\Log\LogLevel;

@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace KaririCode\Cache\Event;
+namespace KaririCode\Cache\Event\Provider;
 
 use Psr\EventDispatcher\ListenerProviderInterface;
 

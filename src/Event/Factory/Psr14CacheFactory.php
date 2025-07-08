@@ -2,9 +2,12 @@
 
 declare(strict_types=1);
 
-namespace KaririCode\Cache\Event;
+namespace KaririCode\Cache\Event\Factory;
 
 use KaririCode\Cache\Contract\CacheEventListener;
+use KaririCode\Cache\Event\Dispatcher\CacheEventBridge;
+use KaririCode\Cache\Event\Dispatcher\CacheEventDispatcher;
+use KaririCode\Cache\Event\Provider\SimpleCacheListenerProvider;
 use Psr\EventDispatcher\EventDispatcherInterface;
 use Psr\EventDispatcher\ListenerProviderInterface;
 
