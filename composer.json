@@ -27,7 +27,8 @@
   "require": {
     "php": "^8.3",
     "psr/simple-cache": "^3.0",
-    "psr/cache": "^3.0"
+    "psr/cache": "^3.0",
+    "kariricode/exception": "^1.2"
   },
   "autoload": {
     "psr-4": {

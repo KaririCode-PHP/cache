@@ -12,6 +12,7 @@ use KaririCode\Cache\Event\CacheMissEvent;
 use KaririCode\Cache\Event\CacheSetEvent;
 use KaririCode\Cache\Event\CacheWarmupEvent;
 use KaririCode\Cache\Event\Dispatcher\CacheEventDispatcher;
+use KaririCode\Cache\Event\Listener\AnalyticsEventListener;
 use KaririCode\Cache\Event\Listener\DefaultCacheEventListener;
 use KaririCode\Cache\Event\Listener\PerformanceEventListener;
 use KaririCode\Cache\Event\Listener\SecurityEventListener;

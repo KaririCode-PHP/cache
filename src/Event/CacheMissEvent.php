@@ -4,8 +4,6 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Event;
 
-use Psr\EventDispatcher\EventDispatcherInterface;
-use Psr\EventDispatcher\ListenerProviderInterface;
 use Psr\EventDispatcher\StoppableEventInterface;
 
 /**
@@ -15,7 +13,7 @@ final class CacheMissEvent extends CacheEvent implements StoppableEventInterface
 {
     public function __construct(
         string $key,
-        private ?callable $callback = null,
+        private bool $hasCallback = false,
         array $context = []
     ) {
         parent::__construct($key, $context);
@@ -23,11 +21,6 @@ final class CacheMissEvent extends CacheEvent implements StoppableEventInterface
 
     public function hasCallback(): bool
     {
-        return null !== $this->callback;
-    }
-
-    public function getCallback(): ?callable
-    {
-        return $this->callback;
+        return $this->hasCallback;
     }
 }
