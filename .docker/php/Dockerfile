@@ -1,36 +1,54 @@
 ARG PHP_VERSION=8.3
-
 FROM php:${PHP_VERSION}-alpine
 
-# Install system dependencies
-RUN apk update && apk add --no-cache \
+# ---------------------------------------------------------------------------
+# 1) Runtime-only dependencies (kept in final image)
+# ---------------------------------------------------------------------------
+RUN apk add --no-cache \
+    libmemcached-libs \ 
+    zlib
+# ---------------------------------------------------------------------------
+# 2) Build-time dependencies (removed later)
+# ---------------------------------------------------------------------------
+RUN apk add --no-cache --virtual .build-deps \
     $PHPIZE_DEPS \
     linux-headers \
     zlib-dev \
     libmemcached-dev \
-    cyrus-sasl-dev
-
-RUN pecl install \
+    cyrus-sasl-dev \
+    # -----------------------------------------------------------------------
+    # 3) Install PECL extensions
+    # -----------------------------------------------------------------------
+    && pecl install \
     igbinary \
     memcached \
     redis \
     apcu \
     xdebug \
     && docker-php-ext-enable \
-    igbinary \
-    memcached \
-    redis \
-    apcu \
-    xdebug \
-    && docker-php-ext-enable xdebug redis memcached
+    igbinary memcached redis apcu xdebug \
+    # -----------------------------------------------------------------------
+    # 4) Clean up build packages
+    # -----------------------------------------------------------------------
+    && apk del .build-deps \
+    && rm -rf /tmp/pear
 
-# Copy custom PHP configuration
-COPY .docker/php/kariricode-php.ini /usr/local/etc/php/conf.d/
+# ---------------------------------------------------------------------------
+# 5) Composer – copy binary from official image
+# ---------------------------------------------------------------------------
+COPY --from=composer:2 /usr/bin/composer /usr/local/bin/composer
 
-# Instalação do Composer
-RUN curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer
+# ---------------------------------------------------------------------------
+# 6) PHP configuration
+# ---------------------------------------------------------------------------
+COPY .docker/php/kariricode-php.ini /usr/local/etc/php/conf.d/kariricode-php.ini
 
-RUN apk del --purge $PHPIZE_DEPS && rm -rf /var/cache/apk/*
+# ---------------------------------------------------------------------------
+# 7) Default working directory
+# ---------------------------------------------------------------------------
+WORKDIR /app
 
-# Mantém o contêiner ativo sem fazer nada
-CMD tail -f /dev/null
+# ---------------------------------------------------------------------------
+# 8) Default command (kept as “tail” for long-running dev containers)
+# ---------------------------------------------------------------------------
+CMD ["tail", "-f", "/dev/null"]

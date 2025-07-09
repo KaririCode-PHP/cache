@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Contract;
 
+use Psr\EventDispatcher\EventDispatcherInterface;
+
 interface CacheEventListener
 {
     public function onCacheHit(string $key, mixed $value): void;
@@ -22,4 +24,8 @@ interface CacheEventListener
      * @return array<string, int> an associative array of event types to their counts
      */
     public function getStats(): array;
+
+    public function setEventDispatcher(?EventDispatcherInterface $eventDispatcher): void;
+
+    public function getEventDispatcher(): EventDispatcherInterface;
 }

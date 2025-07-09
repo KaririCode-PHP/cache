@@ -11,9 +11,9 @@ declare(strict_types=1);
 require __DIR__ . '/../vendor/autoload.php';
 
 use KaririCode\Cache\CacheBuilder;
-use KaririCode\Cache\Event\CacheEventFactory;
 use KaririCode\Cache\Event\CacheHitEvent;
 use KaririCode\Cache\Event\CacheSetEvent;
+use KaririCode\Cache\Event\Factory\CacheEventFactory;
 
 // Example 1: Basic Event System Creation
 function basicEventSystemExample()

@@ -25,7 +25,7 @@ final class AdvancedCacheProxy implements CacheItemPool
         $this->serializer = $serializer;
     }
 
-    public function getItem(string $key): CacheItem
+    public function getItem(string $key): CacheItemInterface
     {
         // Check deferred items first
         if (isset($this->deferred[$key])) {

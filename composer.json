@@ -28,7 +28,10 @@
     "php": "^8.3",
     "psr/simple-cache": "^3.0",
     "psr/cache": "^3.0",
-    "kariricode/exception": "^1.2"
+    "kariricode/exception": "1.2.3",
+    "kariricode/configurator": "1.0.0",
+    "kariricode/dotenv": "1.1.2",
+    "kariricode/contract": "^2.8"
   },
   "autoload": {
     "psr-4": {

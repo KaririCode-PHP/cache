@@ -13,14 +13,15 @@ use KaririCode\Cache\Contract\Serializer;
 use KaririCode\Cache\Contract\StampedeProtector as StampedeProtectorContract;
 use KaririCode\Cache\Event\CacheClearEvent;
 use KaririCode\Cache\Event\CacheDeleteEvent;
-use KaririCode\Cache\Event\CacheEventListener;
 use KaririCode\Cache\Event\CacheHitEvent;
 use KaririCode\Cache\Event\CacheMissEvent;
 use KaririCode\Cache\Event\CacheSetEvent;
 use KaririCode\Cache\Event\CacheWarmupEvent;
+use KaririCode\Cache\Event\Listener\CacheEventListener;
 use KaririCode\Cache\Event\TagInvalidationEvent;
 use KaririCode\Cache\Exception\CacheException;
 use KaririCode\Cache\Exception\InvalidArgumentException;
+use KaririCode\Cache\Item\AdvancedCacheProxy;
 use KaririCode\Cache\Metrics\MetricsCollector;
 use KaririCode\Cache\Protection\StampedeProtector;
 use KaririCode\Cache\Serializer\NativeSerializer;
@@ -57,7 +58,7 @@ final class Cache implements CacheContract
         $this->config = array_merge($this->getDefaultConfig(), $config);
 
         // Set PSR-14 event dispatcher on event listener if both are available
-        if ($this->eventListener && $this->eventDispatcher) {
+        if ($this->eventListener && $this->eventDispatcher && method_exists($this->eventListener, 'setEventDispatcher')) {
             $this->eventListener->setEventDispatcher($this->eventDispatcher);
         }
     }
@@ -457,7 +458,7 @@ final class Cache implements CacheContract
         $this->eventDispatcher = $eventDispatcher;
 
         // Also set it on the event listener if available
-        if ($this->eventListener) {
+        if ($this->eventListener && method_exists($this->eventListener, 'setEventDispatcher')) {
             $this->eventListener->setEventDispatcher($eventDispatcher);
         }
     }
