@@ -4,12 +4,14 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Driver;
 
+use KaririCode\Cache\Contract\AtomicCacheDriver;
 use KaririCode\Cache\Contract\CacheDriver;
+use KaririCode\Cache\Contract\TaggableCacheDriver;
 
 /**
  * High-performance APCu driver with cross-process tagging and batch operations.
  */
-final class ApcuDriver implements CacheDriver
+final class ApcuDriver implements CacheDriver, AtomicCacheDriver, TaggableCacheDriver
 {
     private string $keyPrefix;
 
@@ -197,5 +199,16 @@ final class ApcuDriver implements CacheDriver
         apcu_delete($indexKeys);
 
         return true;
+    }
+
+    public function hasCapability(string $capability): bool
+    {
+        return match ($capability) {
+            CacheCapabilities::ATOMIC_OPERATIONS => true,
+            CacheCapabilities::TAGGING => true,
+            CacheCapabilities::TOPICS => false,
+            CacheCapabilities::TRANSACTIONS => false,
+            default => false,
+        };
     }
 }

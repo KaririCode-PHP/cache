@@ -4,12 +4,14 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Driver;
 
+use KaririCode\Cache\Contract\AtomicCacheDriver;
+use KaririCode\Cache\Contract\CacheCapabilities;
 use KaririCode\Cache\Contract\CacheDriver;
 
 /**
  * Optimized Memcached driver with simulated tagging.
  */
-final class MemcachedDriver implements CacheDriver
+final class MemcachedDriver implements CacheDriver, AtomicCacheDriver
 {
     private \Memcached $memcached;
     private string $keyPrefix;
@@ -148,5 +150,16 @@ final class MemcachedDriver implements CacheDriver
     {
         // Memcached doesn't support topic invalidation
         return true;
+    }
+
+    public function hasCapability(string $capability): bool
+    {
+        return match ($capability) {
+            CacheCapabilities::ATOMIC_OPERATIONS => true,
+            CacheCapabilities::TAGGING => false,
+            CacheCapabilities::TOPICS => false,
+            CacheCapabilities::TRANSACTIONS => false,
+            default => false,
+        };
     }
 }

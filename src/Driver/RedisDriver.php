@@ -4,12 +4,16 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Driver;
 
+use KaririCode\Cache\Contract\AtomicCacheDriver;
+use KaririCode\Cache\Contract\CacheCapabilities;
 use KaririCode\Cache\Contract\CacheDriver;
+use KaririCode\Cache\Contract\TaggableCacheDriver;
+use KaririCode\Cache\Contract\TopicAwareCacheDriver;
 
 /**
  * Optimized Redis driver with native tagging and atomic operations.
  */
-final class RedisDriver implements CacheDriver
+final class RedisDriver implements CacheDriver, AtomicCacheDriver, TaggableCacheDriver, TopicAwareCacheDriver
 {
     private \Redis $redis;
     private string $keyPrefix;
@@ -278,5 +282,16 @@ final class RedisDriver implements CacheDriver
                 $this->redis->del($tagKey);
             }
         }
+    }
+
+    public function hasCapability(string $capability): bool
+    {
+        return match ($capability) {
+            CacheCapabilities::ATOMIC_OPERATIONS => true,
+            CacheCapabilities::TAGGING => true,
+            CacheCapabilities::TOPICS => true,
+            CacheCapabilities::TRANSACTIONS => true,
+            default => false,
+        };
     }
 }

@@ -9,6 +9,7 @@ use KaririCode\Cache\Exception\CacheException;
 
 /**
  * Filesystem driver with automatic cleanup and size management.
+ * Implements only basic CacheDriver interface.
  */
 final class FilesystemDriver implements CacheDriver
 {
@@ -108,63 +109,38 @@ final class FilesystemDriver implements CacheDriver
         return true;
     }
 
-    public function increment(string $key, int $step = 1, int $initialValue = 0, $ttl = null): int
+    public function getMultiple(array $keys): array
     {
-        // File-based increment with file locking
-        $filename = $this->getFilename($key);
-        $lockFile = $filename . '.lock';
-
-        $fp = fopen($lockFile, 'w');
-        if (!$fp || !flock($fp, LOCK_EX)) {
-            throw new CacheException('Unable to acquire lock for increment operation');
+        $results = [];
+        foreach ($keys as $key) {
+            $results[$key] = $this->get($key);
         }
 
-        try {
-            $current = $this->get($key) ?? $initialValue;
-            $newValue = (int) $current + $step;
-
-            $expiration = $ttl ? new \DateTime('+' . $ttl . ' seconds') : null;
-            $this->set($key, $newValue, $expiration);
-
-            return $newValue;
-        } finally {
-            flock($fp, LOCK_UN);
-            fclose($fp);
-            unlink($lockFile);
-        }
+        return $results;
     }
 
-    public function add(string $key, mixed $value, $ttl = null): bool
+    public function setMultiple(array $values, ?\DateTimeInterface $expiration = null): bool
     {
-        if ($this->has($key)) {
-            return false;
+        $success = true;
+        foreach ($values as $key => $value) {
+            if (!$this->set($key, $value, $expiration)) {
+                $success = false;
+            }
         }
 
-        $expiration = $ttl ? new \DateTime('+' . $ttl . ' seconds') : null;
-
-        return $this->set($key, $value, $expiration);
+        return $success;
     }
 
-    public function invalidateTags(array $tags): bool
+    public function deleteMultiple(array $keys): bool
     {
-        // Filesystem doesn't support native tagging
-        // This would require a metadata file to track tag associations
-        trigger_error(
-            'Filesystem driver does not support efficient tag invalidation.',
-            E_USER_WARNING
-        );
+        $success = true;
+        foreach ($keys as $key) {
+            if (!$this->delete($key)) {
+                $success = false;
+            }
+        }
 
-        return true;
-    }
-
-    public function subscribeTo(string $key, array $topics): void
-    {
-        // No-op for filesystem driver
-    }
-
-    public function invalidateTopics(array $topics): bool
-    {
-        return true;
+        return $success;
     }
 
     private function getFilename(string $key): string
@@ -278,7 +254,13 @@ final class FilesystemDriver implements CacheDriver
     private function ensureDirectoryExists(): void
     {
         if (!is_dir($this->directory) && !mkdir($this->directory, 0755, true)) {
-            throw new CacheException("Unable to create cache directory: {$this->directory}");
+            throw CacheException::directoryNotWritable($this->directory);
         }
+    }
+
+    public function hasCapability(string $capability): bool
+    {
+        // Filesystem driver only supports basic operations
+        return false;
     }
 }

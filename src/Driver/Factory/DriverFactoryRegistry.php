@@ -7,18 +7,22 @@ namespace KaririCode\Cache\Driver\Factory;
 use KaririCode\Cache\Contract\CacheDriver;
 use KaririCode\Cache\Contract\CacheDriverFactory;
 use KaririCode\Cache\Contract\DriverManager;
+use KaririCode\Cache\Driver\CapabilityAwareDriver;
 use KaririCode\Cache\Exception\ConfigurationException;
 
 /**
- * Registry for cache driver factories with auto-discovery.
+ * Registry for cache driver factories with auto-discovery and capability wrapping.
  */
 final class DriverFactoryRegistry
 {
     /** @var array<string, string> */
     private array $factories = [];
 
-    public function __construct()
+    private bool $wrapWithCapabilities = true;
+
+    public function __construct(bool $wrapWithCapabilities = true)
     {
+        $this->wrapWithCapabilities = $wrapWithCapabilities;
         $this->registerDefaultFactories();
     }
 
@@ -39,7 +43,7 @@ final class DriverFactoryRegistry
     }
 
     /**
-     * Create a driver instance.
+     * Create a driver instance with optional capability wrapping.
      */
     public function createDriver(string $name, array $config = []): CacheDriver
     {
@@ -51,25 +55,22 @@ final class DriverFactoryRegistry
         /** @var CacheDriverFactory $factory */
         $factory = new $factoryClass();
 
+        // Validate configuration
+        if (!$factory->validateOptions($config)) {
+            throw ConfigurationException::invalidConfiguration($name, 'Invalid driver options provided');
+        }
+
         // Create a simple DriverManager for compatibility
-        $manager = new class implements DriverManager {
-            public function getSerializer(): ?\KaririCode\Cache\Contract\Serializer
-            {
-                return null;
-            }
+        $manager = $this->createDriverManager();
 
-            public function getTransactionManager(): ?\KaririCode\Cache\Contract\CacheTransactionManager
-            {
-                return null;
-            }
+        $driver = $factory->createDriver($config, $manager);
 
-            public function getDriverOptions(string $driver): array
-            {
-                return [];
-            }
-        };
+        // Wrap with capability awareness if enabled
+        if ($this->wrapWithCapabilities) {
+            return new CapabilityAwareDriver($driver);
+        }
 
-        return $factory->createDriver($config, $manager);
+        return $driver;
     }
 
     /**
@@ -80,6 +81,41 @@ final class DriverFactoryRegistry
         return array_keys($this->factories);
     }
 
+    /**
+     * Check if a driver is registered.
+     */
+    public function hasDriver(string $name): bool
+    {
+        return isset($this->factories[$name]);
+    }
+
+    /**
+     * Get supported options for a driver.
+     */
+    public function getSupportedOptions(string $name): array
+    {
+        if (!isset($this->factories[$name])) {
+            throw ConfigurationException::missingDriver($name);
+        }
+
+        $factoryClass = $this->factories[$name];
+        /** @var CacheDriverFactory $factory */
+        $factory = new $factoryClass();
+
+        return $factory->getSupportedOptions();
+    }
+
+    /**
+     * Enable or disable capability wrapping.
+     */
+    public function setCapabilityWrapping(bool $enabled): void
+    {
+        $this->wrapWithCapabilities = $enabled;
+    }
+
+    /**
+     * Register default factories for built-in drivers.
+     */
     private function registerDefaultFactories(): void
     {
         $defaultFactories = [
@@ -95,5 +131,28 @@ final class DriverFactoryRegistry
                 $this->factories[$name] = $factory;
             }
         }
+    }
+
+    /**
+     * Create a simple DriverManager implementation for factories.
+     */
+    private function createDriverManager(): DriverManager
+    {
+        return new class implements DriverManager {
+            public function getSerializer(): ?\KaririCode\Cache\Contract\Serializer
+            {
+                return null;
+            }
+
+            public function getTransactionManager(): ?\KaririCode\Cache\Contract\CacheTransactionManager
+            {
+                return null;
+            }
+
+            public function getDriverOptions(string $driver): array
+            {
+                return [];
+            }
+        };
     }
 }

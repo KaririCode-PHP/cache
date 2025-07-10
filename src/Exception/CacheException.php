@@ -141,4 +141,13 @@ class CacheException extends AbstractException
             $previous
         );
     }
+
+    public static function directoryNotWritable(string $directory): static
+    {
+        return static::createException(
+            self::CODE_STORAGE_ERROR,
+            'DIRECTORY_NOT_WRITABLE',
+            "Cache directory '{$directory}' is not writable"
+        );
+    }
 }

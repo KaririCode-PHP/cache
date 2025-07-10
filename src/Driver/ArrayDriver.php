@@ -4,12 +4,16 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Driver;
 
+use KaririCode\Cache\Contract\AtomicCacheDriver;
+use KaririCode\Cache\Contract\CacheCapabilities;
 use KaririCode\Cache\Contract\CacheDriver;
+use KaririCode\Cache\Contract\TaggableCacheDriver;
+use KaririCode\Cache\Contract\TopicAwareCacheDriver;
 
 /**
  * In-memory array driver for testing and request-scoped caching.
  */
-final class ArrayDriver implements CacheDriver
+final class ArrayDriver implements CacheDriver, AtomicCacheDriver, TaggableCacheDriver, TopicAwareCacheDriver
 {
     private array $data = [];
     private array $expirations = [];
@@ -217,5 +221,16 @@ final class ArrayDriver implements CacheDriver
                 }
             }
         }
+    }
+
+    public function hasCapability(string $capability): bool
+    {
+        return match ($capability) {
+            CacheCapabilities::ATOMIC_OPERATIONS => true,
+            CacheCapabilities::TAGGING => true,
+            CacheCapabilities::TOPICS => true,
+            CacheCapabilities::TRANSACTIONS => false,
+            default => false,
+        };
     }
 }
