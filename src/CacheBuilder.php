@@ -13,6 +13,7 @@ use KaririCode\Cache\Contract\LayeredCache;
 use KaririCode\Cache\Contract\MetricsCollector as MetricsCollectorContract;
 use KaririCode\Cache\Contract\Serializer;
 use KaririCode\Cache\Contract\StampedeProtector as StampedeProtectorContract;
+use KaririCode\Cache\Driver\Factory\DriverFactoryRegistry;
 use KaririCode\Cache\Event\Factory\CacheEventFactory;
 use KaririCode\Cache\Event\Listener\DefaultCacheEventListener;
 use KaririCode\Cache\Exception\ConfigurationException;
@@ -33,6 +34,9 @@ use Psr\Log\LoggerInterface;
  *
  * This builder receives all dependencies injected and acts as a factory
  * for Cache instances based on configuration.
+ *
+ * @see https://refactoring.guru/design-patterns/builder Builder Pattern
+ * @see https://www.php-fig.org/psr/psr-6/ PSR-6 Cache Interface
  */
 final class CacheBuilder
 {
@@ -46,13 +50,17 @@ final class CacheBuilder
     private ?ListenerProviderInterface $listenerProvider = null;
     private array $overrides = [];
     private DriverManager $driverManager;
+    private DriverFactoryRegistry $factoryRegistry;
 
     public function __construct(
         private CacheConfig $config,
         private LoggerInterface $logger,
-        ?DriverManager $driverManager = null
+        ?DriverManager $driverManager = null,
+        ?DriverFactoryRegistry $factoryRegistry = null
     ) {
         $this->driverManager = $driverManager ?? new DriverManager();
+        $this->factoryRegistry = $factoryRegistry ?? new DriverFactoryRegistry();
+        $this->configureDriverManager();
         $this->applyConfigurationDefaults();
     }
 
@@ -87,6 +95,7 @@ final class CacheBuilder
     public function withSerializer(Serializer $serializer): self
     {
         $this->serializer = $serializer;
+        $this->driverManager->setSerializer($serializer);
 
         return $this;
     }
@@ -157,6 +166,7 @@ final class CacheBuilder
     public function withDriverManager(DriverManager $driverManager): self
     {
         $this->driverManager = $driverManager;
+        $this->configureDriverManager();
 
         return $this;
     }
@@ -186,6 +196,11 @@ final class CacheBuilder
      */
     public function addCustomLayer(string $driver, array $config, int $priority): self
     {
+        // Validate that the driver factory exists
+        if (!$this->factoryRegistry->hasDriver($driver)) {
+            throw ConfigurationException::missingDriver($driver);
+        }
+
         $this->layers[] = [
             'driver' => $driver,
             'config' => $config,
@@ -215,6 +230,23 @@ final class CacheBuilder
             $this->eventDispatcher,
             $this->buildEffectiveConfig()
         );
+    }
+
+    /**
+     * Configure the DriverManager with current dependencies.
+     */
+    private function configureDriverManager(): void
+    {
+        if ($this->serializer) {
+            $this->driverManager->setSerializer($this->serializer);
+        }
+
+        // Configure driver-specific options from config
+        foreach ($this->config->getStores() as $storeName => $storeConfig) {
+            if (isset($storeConfig['config'])) {
+                $this->driverManager->setDriverOptions($storeConfig['driver'], $storeConfig['config']);
+            }
+        }
     }
 
     /**
@@ -248,11 +280,16 @@ final class CacheBuilder
         $layers = $storeConfig['layers'] ?? [];
 
         foreach ($layers as $layerConfig) {
-            $this->layers[] = [
-                'driver' => $layerConfig['driver'],
-                'config' => $layerConfig['config'] ?? [],
-                'priority' => $layerConfig['priority'] ?? 100,
-            ];
+            // Validate layer configuration
+            if (!isset($layerConfig['driver'])) {
+                throw ConfigurationException::invalidConfiguration('layer', 'Driver not specified for layer');
+            }
+
+            $this->addCustomLayer(
+                $layerConfig['driver'],
+                $layerConfig['config'] ?? [],
+                $layerConfig['priority'] ?? 100
+            );
         }
     }
 
@@ -261,11 +298,7 @@ final class CacheBuilder
      */
     private function setupSingleLayerCache(string $driver, array $config): void
     {
-        $this->layers[] = [
-            'driver' => $driver,
-            'config' => $config,
-            'priority' => 50,
-        ];
+        $this->addCustomLayer($driver, $config, 50);
     }
 
     /**
@@ -276,6 +309,7 @@ final class CacheBuilder
         // Create serializer from configuration
         if (!$this->serializer) {
             $this->serializer = $this->createSerializerFromConfig();
+            $this->driverManager->setSerializer($this->serializer);
         }
 
         // Create stampede protector if enabled
@@ -323,7 +357,9 @@ final class CacheBuilder
     }
 
     /**
-     * Build layered cache from configuration.
+     * Build layered cache from configuration using proper factory pattern.
+     *
+     * @throws ConfigurationException
      */
     private function buildLayeredCache(): LayeredCache
     {
@@ -333,17 +369,39 @@ final class CacheBuilder
 
         $layeredCache = new LayeredCacheManager($this->logger);
 
-        // Sort layers by priority
-        usort($this->layers, fn ($a, $b) => $a['priority'] <=> $b['priority']);
+        // Sort layers by priority (descending, higher priority first).
+        usort($this->layers, fn (array $a, array $b): int => $a['priority'] <=> $b['priority']);
 
         foreach ($this->layers as $layerConfig) {
-            $driver = $this->driverManager->createDriver(
-                $layerConfig['driver'],
-                $layerConfig['config']
-            );
+            try {
+                if (!$this->factoryRegistry->hasDriver($layerConfig['driver'])) {
+                    throw ConfigurationException::missingDriver($layerConfig['driver']);
+                }
 
-            $pool = new CachePoolManager($driver);
-            $layeredCache->addLayer($pool, $layerConfig['priority']);
+                $driver = $this->factoryRegistry->createDriver(
+                    $layerConfig['driver'],
+                    $layerConfig['config']
+                );
+
+                // The CachePoolManager acts as an adapter, wrapping the low-level CacheDriver
+                // to satisfy the CacheItemPool interface required by the LayeredCacheManager.
+                $pool = new CachePoolManager($driver, $this->keyValidator);
+                $layeredCache->addLayer($pool, $layerConfig['priority']);
+
+                $this->logger->debug('Cache layer created', [
+                    'driver' => $layerConfig['driver'],
+                    'priority' => $layerConfig['priority'],
+                    'config_keys' => array_keys($layerConfig['config']),
+                ]);
+            } catch (\Throwable $e) {
+                $this->logger->error('Failed to create cache layer', [
+                    'driver' => $layerConfig['driver'],
+                    'error' => $e->getMessage(),
+                    'config' => $layerConfig['config'],
+                ]);
+
+                throw ConfigurationException::invalidConfiguration($layerConfig['driver'], "Failed to create cache layer: {$e->getMessage()}");
+            }
         }
 
         return $layeredCache;
@@ -378,10 +436,27 @@ final class CacheBuilder
             throw ConfigurationException::invalidConfiguration('layers', 'At least one cache layer must be configured');
         }
 
+        // Validate that all layers have valid drivers
+        foreach ($this->layers as $index => $layer) {
+            if (!isset($layer['driver'])) {
+                throw ConfigurationException::invalidConfiguration("layers.{$index}", 'Layer driver not specified');
+            }
+
+            if (!$this->factoryRegistry->hasDriver($layer['driver'])) {
+                throw ConfigurationException::missingDriver($layer['driver']);
+            }
+        }
+
         // Validate configuration integrity
         $errors = $this->config->validate();
         if (!empty($errors)) {
             throw ConfigurationException::invalidConfiguration('validation', 'Configuration validation failed: ' . implode(', ', $errors));
         }
+
+        $this->logger->info('Cache configuration validated successfully', [
+            'layers_count' => count($this->layers),
+            'serializer' => $this->serializer ? get_class($this->serializer) : 'none',
+            'features' => array_keys(array_filter($this->overrides)),
+        ]);
     }
 }

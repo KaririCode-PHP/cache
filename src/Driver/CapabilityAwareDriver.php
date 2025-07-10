@@ -73,7 +73,7 @@ final class CapabilityAwareDriver implements CacheDriver, AtomicCacheDriver, Tag
     // AtomicCacheDriver methods
     public function increment(string $key, int $step = 1, int $initialValue = 0, $ttl = null): int
     {
-        if ($this->driver instanceof AtomicCacheDriver) {
+        if ($this->driver instanceof AtomicCacheDriver && $this->hasCapability(CacheCapabilities::ATOMIC_OPERATIONS)) {
             return $this->driver->increment($key, $step, $initialValue, $ttl);
         }
 

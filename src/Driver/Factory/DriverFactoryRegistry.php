@@ -4,9 +4,10 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Driver\Factory;
 
+use KaririCode\Cache\Config\DriverManager;
 use KaririCode\Cache\Contract\CacheDriver;
 use KaririCode\Cache\Contract\CacheDriverFactory;
-use KaririCode\Cache\Contract\DriverManager;
+use KaririCode\Cache\Contract\DriverManager as DriverManagerContract;
 use KaririCode\Cache\Driver\CapabilityAwareDriver;
 use KaririCode\Cache\Exception\ConfigurationException;
 
@@ -136,23 +137,8 @@ final class DriverFactoryRegistry
     /**
      * Create a simple DriverManager implementation for factories.
      */
-    private function createDriverManager(): DriverManager
+    private function createDriverManager(): DriverManagerContract
     {
-        return new class implements DriverManager {
-            public function getSerializer(): ?\KaririCode\Cache\Contract\Serializer
-            {
-                return null;
-            }
-
-            public function getTransactionManager(): ?\KaririCode\Cache\Contract\CacheTransactionManager
-            {
-                return null;
-            }
-
-            public function getDriverOptions(string $driver): array
-            {
-                return [];
-            }
-        };
+        return new DriverManager();
     }
 }
