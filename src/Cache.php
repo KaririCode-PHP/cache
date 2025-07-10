@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace KaririCode\Cache;
 
 use KaririCode\Cache\Contract\Cache as CacheContract;
+use KaririCode\Cache\Contract\CacheEventListener as CacheEventListenerContract;
+use KaririCode\Cache\Contract\CacheItem as CacheItemContract;
 use KaririCode\Cache\Contract\CacheItemPool;
 use KaririCode\Cache\Contract\CacheKeyValidator as CacheKeyValidatorContract;
 use KaririCode\Cache\Contract\LayeredCache as LayeredCacheContract;
@@ -22,6 +24,7 @@ use KaririCode\Cache\Event\TagInvalidationEvent;
 use KaririCode\Cache\Exception\CacheException;
 use KaririCode\Cache\Exception\InvalidArgumentException;
 use KaririCode\Cache\Item\AdvancedCacheProxy;
+use KaririCode\Cache\Item\CacheItem;
 use KaririCode\Cache\Metrics\MetricsCollector;
 use KaririCode\Cache\Protection\StampedeProtector;
 use KaririCode\Cache\Serializer\NativeSerializer;
@@ -45,7 +48,7 @@ final class Cache implements CacheContract
         private ?StampedeProtectorContract $stampedeProtector = null,
         private ?MetricsCollectorContract $metricsCollector = null,
         private ?LoggerInterface $logger = null,
-        private ?CacheEventListener $eventListener = null,
+        private ?CacheEventListenerContract $eventListener = null,
         private ?CacheKeyValidatorContract $keyValidator = null,
         private ?EventDispatcherInterface $eventDispatcher = null,
         private array $config = []
@@ -68,8 +71,9 @@ final class Cache implements CacheContract
      */
     public function get(string $key, mixed $default = null): mixed
     {
+        $this->validateKey($key);
+
         try {
-            $this->validateKey($key);
             $startTime = microtime(true);
 
             $item = $this->layeredCache->getItem($key);
@@ -110,10 +114,9 @@ final class Cache implements CacheContract
     public function getWithCallback(string $key, ?callable $callback = null, $ttl = null, array $tags = []): mixed
     {
         $startTime = microtime(true);
+        $this->validateKey($key);
 
         try {
-            $this->validateKey($key);
-
             $item = $this->layeredCache->getItem($key);
 
             if ($item->isHit()) {
@@ -184,8 +187,9 @@ final class Cache implements CacheContract
      */
     public function setWithTags(string $key, mixed $value, $ttl = null, array $tags = []): bool
     {
+        $this->validateKey($key);
+
         try {
-            $this->validateKey($key);
             $result = $this->setValue($key, $value, $ttl, $tags);
 
             if ($result) {
@@ -208,8 +212,9 @@ final class Cache implements CacheContract
      */
     public function delete(string $key): bool
     {
+        $this->validateKey($key);
+
         try {
-            $this->validateKey($key);
             $existed = $this->layeredCache->hasItem($key);
             $result = $this->layeredCache->deleteItem($key);
 
@@ -299,9 +304,9 @@ final class Cache implements CacheContract
 
     public function has(string $key): bool
     {
-        try {
-            $this->validateKey($key);
+        $this->validateKey($key);
 
+        try {
             return $this->layeredCache->hasItem($key);
         } catch (\Exception $e) {
             $this->logger->error('Cache has operation failed', [
@@ -604,7 +609,7 @@ final class Cache implements CacheContract
         return $this->layeredCache->save($item);
     }
 
-    private function handleSlidingExpiration(string $key, Contract\CacheItem $item, $ttl): void
+    private function handleSlidingExpiration(string $key, CacheItemContract $item, $ttl): void
     {
         if (($this->config['sliding_expiration'] ?? false) && null !== $ttl) {
             $newExpiration = $this->calculateExpiration($ttl);

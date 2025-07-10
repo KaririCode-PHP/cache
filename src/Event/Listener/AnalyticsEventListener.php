@@ -56,7 +56,7 @@ final class AnalyticsEventListener implements CacheEventListener
         $this->eventDispatcher = $eventDispatcher;
     }
 
-    public function getEventDispatcher(): ?EventDispatcherInterface
+    public function getEventDispatcher(): EventDispatcherInterface
     {
         return $this->eventDispatcher;
     }

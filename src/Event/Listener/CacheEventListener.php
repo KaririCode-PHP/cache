@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace KaririCode\Cache\Event\Listener;
 
 use KaririCode\Cache\Contract\CacheEventListener as CacheEventListenerContract;
+use Psr\EventDispatcher\EventDispatcherInterface;
 
 /**
  * Event listener for cache operations with logging and metrics.
@@ -13,6 +14,17 @@ final class CacheEventListener implements CacheEventListenerContract
 {
     private array $events = [];
     private int $maxEvents = 1000;
+    private $eventDispatcher;
+
+    public function setEventDispatcher($eventDispatcher): void
+    {
+        $this->eventDispatcher = $eventDispatcher;
+    }
+
+    public function getEventDispatcher(): EventDispatcherInterface
+    {
+        return $this->eventDispatcher;
+    }
 
     public function onCacheHit(string $key, mixed $value): void
     {

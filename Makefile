@@ -117,7 +117,7 @@ test-file: check-environment check-container-running
 ## coverage: Run test coverage with visual formatting
 coverage: check-environment check-container-running
 	@echo "${GREEN}${INFO} Analyzing test coverage...${NC}"
-	XDEBUG_MODE=coverage $(EXEC_PHP) ./vendor/bin/phpunit --coverage-text --colors=always tests | ccze -A
+	XDEBUG_MODE=coverage $(EXEC_PHP) ./vendor/bin/phpunit --coverage-text --colors=always tests
 
 ## coverage-html: Run test coverage and generate HTML report
 coverage-html: check-environment check-container-running
