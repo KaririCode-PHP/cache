@@ -50,7 +50,7 @@ final class ApcuDriverFactory implements CacheDriverFactory
 
     private function validateRuntime(): void
     {
-        if (!apcu_enabled()) {
+        if (!\apcu_enabled()) {
             throw ConfigurationException::invalidConfiguration('apcu', 'APCu is not enabled in php.ini');
         }
 

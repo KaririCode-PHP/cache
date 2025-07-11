@@ -8,30 +8,45 @@ use KaririCode\Cache\Contract\Serializer;
 use KaririCode\Cache\Exception\CacheException;
 
 /**
- * Native PHP serializer with enhanced error handling.
+ * Native PHP serializer hardened against object‑injection and runtime errors.
+ *
+ * @psalm-type Serializable = scalar|array|object|null
  */
 final class NativeSerializer implements Serializer
 {
+    /**
+     * @throws CacheException if serialization fails
+     */
     public function serialize(mixed $data): string
     {
         try {
             return serialize($data);
-        } catch (\Exception $e) {
-            throw CacheException::serializationFailed('unknown', $e);
+        } catch (\Throwable $e) {
+            // get_debug_type() gives a precise textual representation of the value's type.
+            throw CacheException::serializationFailed(get_debug_type($data), $e);
         }
     }
 
+    /**
+     * @throws CacheException if deserialization fails or the input is malformed
+     */
     public function unserialize(string $data): mixed
     {
         try {
-            $result = unserialize($data);
-            if (false === $result && $data !== serialize(false)) {
-                throw new \Exception('Unserialization returned false');
+            // Prevent object‑injection by disallowing object instantiation.
+            $result = @unserialize($data, [
+                'allowed_classes' => false,
+            ]);
+
+            // When unserialize() fails it returns false *and* raises a warning. However, the
+            // serialized boolean false ("b:0;") also evaluates to false. We distinguish the two.
+            if (false === $result && 'b:0;' !== $data) {
+                throw new \UnexpectedValueException('Failed to unserialize data');
             }
 
             return $result;
-        } catch (\Exception $e) {
-            throw CacheException::deserializationFailed('unknown', $e);
+        } catch (\Throwable $e) {
+            throw CacheException::deserializationFailed('native', $e);
         }
     }
 
@@ -41,7 +56,7 @@ final class NativeSerializer implements Serializer
             serialize($data);
 
             return true;
-        } catch (\Exception) {
+        } catch (\Throwable) {
             return false;
         }
     }
