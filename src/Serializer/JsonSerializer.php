@@ -6,17 +6,18 @@ namespace KaririCode\Cache\Serializer;
 
 use KaririCode\Cache\Contract\Serializer;
 use KaririCode\Cache\Exception\CacheException;
+use KaririCode\Contract\Cache\CacheSerializer;
+use KaririCode\Contract\ImmutableValue;
 
 /**
  * JSON serializer for interoperability.
  */
-final class JsonSerializer implements Serializer
+final class JsonSerializer implements CacheSerializer, ImmutableValue
 {
-    private int $flags;
-
-    public function __construct(int $flags = JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
-    {
-        $this->flags = $flags;
+    public function __construct(
+        private readonly int $flags = JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE,
+        private readonly int $depth = 512
+    ) {
     }
 
     public function serialize(mixed $data): string
@@ -50,5 +51,19 @@ final class JsonSerializer implements Serializer
         } catch (\Exception) {
             return false;
         }
+    }
+
+    public function getMimeType(): string
+    {
+        return 'application/json';
+    }
+
+    public function getConfiguration(): ImmutableValue
+    {
+        return new SerializerConfiguration([
+            'type' => 'json',
+            'flags' => $this->flags,
+            'depth' => $this->depth,
+        ]);
     }
 }

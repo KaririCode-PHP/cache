@@ -49,17 +49,13 @@ final class CacheBuilder
     private ?EventDispatcherInterface $eventDispatcher = null;
     private ?ListenerProviderInterface $listenerProvider = null;
     private array $overrides = [];
-    private DriverManager $driverManager;
-    private DriverFactoryRegistry $factoryRegistry;
 
     public function __construct(
         private CacheConfig $config,
         private LoggerInterface $logger,
-        ?DriverManager $driverManager = null,
-        ?DriverFactoryRegistry $factoryRegistry = null
+        private DriverManager $driverManager = new DriverManager(),
+        private DriverFactoryRegistry $factoryRegistry = new DriverFactoryRegistry()
     ) {
-        $this->driverManager = $driverManager ?? new DriverManager();
-        $this->factoryRegistry = $factoryRegistry ?? new DriverFactoryRegistry();
         $this->configureDriverManager();
         $this->applyConfigurationDefaults();
     }

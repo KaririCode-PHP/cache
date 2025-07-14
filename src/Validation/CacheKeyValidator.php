@@ -4,16 +4,27 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Validation;
 
-use KaririCode\Cache\Contract\CacheKeyValidator as CacheKeyValidatorContract;
+use KaririCode\Contract\Cache\CacheValidator;
+use KaririCode\Contract\ImmutableValue;
 
 /**
- * Comprehensive cache key validator with sanitization.
+ * CacheKeyValidator - Must implement ImmutableValue.
+ *
+ * Required by:
+ * - ValidatorAware::setValidator(ImmutableValue $validator): ValidatorAware
+ * - ValidatorAware::getValidator(): ImmutableValue
+ * - CacheValidator::getValidationRules(): ImmutableValue
  */
-final class CacheKeyValidator implements CacheKeyValidatorContract
+final class CacheKeyValidator implements CacheValidator, ImmutableValue
 {
     private const MAX_KEY_LENGTH = 250;
     private const VALID_PATTERN = '/^[a-zA-Z0-9_.:-]+$/';
     private const RESERVED_KEYS = ['', 'null', 'true', 'false'];
+
+    public function __construct(
+        private readonly array $rules = []
+    ) {
+    }
 
     public function validateKey(string $key): bool
     {

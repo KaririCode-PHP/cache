@@ -6,6 +6,7 @@ namespace KaririCode\Cache;
 
 use KaririCode\Cache\Config\CacheConfig;
 use KaririCode\Cache\Contract\Cache;
+use KaririCode\Cache\Contract\CacheManager as CacheManagerContract;
 use KaririCode\Cache\Exception\ConfigurationException;
 use KaririCode\Configurator\Contract\Configurator\ConfigurationManager;
 use Psr\Log\LoggerInterface;
@@ -16,7 +17,7 @@ use Psr\Log\LoggerInterface;
  * This manager receives all dependencies injected and acts as a registry
  * for cache instances without creating its own dependencies.
  */
-final class CacheManager
+final class CacheManager implements CacheManagerContract
 {
     private array $caches = [];
     private array $builders = [];

@@ -6,11 +6,13 @@ namespace KaririCode\Cache\Serializer;
 
 use KaririCode\Cache\Contract\Serializer;
 use KaririCode\Cache\Exception\CacheException;
+use KaririCode\Contract\Cache\CacheSerializer;
+use KaririCode\Contract\ImmutableValue;
 
 /**
  * High-performance igbinary serializer.
  */
-final class IgbinarySerializer implements Serializer
+final class IgbinarySerializer implements CacheSerializer, ImmutableValue
 {
     public function __construct()
     {
@@ -50,5 +52,18 @@ final class IgbinarySerializer implements Serializer
         } catch (\Exception) {
             return false;
         }
+    }
+
+    public function getMimeType(): string
+    {
+        return 'application/x-igbinary';
+    }
+
+    public function getConfiguration(): ImmutableValue
+    {
+        return new SerializerConfiguration([
+            'type' => 'igbinary',
+            'compact' => $this->compact,
+        ]);
     }
 }

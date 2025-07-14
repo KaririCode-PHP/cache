@@ -5,19 +5,19 @@ declare(strict_types=1);
 namespace KaririCode\Cache\Serializer;
 
 use KaririCode\Cache\Contract\Serializer;
+use KaririCode\Contract\Cache\CacheSerializer;
+use KaririCode\Contract\ImmutableValue;
 
 /**
  * Compressing serializer wrapper.
  */
-final class CompressingSerializer implements Serializer
+final class CompressingSerializer implements CacheSerializer, ImmutableValue
 {
-    private Serializer $serializer;
-    private int $compressionLevel;
-
-    public function __construct(Serializer $serializer, int $compressionLevel = 6)
-    {
-        $this->serializer = $serializer;
-        $this->compressionLevel = max(1, min(9, $compressionLevel));
+    public function __construct(
+        private readonly CacheSerializer $serializer,
+        private readonly int $compressionLevel = 6,
+        private readonly int $threshold = 1024
+    ) {
     }
 
     public function serialize(mixed $data): string
@@ -54,5 +54,20 @@ final class CompressingSerializer implements Serializer
     public function canSerialize(mixed $data): bool
     {
         return $this->serializer->canSerialize($data);
+    }
+
+    public function getMimeType(): string
+    {
+        return 'application/x-compressed';
+    }
+
+    public function getConfiguration(): ImmutableValue
+    {
+        return new SerializerConfiguration([
+            'type' => 'compressing',
+            'inner_serializer' => $this->innerSerializer->getConfiguration(),
+            'compression_level' => $this->compressionLevel,
+            'threshold' => $this->threshold,
+        ]);
     }
 }

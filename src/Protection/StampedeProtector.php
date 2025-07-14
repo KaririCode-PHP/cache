@@ -4,17 +4,24 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Protection;
 
-use KaririCode\Cache\Contract\StampedeProtector as StampedeProtectorContract;
+use KaririCode\Contract\ImmutableValue;
 
 /**
- * Advanced stampede protection with locking and probabilistic expiration.
+ * StampedeProtector - Must implement ImmutableValue.
+ *
+ * Required by interfaces that expect ImmutableValue dependencies
  */
-final class StampedeProtector implements StampedeProtectorContract
+final class StampedeProtector implements ImmutableValue
 {
-    private bool $enabled = true;
-    private int $lockTimeout = 30;
     private float $betaFactor = 1.0;
     private array $locks = [];
+
+    public function __construct(
+        private readonly bool $enabled = true,
+        private readonly int $lockTimeout = 30,
+        private readonly int $lockRetryDelay = 100
+    ) {
+    }
 
     public function get(string $key, callable $callback, $ttl = null): mixed
     {

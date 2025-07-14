@@ -6,6 +6,7 @@ namespace KaririCode\Cache\Config;
 
 use KaririCode\Cache\Exception\ConfigurationException;
 use KaririCode\Configurator\Contract\Configurator\ConfigurationManager;
+use KaririCode\Contract\ImmutableValue;
 
 /**
  * Enhanced cache configuration manager integrated with KaririCode\Configurator.
@@ -15,7 +16,7 @@ use KaririCode\Configurator\Contract\Configurator\ConfigurationManager;
  * file formats (PHP, JSON, YAML) while maintaining backward compatibility
  * and following SOLID principles.
  */
-final class CacheConfig
+final class CacheConfig implements ImmutableValue
 {
     private ConfigurationManager $configurator;
     private string $namespace;

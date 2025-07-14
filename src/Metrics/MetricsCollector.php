@@ -4,37 +4,45 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Metrics;
 
-use KaririCode\Cache\Contract\MetricsCollector as MetricsCollectorContract;
+use KaririCode\Cache\Contract\CacheMetricsCollector;
+use KaririCode\Contract\ImmutableValue;
 
 /**
- * Comprehensive metrics collector for cache operations.
+ * MetricsCollector - Must implement ImmutableValue.
+ *
+ * Required by:
+ * - MetricsAware::setMetricsCollector(ImmutableValue $metricsCollector): MetricsAware
+ * - MetricsAware::getMetricsCollector(): ImmutableValue
+ * - CacheMetricsCollector::getMetrics(): ImmutableValue
  */
-final class MetricsCollector implements MetricsCollectorContract
+final class MetricsCollector implements CacheMetricsCollector, ImmutableValue
 {
-    private array $metrics = [
-        'hits' => 0,
-        'misses' => 0,
-        'generations' => 0,
-        'clears' => 0,
-        'hit_rate' => 0.0,
-        'total_operations' => 0,
-        'average_hit_time' => 0.0,
-        'average_generation_time' => 0.0,
-        'start_time' => null,
-    ];
-    private array $hitTimes = [];
-    private array $generationTimes = [];
+    private readonly array $metrics;
+    private readonly float $startTime;
 
-    public function __construct()
+    public function __construct(array $initialMetrics = [])
     {
-        $this->metrics['start_time'] = microtime(true);
+        $this->metrics = array_merge([
+            'hits' => 0,
+            'misses' => 0,
+            'generations' => 0,
+            'clears' => 0,
+            'evictions' => 0,
+            'errors' => 0,
+            'total_hit_time' => 0.0,
+            'total_generation_time' => 0.0,
+            'last_reset' => time(),
+        ], $initialMetrics);
+
+        $this->startTime = microtime(true);
     }
 
-    public function recordHit(string $key, float $duration): void
+    public function recordHit(string $key, float $duration, array $context = []): void
     {
-        ++$this->metrics['hits'];
-        ++$this->metrics['total_operations'];
-        $this->hitTimes[] = $duration;
+        // Return new instance with updated metrics
+        $newMetrics = $this->metrics;
+        ++$newMetrics['hits'];
+        $newMetrics['total_hit_time'] += $duration;
         $this->updateAverages();
         $this->updateHitRate();
     }

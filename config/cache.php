@@ -1,5 +1,6 @@
 <?php
 
+// config/cache.php
 declare(strict_types=1);
 
 use function KaririCode\Dotenv\env;

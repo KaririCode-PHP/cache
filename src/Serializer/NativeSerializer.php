@@ -6,14 +6,22 @@ namespace KaririCode\Cache\Serializer;
 
 use KaririCode\Cache\Contract\Serializer;
 use KaririCode\Cache\Exception\CacheException;
+use KaririCode\Contract\Cache\CacheSerializer;
+use KaririCode\Contract\ImmutableValue;
 
 /**
  * Native PHP serializer hardened against object‑injection and runtime errors.
  *
  * @psalm-type Serializable = scalar|array|object|null
  */
-final class NativeSerializer implements Serializer
+final class NativeSerializer implements CacheSerializer, ImmutableValue
 {
+    public function __construct(
+        private readonly array $allowedClasses = [],
+        private readonly array $options = []
+    ) {
+    }
+
     /**
      * @throws CacheException if serialization fails
      */
@@ -59,5 +67,19 @@ final class NativeSerializer implements Serializer
         } catch (\Throwable) {
             return false;
         }
+    }
+
+    public function getMimeType(): string
+    {
+        return 'application/vnd.php.serialized';
+    }
+
+    public function getConfiguration(): ImmutableValue
+    {
+        return new SerializerConfiguration([
+            'type' => 'native',
+            'allowed_classes' => $this->allowedClasses,
+            'options' => $this->options,
+        ]);
     }
 }

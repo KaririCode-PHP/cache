@@ -4,74 +4,85 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Contract;
 
-use Psr\SimpleCache\CacheInterface as PsrSimpleCacheInterface;
+use KaririCode\Cache\Contract\Behavioral\AtomicOperable;
+use KaririCode\Cache\Contract\Behavioral\Cacheable;
+use KaririCode\Cache\Contract\Behavioral\Taggable;
+use KaririCode\Cache\Contract\Behavioral\TopicSubscribable;
+use KaririCode\Contract\ImmutableValue;
 
 /**
- * Enhanced cache interface combining PSR-16 simplicity with advanced features.
+ * Interface Cache.
+ *
+ * Main cache interface combining all caching functionalities.
+ * This interface serves as the primary contract for cache implementations,
+ * providing comprehensive caching capabilities including basic operations,
+ * atomic operations, tagging, topic subscription, and metrics collection.
+ *
+ * @category  Cache
+ *
+ * @author    Walmir Silva <walmir.silva@kariricode.org>
+ * @license   MIT
+ *
+ * @see       https://kariricode.org/
  */
-interface Cache extends PsrSimpleCacheInterface
+interface Cache extends
+    Cacheable,
+    AtomicOperable,
+    Taggable,
+    TopicSubscribable
 {
-    /**
-     * PSR-16 get method.
-     */
-    public function get(string $key, mixed $default = null): mixed;
-
     /**
      * Enhanced get method with callback and stampede protection.
      *
-     * @param \DateInterval|int|null $ttl
-     */
-    public function getWithCallback(string $key, ?callable $callback = null, $ttl = null, array $tags = []): mixed;
-
-    /**
-     * Set value with tags for grouped invalidation.
+     * @param string $key the cache key
+     * @param callable|null $callback the callback to generate value if not cached
+     * @param \DateInterval|int|null $ttl the time-to-live for the cached item
+     * @param array $tags optional tags to associate with the cached value
      *
-     * @param \DateInterval|int|null $ttl
+     * @return mixed the cached or generated value
      */
-    public function setWithTags(string $key, mixed $value, $ttl = null, array $tags = []): bool;
+    public function getWithCallback(
+        string $key,
+        ?callable $callback = null,
+        \DateInterval|int|null $ttl = null,
+        array $tags = []
+    ): mixed;
 
     /**
-     * Atomic increment operation.
+     * Warms the cache with predefined data.
+     *
+     * @param array $data associative array of key-value pairs to cache
+     * @param \DateInterval|int|null $ttl the time-to-live for the cached items
      */
-    public function increment(string $key, int $step = 1, int $initialValue = 0, $ttl = null): int;
+    public function warm(array $data, \DateInterval|int|null $ttl = null): void;
 
     /**
-     * Atomic decrement operation.
+     * Gets cache statistics and information.
+     *
+     * @return ImmutableValue cache statistics as an immutable object
      */
-    public function decrement(string $key, int $step = 1, int $initialValue = 0, $ttl = null): int;
+    public function getStats(): ImmutableValue;
 
     /**
-     * Add value only if key doesn't exist.
+     * Gets the cache name/identifier.
+     *
+     * @return string the cache name
      */
-    public function add(string $key, mixed $value, $ttl = null): bool;
+    public function getName(): string;
 
     /**
-     * Invalidate all items with specified tags.
+     * Checks if the cache is available and operational.
+     *
+     * @return bool true if cache is healthy, false otherwise
      */
-    public function invalidateTags(array $tags): bool;
+    public function isHealthy(): bool;
 
     /**
-     * Get cache metrics and statistics.
+     * Performs cache maintenance operations.
+     *
+     * @param array $options maintenance options
+     *
+     * @return bool true if maintenance was successful, false otherwise
      */
-    public function getMetrics(): array;
-
-    /**
-     * Access to advanced PSR-6 compatible API.
-     */
-    public function advanced(): CacheItemPool;
-
-    /**
-     * Warm cache with predefined data.
-     */
-    public function warm(array $data, $ttl = null): void;
-
-    /**
-     * Subscribe cache item to invalidation topics.
-     */
-    public function subscribeTo(string $key, array $topics): void;
-
-    /**
-     * Trigger invalidation event for topics.
-     */
-    public function invalidateTopics(array $topics): bool;
+    public function maintenance(array $options = []): bool;
 }
