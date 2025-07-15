@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Event\Listener;
 
-use KaririCode\Cache\Contract\CacheEventListener;
+use KaririCode\Cache\Contract\CacheEventListener as CacheEventListenerContract;
 use KaririCode\Cache\Event\CacheClearEvent;
 use KaririCode\Cache\Event\CacheDeleteEvent;
 use KaririCode\Cache\Event\CacheHitEvent;
@@ -15,9 +15,13 @@ use Psr\EventDispatcher\EventDispatcherInterface;
 /**
  * Enhanced DefaultCacheEventListener with configurable max events.
  */
-final class DefaultCacheEventListener implements CacheEventListener
+final class DefaultCacheEventListener implements CacheEventListenerContract
 {
+    /**
+     * @var array<int, array{type: string, key: string, timestamp: float, data: array<mixed>}>
+     */
     private array $events = [];
+
     private ?EventDispatcherInterface $eventDispatcher = null;
 
     public function __construct(private int $maxEvents = 1000)
@@ -29,7 +33,7 @@ final class DefaultCacheEventListener implements CacheEventListener
         $this->eventDispatcher = $eventDispatcher;
     }
 
-    public function getEventDispatcher(): EventDispatcherInterface
+    public function getEventDispatcher(): ?EventDispatcherInterface
     {
         return $this->eventDispatcher;
     }
@@ -38,10 +42,8 @@ final class DefaultCacheEventListener implements CacheEventListener
     {
         $this->recordEvent('hit', $key, ['value_type' => gettype($value)]);
 
-        // Dispatch PSR-14 event if dispatcher is available
         if ($this->eventDispatcher) {
-            $event = new CacheHitEvent($key, $value);
-            $this->eventDispatcher->dispatch($event);
+            $this->eventDispatcher->dispatch(new CacheHitEvent($key, $value));
         }
     }
 
@@ -49,10 +51,8 @@ final class DefaultCacheEventListener implements CacheEventListener
     {
         $this->recordEvent('miss', $key);
 
-        // Dispatch PSR-14 event if dispatcher is available
         if ($this->eventDispatcher) {
-            $event = new CacheMissEvent($key);
-            $this->eventDispatcher->dispatch($event);
+            $this->eventDispatcher->dispatch(new CacheMissEvent($key));
         }
     }
 
@@ -63,10 +63,8 @@ final class DefaultCacheEventListener implements CacheEventListener
             'value_size' => is_string($value) ? strlen($value) : null,
         ]);
 
-        // Dispatch PSR-14 event if dispatcher is available
         if ($this->eventDispatcher) {
-            $event = new CacheSetEvent($key, $value);
-            $this->eventDispatcher->dispatch($event);
+            $this->eventDispatcher->dispatch(new CacheSetEvent($key, $value));
         }
     }
 
@@ -74,10 +72,8 @@ final class DefaultCacheEventListener implements CacheEventListener
     {
         $this->recordEvent('delete', $key);
 
-        // Dispatch PSR-14 event if dispatcher is available
         if ($this->eventDispatcher) {
-            $event = new CacheDeleteEvent($key);
-            $this->eventDispatcher->dispatch($event);
+            $this->eventDispatcher->dispatch(new CacheDeleteEvent($key));
         }
     }
 
@@ -85,18 +81,22 @@ final class DefaultCacheEventListener implements CacheEventListener
     {
         $this->recordEvent('clear', 'all');
 
-        // Dispatch PSR-14 event if dispatcher is available
         if ($this->eventDispatcher) {
-            $event = new CacheClearEvent();
-            $this->eventDispatcher->dispatch($event);
+            $this->eventDispatcher->dispatch(new CacheClearEvent());
         }
     }
 
+    /**
+     * @return array<int, array{type: string, key: string, timestamp: float, data: array<mixed>}>
+     */
     public function getEvents(): array
     {
         return $this->events;
     }
 
+    /**
+     * @return array<int, array{type: string, key: string, timestamp: float, data: array<mixed>}>
+     */
     public function getEventsByType(string $type): array
     {
         return array_filter($this->events, fn ($event) => $event['type'] === $type);
@@ -127,7 +127,6 @@ final class DefaultCacheEventListener implements CacheEventListener
             'data' => $data,
         ];
 
-        // Keep only the last N events to prevent memory issues
         if (count($this->events) > $this->maxEvents) {
             array_shift($this->events);
         }

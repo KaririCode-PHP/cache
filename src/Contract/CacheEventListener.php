@@ -74,7 +74,7 @@ interface CacheEventListener
     /**
      * Gets the event dispatcher instance.
      *
-     * @return EventDispatcherInterface the event dispatcher
+     * @return EventDispatcherInterface|null the event dispatcher or null if not set
      */
-    public function getEventDispatcher(): EventDispatcherInterface;
+    public function getEventDispatcher(): ?EventDispatcherInterface;
 }

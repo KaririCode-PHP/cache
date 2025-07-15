@@ -16,6 +16,7 @@ final class CacheSetEvent extends CacheEvent implements StoppableEventInterface
         private mixed $value,
         private $ttl = null,
         private array $tags = [],
+        private float $duration = 0.0,
         array $context = []
     ) {
         parent::__construct($key, $context);
@@ -44,5 +45,10 @@ final class CacheSetEvent extends CacheEvent implements StoppableEventInterface
     public function getValueSize(): int
     {
         return strlen(serialize($this->value));
+    }
+
+    public function getDuration(): float
+    {
+        return $this->duration;
     }
 }

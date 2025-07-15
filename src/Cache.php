@@ -48,12 +48,18 @@ use Psr\Log\NullLogger;
  */
 final class Cache implements CacheContract
 {
-    // All dependencies are now properly typed and non-nullable after construction
     private readonly CacheSerializer $serializer;
     private readonly StampedeProtectorContract $stampedeProtector;
-    private readonly MetricsCollectorContract $metricsCollector;
     private readonly LoggerInterface $logger;
     private readonly CacheValidator $keyValidator;
+    private readonly ?CacheEventListenerContract $eventListener;
+    private readonly ?EventDispatcherInterface $eventDispatcher;
+
+    /**
+     * The metrics collector is the only mutable dependency, as its state
+     * evolves with the cache operations.
+     */
+    private MetricsCollectorContract $metricsCollector;
 
     public function __construct(
         private readonly LayeredCacheContract $layeredCache,
@@ -61,19 +67,24 @@ final class Cache implements CacheContract
         ?StampedeProtectorContract $stampedeProtector = null,
         ?MetricsCollectorContract $metricsCollector = null,
         ?LoggerInterface $logger = null,
-        private readonly ?CacheEventListenerContract $eventListener = null,
+        ?CacheEventListenerContract $eventListener = null,
         ?CacheValidator $keyValidator = null,
-        private readonly ?EventDispatcherInterface $eventDispatcher = null,
-        private readonly array $config = []
+        ?EventDispatcherInterface $eventDispatcher = null,
+        private array $config = []
     ) {
-        // Initialize all dependencies with proper defaults (Null Object Pattern)
+        // Explicitly assign constructor parameters to class properties.
+        $this->eventListener = $eventListener;
+        $this->eventDispatcher = $eventDispatcher;
+        $this->config = $config;
+
+        // Initialize dependencies with sensible defaults (Null Object Pattern)
+        // This makes the class easier to instantiate in different contexts.
         $this->serializer = $serializer ?? new NativeSerializer();
         $this->stampedeProtector = $stampedeProtector ?? new StampedeProtector();
         $this->metricsCollector = $metricsCollector ?? new MetricsCollector();
         $this->logger = $logger ?? new NullLogger();
         $this->keyValidator = $keyValidator ?? new CacheKeyValidator();
 
-        // Validate configuration
         $this->validateConfiguration();
 
         $this->logger->info('Cache instance initialized', [
@@ -96,7 +107,7 @@ final class Cache implements CacheContract
             $item = $this->layeredCache->getItem($key);
 
             if (!$item->isHit()) {
-                $this->metricsCollector->recordMiss($key);
+                $this->metricsCollector = $this->metricsCollector->recordMiss($key);
                 $this->dispatchCacheMiss($key);
 
                 return $default;
@@ -110,7 +121,7 @@ final class Cache implements CacheContract
             $value = $this->serializer->unserialize($rawValue);
             $duration = microtime(true) - $startTime;
 
-            $this->metricsCollector->recordHit($key, $duration);
+            $this->metricsCollector = $this->metricsCollector->recordHit($key, $duration);
             $this->handleSlidingExpiration($item);
             $this->dispatchCacheHit($key, $value, $duration);
 
@@ -131,6 +142,8 @@ final class Cache implements CacheContract
      */
     public function set(string $key, mixed $value, \DateInterval|int|null $ttl = null): bool
     {
+        $startTime = microtime(true);
+
         try {
             $this->validateKey($key);
             $this->validateValue($value);
@@ -146,7 +159,7 @@ final class Cache implements CacheContract
             $result = $this->layeredCache->save($item);
 
             if ($result) {
-                $this->dispatchCacheSet($key, $value, $ttl);
+                $this->dispatchCacheSet($key, $value, $ttl, microtime(true) - $startTime);
                 $this->logger->debug('Cache item stored successfully', [
                     'key' => $key,
                     'size' => strlen($serializedValue),
@@ -189,6 +202,8 @@ final class Cache implements CacheContract
      */
     public function delete(string $key): bool
     {
+        $startTime = microtime(true);
+
         try {
             $this->validateKey($key);
 
@@ -196,7 +211,7 @@ final class Cache implements CacheContract
             $result = $this->layeredCache->deleteItem($key);
 
             if ($result) {
-                $this->dispatchCacheDelete($key, $existed);
+                $this->dispatchCacheDelete($key, $existed, microtime(true) - $startTime);
             }
 
             return $result;
@@ -215,12 +230,13 @@ final class Cache implements CacheContract
      */
     public function clear(): bool
     {
+        $startTime = microtime(true);
         try {
             $result = $this->layeredCache->clear();
 
             if ($result) {
-                $this->metricsCollector->recordClear();
-                $this->dispatchCacheClear();
+                $this->metricsCollector = $this->metricsCollector->recordClear();
+                $this->dispatchCacheClear(microtime(true) - $startTime);
             }
 
             return $result;
@@ -511,7 +527,7 @@ final class Cache implements CacheContract
                 $this->set($key, $value, $ttl);
             }
 
-            $this->metricsCollector->recordGeneration($key, microtime(true));
+            $this->metricsCollector = $this->metricsCollector->recordGeneration($key, microtime(true));
 
             return $value;
         });
@@ -808,21 +824,19 @@ final class Cache implements CacheContract
     /**
      * Dispatch cache set event.
      */
-    private function dispatchCacheSet(string $key, mixed $value, \DateInterval|int|null $ttl): void
+    private function dispatchCacheSet(string $key, mixed $value, \DateInterval|int|null $ttl, float $duration): void
     {
         if ($this->eventDispatcher) {
-            $event = new CacheSetEvent($key, $value, $ttl);
+            // Agora enviamos o evento com a duração
+            $event = new CacheSetEvent($key, $value, $ttl, [], $duration);
             $this->eventDispatcher->dispatch($event);
         }
     }
 
-    /**
-     * Dispatch cache delete event.
-     */
-    private function dispatchCacheDelete(string $key, bool $existed): void
+    private function dispatchCacheDelete(string $key, bool $existed, float $duration): void
     {
         if ($this->eventDispatcher) {
-            $event = new CacheDeleteEvent($key, $existed);
+            $event = new CacheDeleteEvent($key, $existed, $duration);
             $this->eventDispatcher->dispatch($event);
         }
     }
@@ -830,10 +844,10 @@ final class Cache implements CacheContract
     /**
      * Dispatch cache clear event.
      */
-    private function dispatchCacheClear(): void
+    private function dispatchCacheClear(float $duration): void
     {
         if ($this->eventDispatcher) {
-            $event = new CacheClearEvent();
+            $event = new CacheClearEvent(null, $duration);
             $this->eventDispatcher->dispatch($event);
         }
     }

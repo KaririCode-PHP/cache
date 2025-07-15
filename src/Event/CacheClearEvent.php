@@ -13,6 +13,7 @@ final class CacheClearEvent extends CacheEvent implements StoppableEventInterfac
 {
     public function __construct(
         private ?array $tags = null,
+        private float $duration = 0.0,
         array $context = []
     ) {
         parent::__construct('*', $context);
@@ -26,5 +27,10 @@ final class CacheClearEvent extends CacheEvent implements StoppableEventInterfac
     public function isTaggedClear(): bool
     {
         return null !== $this->tags;
+    }
+
+    public function getDuration(): float
+    {
+        return $this->duration;
     }
 }

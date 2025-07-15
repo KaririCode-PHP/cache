@@ -14,6 +14,7 @@ final class CacheDeleteEvent extends CacheEvent implements StoppableEventInterfa
     public function __construct(
         string $key,
         private bool $existed = false,
+        private float $duration = 0.0,
         array $context = []
     ) {
         parent::__construct($key, $context);
@@ -22,5 +23,10 @@ final class CacheDeleteEvent extends CacheEvent implements StoppableEventInterfa
     public function existed(): bool
     {
         return $this->existed;
+    }
+
+    public function getDuration(): float
+    {
+        return $this->duration;
     }
 }

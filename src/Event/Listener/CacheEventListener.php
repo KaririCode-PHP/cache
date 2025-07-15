@@ -12,16 +12,20 @@ use Psr\EventDispatcher\EventDispatcherInterface;
  */
 final class CacheEventListener implements CacheEventListenerContract
 {
+    /**
+     * @var array<int, array{type: string, key: string, timestamp: float, data: array<mixed>}>
+     */
     private array $events = [];
-    private int $maxEvents = 1000;
-    private $eventDispatcher;
 
-    public function setEventDispatcher($eventDispatcher): void
+    private int $maxEvents = 1000;
+    private ?EventDispatcherInterface $eventDispatcher = null;
+
+    public function setEventDispatcher(?EventDispatcherInterface $eventDispatcher): void
     {
         $this->eventDispatcher = $eventDispatcher;
     }
 
-    public function getEventDispatcher(): EventDispatcherInterface
+    public function getEventDispatcher(): ?EventDispatcherInterface
     {
         return $this->eventDispatcher;
     }
@@ -54,11 +58,17 @@ final class CacheEventListener implements CacheEventListenerContract
         $this->recordEvent('clear', 'all');
     }
 
+    /**
+     * @return array<int, array{type: string, key: string, timestamp: float, data: array<mixed>}>
+     */
     public function getEvents(): array
     {
         return $this->events;
     }
 
+    /**
+     * @return array<int, array{type: string, key: string, timestamp: float, data: array<mixed>}>
+     */
     public function getEventsByType(string $type): array
     {
         return array_filter($this->events, fn ($event) => $event['type'] === $type);
@@ -89,7 +99,6 @@ final class CacheEventListener implements CacheEventListenerContract
             'data' => $data,
         ];
 
-        // Keep only the last N events to prevent memory issues
         if (count($this->events) > $this->maxEvents) {
             array_shift($this->events);
         }
