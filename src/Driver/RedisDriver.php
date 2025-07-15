@@ -8,6 +8,7 @@ use KaririCode\Cache\Contract\AtomicCacheDriver;
 use KaririCode\Cache\Contract\Behavioral\CompareAndSwapAware;
 use KaririCode\Cache\Contract\CacheCapabilities;
 use KaririCode\Cache\Contract\CacheDriver;
+use KaririCode\Cache\Contract\DriverStats as DriverStatsContract;
 use KaririCode\Cache\Contract\TaggableCacheDriver;
 use KaririCode\Cache\Contract\TopicAwareCacheDriver;
 use KaririCode\Cache\Exception\CacheException;
@@ -519,33 +520,21 @@ final class RedisDriver implements
         };
     }
 
-    /**
-     * Get Redis connection statistics.
-     */
-    public function getStats(): array
+    public function getStats(): DriverStatsContract
     {
         try {
             $info = $this->redis->info();
 
-            return [
-                'connected' => $this->connected,
-                'redis_version' => $info['redis_version'] ?? 'unknown',
-                'used_memory' => $info['used_memory'] ?? 0,
-                'used_memory_human' => $info['used_memory_human'] ?? '0B',
-                'total_connections_received' => $info['total_connections_received'] ?? 0,
-                'total_commands_processed' => $info['total_commands_processed'] ?? 0,
-                'instantaneous_ops_per_sec' => $info['instantaneous_ops_per_sec'] ?? 0,
-                'keyspace_hits' => $info['keyspace_hits'] ?? 0,
-                'keyspace_misses' => $info['keyspace_misses'] ?? 0,
-                'prefix' => $this->keyPrefix,
-                'tag_prefix' => $this->tagPrefix,
-                'topic_prefix' => $this->topicPrefix,
-            ];
+            return new DriverStats(
+                driverName: 'Redis',
+                memoryUsage: $info['used_memory'] ?? null,
+                itemCount: $info['db0']['keys'] ?? null, // Exemplo, pode variar
+                driverVersion: $info['redis_version'] ?? null,
+                rawStats: $info
+            );
         } catch (\RedisException $e) {
-            return [
-                'connected' => false,
-                'error' => $e->getMessage(),
-            ];
+            // Em caso de erro, retorna um objeto de estatísticas vazio/de erro.
+            return new DriverStats('Redis', null, null, null, ['error' => $e->getMessage()]);
         }
     }
 

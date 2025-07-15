@@ -238,7 +238,7 @@ final class CacheManager
 
         foreach ($this->caches as $name => $cache) {
             try {
-                $metrics[$name] = $cache->getStats()->toArray();
+                $metrics[$name] = $cache->getMetrics()->toArray();
             } catch (\Exception $e) {
                 $this->logger->warning('Failed to get metrics', [
                     'store' => $name,

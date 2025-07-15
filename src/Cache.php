@@ -28,7 +28,6 @@ use KaririCode\Cache\Metrics\MetricsCollector;
 use KaririCode\Cache\Protection\StampedeProtector;
 use KaririCode\Cache\Serializer\NativeSerializer;
 use KaririCode\Cache\Validation\CacheKeyValidator;
-use KaririCode\Contract\ImmutableValue;
 use Psr\Cache\CacheItemInterface;
 use Psr\EventDispatcher\EventDispatcherInterface;
 use Psr\Log\LoggerInterface;
@@ -536,9 +535,9 @@ final class Cache implements CacheContract
     }
 
     /**
-     * Get cache statistics.
+     * Gets high-level performance metrics for the cache instance.
      */
-    public function getStats(): ImmutableValue
+    public function getMetrics(): CacheMetrics
     {
         return new CacheMetrics($this->metricsCollector->getMetrics());
     }
@@ -666,16 +665,6 @@ final class Cache implements CacheContract
     public function getConfig(): array
     {
         return $this->config;
-    }
-
-    /**
-     * Get cache metrics.
-     *
-     * @return array<string, mixed>
-     */
-    public function getMetrics(): array
-    {
-        return $this->metricsCollector->getMetrics();
     }
 
     /**

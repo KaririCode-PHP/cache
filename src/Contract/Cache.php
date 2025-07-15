@@ -57,11 +57,11 @@ interface Cache extends
     public function warm(array $data, \DateInterval|int|null $ttl = null): void;
 
     /**
-     * Gets cache statistics and information.
+     * Gets high-level performance metrics for the cache instance.
      *
-     * @return CacheMetrics cache statistics as an immutable object
+     * @return CacheMetrics cache performance metrics as an immutable object
      */
-    public function getStats(): CacheMetrics;
+    public function getMetrics(): CacheMetrics;
 
     /**
      * Gets the cache name/identifier.

@@ -19,8 +19,6 @@ use Psr\Log\NullLogger;
 
 /**
  * Advanced layered cache manager with intelligent propagation and backend-aware tagging.
- * This class orchestrates multiple cache pools (layers) to provide a single, unified cache.
- * It prioritizes faster layers (like in-memory) over slower ones (like a database).
  */
 final class LayeredCacheManager implements LayeredCache
 {
@@ -41,11 +39,6 @@ final class LayeredCacheManager implements LayeredCache
     {
         $this->layers[$priority] = $pool;
         krsort($this->layers); // Sort layers by priority, descending (higher priority first).
-
-        $this->logger->info('Cache layer added.', [
-            'priority' => $priority,
-            'class' => get_class($pool),
-        ]);
     }
 
     /**
@@ -69,18 +62,14 @@ final class LayeredCacheManager implements LayeredCache
                 // If the item is found, propagate it to higher-priority (faster) layers.
                 $this->propagateToHigherLayers($key, $item, $priority);
 
-                // Ensure the returned item respects our extended contract if it doesn't already.
                 if ($item instanceof CacheItemContract) {
                     return $item;
                 }
-
-                $this->logger->debug('Adapting generic CacheItemInterface to extended contract.', ['layer' => get_class($layer)]);
 
                 return new CacheItem($key, $item->get(), true);
             }
         }
 
-        // If not found in any layer, return an empty miss item.
         return new CacheItem($key);
     }
 
@@ -193,7 +182,6 @@ final class LayeredCacheManager implements LayeredCache
     {
         $success = true;
         foreach ($this->layers as $layer) {
-            // Type-safe check using the Maintainable contract.
             if ($layer instanceof Maintainable) {
                 if (!$layer->maintenance($options)) {
                     $success = false;
@@ -229,6 +217,11 @@ final class LayeredCacheManager implements LayeredCache
         return $newValue;
     }
 
+    public function decrement(string $key, int $step = 1, int $initialValue = 0, mixed $ttl = null): int
+    {
+        return $this->increment($key, -$step, $initialValue, $ttl);
+    }
+
     public function add(string $key, mixed $value, mixed $ttl = null): bool
     {
         if ($this->hasItem($key)) {
@@ -262,7 +255,6 @@ final class LayeredCacheManager implements LayeredCache
                 return false;
             }
         }
-
         $this->logger->warning('No layer supports atomic Compare-And-Swap. Operation cannot be guaranteed.', ['key' => $key]);
 
         return false;
@@ -282,6 +274,18 @@ final class LayeredCacheManager implements LayeredCache
         return $success;
     }
 
+    public function getTags(): array
+    {
+        $allTags = [];
+        foreach ($this->layers as $layer) {
+            if ($layer instanceof TaggablePool) {
+                $allTags = array_merge($allTags, $layer->getTags());
+            }
+        }
+
+        return array_unique($allTags);
+    }
+
     public function subscribeTo(string $key, array $topics): void
     {
         $this->handleTopicSubscription($key, $topics);
@@ -294,7 +298,6 @@ final class LayeredCacheManager implements LayeredCache
                 $index = array_search($key, $this->topicSubscriptions[$topic], true);
                 if (false !== $index) {
                     unset($this->topicSubscriptions[$topic][$index]);
-                    // Clean up empty topic arrays
                     if (empty($this->topicSubscriptions[$topic])) {
                         unset($this->topicSubscriptions[$topic]);
                     }
@@ -319,24 +322,7 @@ final class LayeredCacheManager implements LayeredCache
         return $this->deleteItems(array_unique($keysToInvalidate));
     }
 
-    /**
-     * @return string[]
-     */
-    public function getTags(): array
-    {
-        $allTags = [];
-        foreach ($this->layers as $layer) {
-            if ($layer instanceof TaggablePool) {
-                $allTags = array_merge($allTags, $layer->getTags());
-            }
-        }
-
-        return array_unique($allTags);
-    }
-
-    /**
-     * @return string[]
-     */
+    /** @return string[] */
     public function getSubscribedTopics(string $key): array
     {
         $subscribed = [];
@@ -349,9 +335,7 @@ final class LayeredCacheManager implements LayeredCache
         return $subscribed;
     }
 
-    /**
-     * @return string[]
-     */
+    /** @return string[] */
     public function getSubscribersForTopic(string $topic): array
     {
         return $this->topicSubscriptions[$topic] ?? [];
@@ -377,9 +361,7 @@ final class LayeredCacheManager implements LayeredCache
         }
     }
 
-    /**
-     * @param string[] $topics
-     */
+    /** @param string[] $topics */
     private function handleTopicSubscription(string $key, array $topics): void
     {
         foreach ($topics as $topic) {

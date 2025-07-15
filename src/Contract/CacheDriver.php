@@ -4,8 +4,6 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Contract;
 
-use KaririCode\Contract\ImmutableValue;
-
 /**
  * Interface CacheDriver.
  *
@@ -106,7 +104,7 @@ interface CacheDriver
     /**
      * Gets driver-specific statistics.
      *
-     * @return ImmutableValue driver statistics as an immutable object
+     * @return DriverStats driver statistics as an immutable object
      */
-    public function getStats(): ImmutableValue;
+    public function getStats(): DriverStats;
 }

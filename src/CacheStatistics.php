@@ -7,10 +7,9 @@ namespace KaririCode\Cache;
 use KaririCode\Contract\ImmutableValue;
 
 /**
- * CacheStatistics - Must implement ImmutableValue.
- *
- * Required by:
- * - Cache::getStats(): ImmutableValue
+ * This class encapsulates the statistics of a cache, providing an immutable
+ * representation of various metrics such as hits, misses, hit rate, memory usage,
+ * item count, uptime, and driver-specific statistics.
  */
 final class CacheStatistics implements ImmutableValue
 {

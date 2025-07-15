@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace KaririCode\Cache\Decorator;
 
 use KaririCode\Cache\Contract\Cache;
+use KaririCode\Cache\Contract\CacheMetrics as CacheMetricsContract;
+use KaririCode\Cache\Metrics\CacheMetrics;
 
 /**
  * Cache decorator with rate limiting capabilities.
@@ -183,16 +185,16 @@ final class RateLimitedCache implements Cache
         return $this->cache->invalidateTags($tags);
     }
 
-    public function getMetrics(): array
+    public function getMetrics(): CacheMetricsContract
     {
-        $metrics = $this->cache->getMetrics();
-        $metrics['rate_limiting'] = [
+        $metricsArray = $this->cache->getMetrics()->toArray();
+        $metricsArray['rate_limiting'] = [
             'max_operations_per_second' => $this->maxOperationsPerSecond,
             'current_operations_count' => count($this->operationTimes),
             'window_size' => $this->windowSize,
         ];
 
-        return $metrics;
+        return new CacheMetrics($metricsArray);
     }
 
     public function advanced(): \KaririCode\Cache\Contract\CacheItemPool
