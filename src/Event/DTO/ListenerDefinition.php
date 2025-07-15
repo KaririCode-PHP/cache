@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace KaririCode\Cache\Event\Provider\DTO;
+namespace KaririCode\Cache\Event\DTO;
 
 /**
  * A DTO to provide a strongly-typed structure for listener registrations.

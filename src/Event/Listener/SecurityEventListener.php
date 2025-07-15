@@ -5,8 +5,8 @@ declare(strict_types=1);
 namespace KaririCode\Cache\Event\Listener;
 
 use KaririCode\Cache\Contract\CacheEventListener;
-use KaririCode\Cache\Event\Listener\DTO\IpStats;
-use KaririCode\Cache\Event\Listener\DTO\SecurityContext;
+use KaririCode\Cache\Event\DTO\IpStats;
+use KaririCode\Cache\Event\DTO\SecurityContext;
 use Psr\EventDispatcher\EventDispatcherInterface;
 use Psr\Log\LoggerInterface;
 use Psr\Log\LogLevel;

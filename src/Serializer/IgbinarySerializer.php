@@ -16,16 +16,15 @@ final class IgbinarySerializer implements CacheSerializer, ImmutableValue
     public function __construct()
     {
         if (!extension_loaded('igbinary')) {
-            throw new \RuntimeException('igbinary extension is not loaded');
+            throw new \RuntimeException('The igbinary PHP extension is not loaded.');
         }
     }
 
     public function serialize(mixed $data): string
     {
         $result = \igbinary_serialize($data);
-
         if (null === $result) {
-            throw CacheException::serializationFailed('unknown');
+            throw CacheException::serializationFailed('igbinary');
         }
 
         return $result;
@@ -34,9 +33,8 @@ final class IgbinarySerializer implements CacheSerializer, ImmutableValue
     public function unserialize(string $data): mixed
     {
         $result = \igbinary_unserialize($data);
-
         if (null === $result && $data !== \igbinary_serialize(null)) {
-            throw CacheException::deserializationFailed('unknown');
+            throw CacheException::deserializationFailed('igbinary');
         }
 
         return $result;
@@ -62,7 +60,6 @@ final class IgbinarySerializer implements CacheSerializer, ImmutableValue
     {
         return new SerializerConfiguration([
             'type' => 'igbinary',
-            'compact' => $this->compact,
         ]);
     }
 }

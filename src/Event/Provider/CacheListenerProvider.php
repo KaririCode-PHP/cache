@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Event\Provider;
 
-use KaririCode\Cache\Event\Provider\DTO\ListenerDefinition;
+use KaririCode\Cache\Event\DTO\ListenerDefinition;
 use Psr\EventDispatcher\ListenerProviderInterface;
 
 /**

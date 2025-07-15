@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace KaririCode\Cache\Event\Listener;
 
 use KaririCode\Cache\Contract\CacheEventListener;
-use KaririCode\Cache\Event\Listener\DTO\AnalyticsData;
+use KaririCode\Cache\Event\DTO\AnalyticsData;
 use Psr\EventDispatcher\EventDispatcherInterface;
 
 /**

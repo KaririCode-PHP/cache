@@ -7,10 +7,13 @@ namespace KaririCode\Cache\Serializer;
 use KaririCode\Contract\ImmutableValue;
 
 /**
- * SerializerConfiguration - New immutable configuration class.
+ * An immutable value object for holding serializer configuration.
  */
 final class SerializerConfiguration implements ImmutableValue
 {
+    /**
+     * @param array<string, mixed> $configuration
+     */
     public function __construct(
         private readonly array $configuration
     ) {
@@ -26,6 +29,11 @@ final class SerializerConfiguration implements ImmutableValue
         return isset($this->configuration[$key]);
     }
 
+    /**
+     * Returns all configuration values.
+     *
+     * @return array<string, mixed>
+     */
     public function all(): array
     {
         return $this->configuration;

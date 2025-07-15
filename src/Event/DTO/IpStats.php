@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace KaririCode\Cache\Event\Listener\DTO;
+namespace KaririCode\Cache\Event\DTO;
 
 /**
  * DTO to track security-related statistics for an IP address.

@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace KaririCode\Cache\Event\Listener\DTO;
+namespace KaririCode\Cache\Event\DTO;
 
 /**
  * A simple DTO to hold analytics operation counts.

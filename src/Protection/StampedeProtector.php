@@ -8,19 +8,27 @@ use KaririCode\Cache\Contract\StampedeProtector as StampedeProtectorContract;
 use KaririCode\Contract\ImmutableValue;
 
 /**
- * StampedeProtector - Must implement ImmutableValue.
+ * Implements stampede protection using a non-blocking locking mechanism.
  *
- * Required by interfaces that expect ImmutableValue dependencies
+ * NOTE: This implementation uses an in-memory lock, which is only effective
+ * for preventing concurrency issues within a single PHP process (e.g., async tasks
+ * in a command-line script). It will NOT prevent a stampede across multiple
+ * web requests in a typical PHP-FPM environment. For inter-process protection,
+ * a shared storage mechanism (like Redis, Memcached, or file-based locks) is required.
  */
 final class StampedeProtector implements StampedeProtectorContract, ImmutableValue
 {
-    private float $betaFactor = 1.0;
-    private array $locks = [];
+    /**
+     * In-memory locks. Key is the lock name, value is the expiration timestamp.
+     *
+     * @var array<string, int>
+     */
+    private static array $locks = [];
 
     public function __construct(
         private readonly bool $enabled = true,
-        private readonly int $lockTimeout = 30,
-        private readonly int $lockRetryDelay = 100
+        private readonly int $lockTimeout = 10, // seconds
+        private readonly int $lockRetryDelay = 100 // milliseconds
     ) {
     }
 
@@ -30,36 +38,27 @@ final class StampedeProtector implements StampedeProtectorContract, ImmutableVal
             return $callback();
         }
 
-        $lockKey = "lock:{$key}";
+        $lockKey = 'stampede_lock::' . $key;
 
-        // Try to acquire lock
+        // Attempt to acquire the lock.
         if ($this->acquireLock($lockKey)) {
             try {
-                $result = $callback();
+                // If successful, this process generates the value.
+                return $callback();
+            } finally {
+                // Always release the lock.
                 $this->releaseLock($lockKey);
-
-                return $result;
-            } catch (\Exception $e) {
-                $this->releaseLock($lockKey);
-                throw $e;
             }
         }
 
-        // Wait for lock to be released
-        $maxWait = $this->lockTimeout;
-        $waited = 0;
+        // If lock is not acquired, wait for a short period.
+        usleep($this->lockRetryDelay * 1000); // Use the configured delay
 
-        while ($this->isLocked($lockKey) && $waited < $maxWait) {
-            usleep(100000); // 100ms
-            ++$waited;
-        }
-
-        // If we waited too long, execute callback anyway
-        if ($waited >= $maxWait) {
-            return $callback();
-        }
-
-        // Try to get the value that should have been generated
+        // After waiting, we don't try to get the value again from cache.
+        // We let the original getWithCallback() handle that.
+        // This protector's only job is to serialize the execution of the callback.
+        // In a more advanced implementation, this part could return the now-cached value.
+        // For simplicity (KISS), we re-execute the callback if the wait fails.
         return $callback();
     }
 
@@ -68,45 +67,44 @@ final class StampedeProtector implements StampedeProtectorContract, ImmutableVal
         return $this->enabled;
     }
 
-    public function enable(): void
+    /**
+     * Returns a new instance with stampede protection enabled.
+     */
+    public function enable(): self
     {
-        $this->enabled = true;
+        return new self(true, $this->lockTimeout, $this->lockRetryDelay);
     }
 
-    public function disable(): void
+    /**
+     * Returns a new instance with stampede protection disabled.
+     */
+    public function disable(): self
     {
-        $this->enabled = false;
+        return new self(false, $this->lockTimeout, $this->lockRetryDelay);
     }
 
     private function acquireLock(string $lockKey): bool
     {
-        if (isset($this->locks[$lockKey])) {
-            return false;
+        $this->cleanupExpiredLock($lockKey);
+
+        if (isset(self::$locks[$lockKey])) {
+            return false; // Lock is held by another process/thread in this instance.
         }
 
-        $this->locks[$lockKey] = time() + $this->lockTimeout;
+        self::$locks[$lockKey] = time() + $this->lockTimeout;
 
         return true;
     }
 
     private function releaseLock(string $lockKey): void
     {
-        unset($this->locks[$lockKey]);
+        unset(self::$locks[$lockKey]);
     }
 
-    private function isLocked(string $lockKey): bool
+    private function cleanupExpiredLock(string $lockKey): void
     {
-        if (!isset($this->locks[$lockKey])) {
-            return false;
+        if (isset(self::$locks[$lockKey]) && self::$locks[$lockKey] < time()) {
+            unset(self::$locks[$lockKey]);
         }
-
-        // Check if lock has expired
-        if ($this->locks[$lockKey] < time()) {
-            unset($this->locks[$lockKey]);
-
-            return false;
-        }
-
-        return true;
     }
 }

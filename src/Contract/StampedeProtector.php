@@ -24,7 +24,7 @@ interface StampedeProtector
      * Retrieves an item, applying stampede protection if it's expired.
      *
      * @param string $key the cache key
-     * @param callable $callback the function to generate the value if it's not present or expired
+     * @param callable $callback the function to generate the value
      * @param \DateInterval|int|null $ttl the time-to-live for the item
      *
      * @return mixed the cached or newly generated value
@@ -33,18 +33,16 @@ interface StampedeProtector
 
     /**
      * Checks if stampede protection is enabled.
-     *
-     * @return bool true if enabled, false otherwise
      */
     public function isEnabled(): bool;
 
     /**
-     * Enables stampede protection.
+     * Returns a new instance with stampede protection enabled.
      */
-    public function enable(): void;
+    public function enable(): self;
 
     /**
-     * Disables stampede protection.
+     * Returns a new instance with stampede protection disabled.
      */
-    public function disable(): void;
+    public function disable(): self;
 }
