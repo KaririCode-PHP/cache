@@ -65,9 +65,9 @@ interface MetricsCollector
      * misses: int,
      * hit_rate: float,
      * total_operations: int,
-     * average_hit_time: float,
-     * average_generation_time: float,
-     * uptime: float
+     * average_hit_time_ms: float,
+     * average_generation_time_ms: float,
+     * uptime_seconds: float
      * }
      */
     public function getMetrics(): array;
