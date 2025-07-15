@@ -21,6 +21,8 @@ final class InvalidArgumentException extends AbstractException
     private const CODE_INVALID_SERIALIZER = 1247;
     private const CODE_INVALID_PRIORITY = 1248;
     private const CODE_INVALID_NAMESPACE = 1249;
+    private const CODE_INVALID_VALUE = 1250;
+    private const CODE_INVALID_CONFIGURATION = 1251;
 
     public static function emptyKey(): static
     {
@@ -111,6 +113,24 @@ final class InvalidArgumentException extends AbstractException
             self::CODE_INVALID_NAMESPACE,
             'INVALID_NAMESPACE',
             "Invalid cache namespace: '{$namespace}'"
+        );
+    }
+
+    public static function unserializableValue(string $type): static
+    {
+        return static::createException(
+            self::CODE_INVALID_VALUE, // Supondo um novo código de erro
+            'UNSERIALIZABLE_VALUE',
+            "The provided value of type '{$type}' cannot be serialized."
+        );
+    }
+
+    public static function invalidConfiguration(string $message): static
+    {
+        return static::createException(
+            self::CODE_INVALID_CONFIGURATION, // Supondo um novo código de erro
+            'INVALID_CONFIGURATION',
+            $message
         );
     }
 }

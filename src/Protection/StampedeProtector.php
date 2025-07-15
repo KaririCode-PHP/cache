@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Protection;
 
+use KaririCode\Cache\Contract\StampedeProtector as StampedeProtectorContract;
 use KaririCode\Contract\ImmutableValue;
 
 /**
@@ -11,7 +12,7 @@ use KaririCode\Contract\ImmutableValue;
  *
  * Required by interfaces that expect ImmutableValue dependencies
  */
-final class StampedeProtector implements ImmutableValue
+final class StampedeProtector implements StampedeProtectorContract, ImmutableValue
 {
     private float $betaFactor = 1.0;
     private array $locks = [];

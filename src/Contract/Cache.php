@@ -8,7 +8,7 @@ use KaririCode\Cache\Contract\Behavioral\AtomicOperable;
 use KaririCode\Cache\Contract\Behavioral\Cacheable;
 use KaririCode\Cache\Contract\Behavioral\Taggable;
 use KaririCode\Cache\Contract\Behavioral\TopicSubscribable;
-use KaririCode\Contract\ImmutableValue;
+use KaririCode\Cache\Metrics\CacheMetrics;
 
 /**
  * Interface Cache.
@@ -59,9 +59,9 @@ interface Cache extends
     /**
      * Gets cache statistics and information.
      *
-     * @return ImmutableValue cache statistics as an immutable object
+     * @return CacheMetrics cache statistics as an immutable object
      */
-    public function getStats(): ImmutableValue;
+    public function getStats(): CacheMetrics;
 
     /**
      * Gets the cache name/identifier.

@@ -4,9 +4,8 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Serializer;
 
-use KaririCode\Cache\Contract\Serializer;
+use KaririCode\Cache\Contract\CacheSerializer;
 use KaririCode\Cache\Exception\CacheException;
-use KaririCode\Contract\Cache\CacheSerializer;
 use KaririCode\Contract\ImmutableValue;
 
 /**

@@ -54,16 +54,4 @@ interface AtomicOperable
      * @return bool true if added successfully, false if key already exists
      */
     public function add(string $key, mixed $value, \DateInterval|int|null $ttl = null): bool;
-
-    /**
-     * Compares and swaps a cache value atomically.
-     *
-     * @param string $key the unique cache key
-     * @param mixed $expected the expected current value
-     * @param mixed $newValue the new value to set
-     * @param \DateInterval|int|null $ttl the time-to-live for the item
-     *
-     * @return bool true if the swap was successful, false otherwise
-     */
-    public function compareAndSwap(string $key, mixed $expected, mixed $newValue, \DateInterval|int|null $ttl = null): bool;
 }

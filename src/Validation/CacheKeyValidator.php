@@ -4,16 +4,11 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Validation;
 
-use KaririCode\Contract\Cache\CacheValidator;
+use KaririCode\Cache\Contract\CacheValidator;
 use KaririCode\Contract\ImmutableValue;
 
 /**
  * CacheKeyValidator - Must implement ImmutableValue.
- *
- * Required by:
- * - ValidatorAware::setValidator(ImmutableValue $validator): ValidatorAware
- * - ValidatorAware::getValidator(): ImmutableValue
- * - CacheValidator::getValidationRules(): ImmutableValue
  */
 final class CacheKeyValidator implements CacheValidator, ImmutableValue
 {
@@ -24,6 +19,11 @@ final class CacheKeyValidator implements CacheValidator, ImmutableValue
     public function __construct(
         private readonly array $rules = []
     ) {
+    }
+
+    public function validateValue(mixed $value): bool
+    {
+        return true; // No specific value validation for now
     }
 
     public function validateKey(string $key): bool
@@ -70,5 +70,14 @@ final class CacheKeyValidator implements CacheValidator, ImmutableValue
         }
 
         return $errors;
+    }
+
+    public function getValidationRules(): ImmutableValue
+    {
+        return new ValidationRules([
+            'max_key_length' => self::MAX_KEY_LENGTH,
+            'valid_pattern' => self::VALID_PATTERN,
+            'reserved_keys' => self::RESERVED_KEYS,
+        ]);
     }
 }

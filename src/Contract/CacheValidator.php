@@ -50,27 +50,18 @@ interface CacheValidator
     public function sanitizeKey(string $key): string;
 
     /**
-     * Gets validation errors for a cache key.
-     *
-     * @param string $key the cache key to check
-     *
-     * @return array list of validation errors
-     */
-    public function getKeyValidationErrors(string $key): array;
-
-    /**
-     * Gets validation errors for a cache value.
-     *
-     * @param mixed $value the cache value to check
-     *
-     * @return array list of validation errors
-     */
-    public function getValueValidationErrors(mixed $value): array;
-
-    /**
      * Gets the validation rules as an immutable object.
      *
      * @return ImmutableValue validation rules configuration
      */
     public function getValidationRules(): ImmutableValue;
+
+    /**
+     * Gets validation errors for a specific key.
+     *
+     * @param string $key the cache key to check
+     *
+     * @return array list of validation errors for the key
+     */
+    public function getValidationErrors(string $key): array;
 }

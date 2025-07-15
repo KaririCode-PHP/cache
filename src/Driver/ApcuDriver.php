@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace KaririCode\Cache\Driver;
 
 use KaririCode\Cache\Contract\AtomicCacheDriver;
+use KaririCode\Cache\Contract\Behavioral\CompareAndSwapAware;
 use KaririCode\Cache\Contract\CacheCapabilities;
 use KaririCode\Cache\Contract\CacheDriver;
 use KaririCode\Cache\Contract\TaggableCacheDriver;
@@ -40,7 +41,11 @@ use Psr\Log\NullLogger;
  * @see https://www.php.net/manual/en/book.apcu.php APCu Documentation
  * @see https://www.php.net/manual/en/apcu.configuration.php APCu Configuration
  */
-final class ApcuDriver implements CacheDriver, AtomicCacheDriver, TaggableCacheDriver
+final class ApcuDriver implements
+    CacheDriver,
+    AtomicCacheDriver,
+    TaggableCacheDriver,
+    CompareAndSwapAware
 {
     private string $keyPrefix;
     private LoggerInterface $logger;

@@ -6,9 +6,9 @@ namespace KaririCode\Cache\Config;
 
 use KaririCode\Cache\Contract\CacheDriver;
 use KaririCode\Cache\Contract\CacheDriverFactory;
+use KaririCode\Cache\Contract\CacheSerializer;
 use KaririCode\Cache\Contract\CacheTransactionManager;
 use KaririCode\Cache\Contract\DriverManager as DriverManagerContract;
-use KaririCode\Cache\Contract\Serializer;
 use KaririCode\Cache\Exception\ConfigurationException;
 use KaririCode\Cache\Serializer\NativeSerializer;
 
@@ -21,7 +21,7 @@ final class DriverManager implements DriverManagerContract
     private array $factories = [];
 
     private array $driverOptions = [];
-    private ?Serializer $serializer = null;
+    private ?CacheSerializer $serializer = null;
     private ?CacheTransactionManager $transactionManager = null;
 
     public function __construct()
@@ -68,12 +68,12 @@ final class DriverManager implements DriverManagerContract
         return $factory->createDriver($mergedOptions, $this);
     }
 
-    public function setSerializer(Serializer $serializer): void
+    public function setSerializer(CacheSerializer $serializer): void
     {
         $this->serializer = $serializer;
     }
 
-    public function getSerializer(): ?Serializer
+    public function getSerializer(): ?CacheSerializer
     {
         return $this->serializer;
     }

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Driver;
 
+use KaririCode\Cache\Contract\Behavioral\Maintainable;
 use KaririCode\Cache\Contract\CacheCapabilities;
 use KaririCode\Cache\Contract\CacheDriver;
 use KaririCode\Cache\Contract\Filesystem\DirectoryManager;
@@ -19,7 +20,7 @@ use Psr\Log\LoggerInterface;
  *
  * @see https://www.php.net/manual/en/book.filesystem.php PHP Filesystem Functions
  */
-final class FilesystemDriver implements CacheDriver
+final class FilesystemDriver implements CacheDriver, Maintainable
 {
     public function __construct(
         private FileManager $fileManager,
@@ -189,5 +190,31 @@ final class FilesystemDriver implements CacheDriver
     public function healthCheck(): array
     {
         return $this->statistics->healthCheck();
+    }
+
+    /**
+     * Performs maintenance tasks for the filesystem cache, such as
+     * cleaning up expired files and empty directories.
+     */
+    public function maintenance(array $options = []): bool
+    {
+        $startTime = microtime(true);
+        $this->logger->info('Starting filesystem cache maintenance.');
+
+        try {
+            // A lógica de limpeza que criámos anteriormente
+            $this->cacheOperations->performCleanup();
+            $duration = microtime(true) - $startTime;
+
+            $this->logger->info('Filesystem cache maintenance completed successfully.', [
+                'duration_ms' => round($duration * 1000, 2),
+            ]);
+
+            return true;
+        } catch (\Throwable $e) {
+            $this->logger->error('Filesystem cache maintenance failed.', ['error' => $e->getMessage()]);
+
+            return false;
+        }
     }
 }

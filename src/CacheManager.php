@@ -6,7 +6,6 @@ namespace KaririCode\Cache;
 
 use KaririCode\Cache\Config\CacheConfig;
 use KaririCode\Cache\Contract\Cache;
-use KaririCode\Cache\Contract\CacheManager as CacheManagerContract;
 use KaririCode\Cache\Exception\ConfigurationException;
 use KaririCode\Configurator\Contract\Configurator\ConfigurationManager;
 use Psr\Log\LoggerInterface;
@@ -17,9 +16,12 @@ use Psr\Log\LoggerInterface;
  * This manager receives all dependencies injected and acts as a registry
  * for cache instances without creating its own dependencies.
  */
-final class CacheManager implements CacheManagerContract
+final class CacheManager
 {
+    /** @var array<string, Cache> */
     private array $caches = [];
+
+    /** @var array<string, CacheBuilder> */
     private array $builders = [];
 
     public function __construct(
@@ -129,6 +131,8 @@ final class CacheManager implements CacheManagerContract
 
     /**
      * Get all configured store names.
+     *
+     * @return string[]
      */
     public function getStoreNames(): array
     {
@@ -137,6 +141,8 @@ final class CacheManager implements CacheManagerContract
 
     /**
      * Get all loaded cache instances.
+     *
+     * @return array<string, Cache>
      */
     public function getLoadedCaches(): array
     {
@@ -149,8 +155,7 @@ final class CacheManager implements CacheManagerContract
     public function forget(string $name): bool
     {
         if (isset($this->caches[$name])) {
-            unset($this->caches[$name]);
-            unset($this->builders[$name]);
+            unset($this->caches[$name], $this->builders[$name]);
 
             $this->logger->info('Cache instance forgotten', [
                 'store' => $name,
@@ -197,8 +202,12 @@ final class CacheManager implements CacheManagerContract
 
     /**
      * Warm up all loaded caches with data.
+     *
+     * @param array<string, mixed> $data
+     *
+     * @return array<string, array{success: bool, error?: string}>
      */
-    public function warmAll(array $data, $ttl = null): array
+    public function warmAll(array $data, \DateInterval|int|null $ttl = null): array
     {
         $results = [];
 
@@ -220,6 +229,8 @@ final class CacheManager implements CacheManagerContract
 
     /**
      * Get metrics from all loaded caches.
+     *
+     * @return array<string, array<string, mixed>>
      */
     public function getAllMetrics(): array
     {
@@ -227,7 +238,7 @@ final class CacheManager implements CacheManagerContract
 
         foreach ($this->caches as $name => $cache) {
             try {
-                $metrics[$name] = $cache->getMetrics();
+                $metrics[$name] = $cache->getStats()->toArray();
             } catch (\Exception $e) {
                 $this->logger->warning('Failed to get metrics', [
                     'store' => $name,
@@ -242,6 +253,8 @@ final class CacheManager implements CacheManagerContract
 
     /**
      * Get consolidated statistics.
+     *
+     * @return array<string, mixed>
      */
     public function getStats(): array
     {
@@ -281,6 +294,8 @@ final class CacheManager implements CacheManagerContract
 
     /**
      * Validate all configurations.
+     *
+     * @return string[]
      */
     public function validateConfiguration(): array
     {
@@ -371,7 +386,6 @@ final class CacheManager implements CacheManagerContract
             throw ConfigurationException::invalidConfiguration($storeName, 'Missing driver configuration');
         }
 
-        // Validate layered cache configuration
         if ('layered' === $driver) {
             $layers = $store['layers'] ?? [];
             if (empty($layers)) {

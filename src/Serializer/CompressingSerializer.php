@@ -4,8 +4,7 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Serializer;
 
-use KaririCode\Cache\Contract\Serializer;
-use KaririCode\Contract\Cache\CacheSerializer;
+use KaririCode\Cache\Contract\CacheSerializer;
 use KaririCode\Contract\ImmutableValue;
 
 /**
@@ -65,7 +64,7 @@ final class CompressingSerializer implements CacheSerializer, ImmutableValue
     {
         return new SerializerConfiguration([
             'type' => 'compressing',
-            'inner_serializer' => $this->innerSerializer->getConfiguration(),
+            'inner_serializer' => $this->serializer->getConfiguration(),
             'compression_level' => $this->compressionLevel,
             'threshold' => $this->threshold,
         ]);

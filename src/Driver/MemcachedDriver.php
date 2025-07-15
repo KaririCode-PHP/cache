@@ -5,8 +5,10 @@ declare(strict_types=1);
 namespace KaririCode\Cache\Driver;
 
 use KaririCode\Cache\Contract\AtomicCacheDriver;
+use KaririCode\Cache\Contract\Behavioral\CompareAndSwapAware;
 use KaririCode\Cache\Contract\CacheCapabilities;
 use KaririCode\Cache\Contract\CacheDriver;
+use KaririCode\Cache\Contract\TaggableCacheDriver;
 use KaririCode\Cache\Exception\CacheException;
 use KaririCode\Cache\Exception\InvalidArgumentException;
 use Psr\Log\LoggerInterface;
@@ -46,7 +48,11 @@ use Psr\Log\NullLogger;
  * @see https://www.php.net/manual/en/book.memcached.php Memcached Documentation
  * @see https://github.com/memcached/memcached/wiki Memcached Wiki
  */
-final class MemcachedDriver implements CacheDriver, AtomicCacheDriver
+final class MemcachedDriver implements
+    CacheDriver,
+    AtomicCacheDriver,
+    TaggableCacheDriver,
+    CompareAndSwapAware
 {
     private \Memcached $memcached;
     private string $keyPrefix;

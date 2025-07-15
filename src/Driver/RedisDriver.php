@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace KaririCode\Cache\Driver;
 
 use KaririCode\Cache\Contract\AtomicCacheDriver;
+use KaririCode\Cache\Contract\Behavioral\CompareAndSwapAware;
 use KaririCode\Cache\Contract\CacheCapabilities;
 use KaririCode\Cache\Contract\CacheDriver;
 use KaririCode\Cache\Contract\TaggableCacheDriver;
@@ -41,7 +42,12 @@ use Psr\Log\NullLogger;
  * @see https://redis.io/documentation Redis Official Documentation
  * @see https://github.com/phpredis/phpredis PHPRedis Extension Documentation
  */
-final class RedisDriver implements CacheDriver, AtomicCacheDriver, TaggableCacheDriver, TopicAwareCacheDriver
+final class RedisDriver implements
+    CacheDriver,
+    AtomicCacheDriver,
+    TaggableCacheDriver,
+    TopicAwareCacheDriver,
+    CompareAndSwapAware
 {
     private \Redis $redis;
     private string $keyPrefix;

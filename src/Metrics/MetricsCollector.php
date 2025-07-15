@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Metrics;
 
-use KaririCode\Cache\Contract\CacheMetricsCollector;
+use KaririCode\Cache\Contract\MetricsCollector as CacheMetricsCollectorContract;
 use KaririCode\Contract\ImmutableValue;
 
 /**
@@ -15,7 +15,7 @@ use KaririCode\Contract\ImmutableValue;
  * - MetricsAware::getMetricsCollector(): ImmutableValue
  * - CacheMetricsCollector::getMetrics(): ImmutableValue
  */
-final class MetricsCollector implements CacheMetricsCollector, ImmutableValue
+final class MetricsCollector implements CacheMetricsCollectorContract, ImmutableValue
 {
     private readonly array $metrics;
     private readonly float $startTime;

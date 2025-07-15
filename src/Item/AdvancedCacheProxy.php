@@ -6,8 +6,8 @@ namespace KaririCode\Cache\Item;
 
 use KaririCode\Cache\Contract\CacheItem;
 use KaririCode\Cache\Contract\CacheItemPool;
+use KaririCode\Cache\Contract\CacheSerializer;
 use KaririCode\Cache\Contract\LayeredCache;
-use KaririCode\Cache\Contract\Serializer;
 use Psr\Cache\CacheItemInterface;
 
 /**
@@ -16,10 +16,10 @@ use Psr\Cache\CacheItemInterface;
 final class AdvancedCacheProxy implements CacheItemPool
 {
     private LayeredCache $layeredCache;
-    private Serializer $serializer;
+    private CacheSerializer $serializer;
     private array $deferred = [];
 
-    public function __construct(LayeredCache $layeredCache, Serializer $serializer)
+    public function __construct(LayeredCache $layeredCache, CacheSerializer $serializer)
     {
         $this->layeredCache = $layeredCache;
         $this->serializer = $serializer;

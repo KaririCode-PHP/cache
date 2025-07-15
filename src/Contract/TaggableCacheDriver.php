@@ -31,4 +31,9 @@ interface TaggableCacheDriver extends CacheDriver
      * @return bool true em caso de sucesso, false em caso de falha
      */
     public function invalidateTags(array $tags): bool;
+
+    /**
+     * @return string[]
+     */
+    public function getTags(): array;
 }

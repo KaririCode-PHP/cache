@@ -7,6 +7,7 @@ namespace KaririCode\Cache\Driver\Factory;
 use KaririCode\Cache\Config\DriverManager;
 use KaririCode\Cache\Contract\CacheDriver;
 use KaririCode\Cache\Contract\CacheDriverFactory;
+use KaririCode\Cache\Contract\CacheSerializer;
 use KaririCode\Cache\Contract\DriverManager as DriverManagerContract;
 use KaririCode\Cache\Driver\CapabilityAwareDriver;
 use KaririCode\Cache\Exception\ConfigurationException;
@@ -16,7 +17,7 @@ use KaririCode\Cache\Exception\ConfigurationException;
  */
 final class DriverFactoryRegistry
 {
-    /** @var array<string, string> */
+    /** @var array<string, class-string<CacheDriverFactory>> */
     private array $factories = [];
 
     private bool $wrapWithCapabilities = true;
@@ -45,8 +46,10 @@ final class DriverFactoryRegistry
 
     /**
      * Create a driver instance with optional capability wrapping.
+     *
+     * @param array<string, mixed> $config
      */
-    public function createDriver(string $name, array $config = []): CacheDriver
+    public function createDriver(string $name, array $config = [], ?CacheSerializer $serializer = null): CacheDriver
     {
         if (!isset($this->factories[$name])) {
             throw ConfigurationException::missingDriver($name);
@@ -56,17 +59,14 @@ final class DriverFactoryRegistry
         /** @var CacheDriverFactory $factory */
         $factory = new $factoryClass();
 
-        // Validate configuration
         if (!$factory->validateOptions($config)) {
             throw ConfigurationException::invalidConfiguration($name, 'Invalid driver options provided');
         }
 
-        // Create a simple DriverManager for compatibility
-        $manager = $this->createDriverManager();
+        $manager = $this->createDriverManager($serializer);
 
         $driver = $factory->createDriver($config, $manager);
 
-        // Wrap with capability awareness if enabled
         if ($this->wrapWithCapabilities) {
             return new CapabilityAwareDriver($driver);
         }
@@ -76,6 +76,8 @@ final class DriverFactoryRegistry
 
     /**
      * Get all registered driver names.
+     *
+     * @return string[]
      */
     public function getRegisteredDrivers(): array
     {
@@ -92,6 +94,8 @@ final class DriverFactoryRegistry
 
     /**
      * Get supported options for a driver.
+     *
+     * @return string[]
      */
     public function getSupportedOptions(string $name): array
     {
@@ -137,8 +141,13 @@ final class DriverFactoryRegistry
     /**
      * Create a simple DriverManager implementation for factories.
      */
-    private function createDriverManager(): DriverManagerContract
+    private function createDriverManager(?CacheSerializer $serializer = null): DriverManagerContract
     {
-        return new DriverManager();
+        $manager = new DriverManager();
+        if ($serializer) {
+            $manager->setSerializer($serializer);
+        }
+
+        return $manager;
     }
 }
