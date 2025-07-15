@@ -26,28 +26,36 @@ interface MetricsCollector
      *
      * @param string $key the cache key that was hit
      * @param float $duration the time taken in seconds to retrieve the item
+     *
+     * @return self a new instance with the updated metric
      */
-    public function recordHit(string $key, float $duration): void;
+    public function recordHit(string $key, float $duration): self;
 
     /**
      * Records a cache miss event.
      *
      * @param string $key the cache key that was missed
+     *
+     * @return self a new instance with the updated metric
      */
-    public function recordMiss(string $key): void;
+    public function recordMiss(string $key): self;
 
     /**
      * Records the time taken to generate a new cache value after a miss.
      *
      * @param string $key the cache key for the generated value
      * @param float $duration the time taken in seconds to generate the value
+     *
+     * @return self a new instance with the updated metric
      */
-    public function recordGeneration(string $key, float $duration): void;
+    public function recordGeneration(string $key, float $duration): self;
 
     /**
      * Records a cache clear operation.
+     *
+     * @return self a new instance with the updated metric
      */
-    public function recordClear(): void;
+    public function recordClear(): self;
 
     /**
      * Retrieves a snapshot of the current metrics.
@@ -66,6 +74,8 @@ interface MetricsCollector
 
     /**
      * Resets all collected metrics to their initial state.
+     *
+     * @return self a new, reset instance
      */
-    public function reset(): void;
+    public function reset(): self;
 }

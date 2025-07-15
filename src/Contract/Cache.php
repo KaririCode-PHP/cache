@@ -6,6 +6,7 @@ namespace KaririCode\Cache\Contract;
 
 use KaririCode\Cache\Contract\Behavioral\AtomicOperable;
 use KaririCode\Cache\Contract\Behavioral\Cacheable;
+use KaririCode\Cache\Contract\Behavioral\CompareAndSwapAware;
 use KaririCode\Cache\Contract\Behavioral\Taggable;
 use KaririCode\Cache\Contract\Behavioral\TopicSubscribable;
 use KaririCode\Cache\Metrics\CacheMetrics;
@@ -29,7 +30,8 @@ interface Cache extends
     Cacheable,
     AtomicOperable,
     Taggable,
-    TopicSubscribable
+    TopicSubscribable,
+    CompareAndSwapAware
 {
     /**
      * Enhanced get method with callback and stampede protection.

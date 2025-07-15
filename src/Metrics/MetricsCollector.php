@@ -4,22 +4,44 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Metrics;
 
-use KaririCode\Cache\Contract\MetricsCollector as CacheMetricsCollectorContract;
+use KaririCode\Cache\Contract\MetricsCollector as MetricsCollectorContract;
 use KaririCode\Contract\ImmutableValue;
 
 /**
- * MetricsCollector - Must implement ImmutableValue.
+ * An immutable metrics collector for cache statistics.
  *
- * Required by:
- * - MetricsAware::setMetricsCollector(ImmutableValue $metricsCollector): MetricsAware
- * - MetricsAware::getMetricsCollector(): ImmutableValue
- * - CacheMetricsCollector::getMetrics(): ImmutableValue
+ * This class adheres to the ImmutableValue contract, meaning each operation
+ * that modifies metrics returns a new instance of the collector with the
+ * updated state, ensuring thread-safety and predictable behavior.
  */
-final class MetricsCollector implements CacheMetricsCollectorContract, ImmutableValue
+final class MetricsCollector implements MetricsCollectorContract, ImmutableValue
 {
+    /**
+     * @var array{
+     * hits: int,
+     * misses: int,
+     * generations: int,
+     * clears: int,
+     * total_hit_time: float,
+     * total_generation_time: float,
+     * last_reset: int
+     * }
+     */
     private readonly array $metrics;
+
     private readonly float $startTime;
 
+    /**
+     * @param array{
+     * hits?: int,
+     * misses?: int,
+     * generations?: int,
+     * clears?: int,
+     * total_hit_time?: float,
+     * total_generation_time?: float,
+     * last_reset?: int
+     * } $initialMetrics
+     */
     public function __construct(array $initialMetrics = [])
     {
         $this->metrics = array_merge([
@@ -27,8 +49,6 @@ final class MetricsCollector implements CacheMetricsCollectorContract, Immutable
             'misses' => 0,
             'generations' => 0,
             'clears' => 0,
-            'evictions' => 0,
-            'errors' => 0,
             'total_hit_time' => 0.0,
             'total_generation_time' => 0.0,
             'last_reset' => time(),
@@ -37,74 +57,59 @@ final class MetricsCollector implements CacheMetricsCollectorContract, Immutable
         $this->startTime = microtime(true);
     }
 
-    public function recordHit(string $key, float $duration, array $context = []): void
+    public function recordHit(string $key, float $duration): self
     {
-        // Return new instance with updated metrics
         $newMetrics = $this->metrics;
         ++$newMetrics['hits'];
         $newMetrics['total_hit_time'] += $duration;
-        $this->updateAverages();
-        $this->updateHitRate();
+
+        return new self($newMetrics);
     }
 
-    public function recordMiss(string $key): void
+    public function recordMiss(string $key): self
     {
-        ++$this->metrics['misses'];
-        ++$this->metrics['total_operations'];
-        $this->updateHitRate();
+        $newMetrics = $this->metrics;
+        ++$newMetrics['misses'];
+
+        return new self($newMetrics);
     }
 
-    public function recordGeneration(string $key, float $duration): void
+    public function recordGeneration(string $key, float $duration): self
     {
-        ++$this->metrics['generations'];
-        $this->generationTimes[] = $duration;
-        $this->updateAverages();
+        $newMetrics = $this->metrics;
+        ++$newMetrics['generations'];
+        $newMetrics['total_generation_time'] += $duration;
+
+        return new self($newMetrics);
     }
 
-    public function recordClear(): void
+    public function recordClear(): self
     {
-        ++$this->metrics['clears'];
+        $newMetrics = $this->metrics;
+        ++$newMetrics['clears'];
+
+        return new self($newMetrics);
     }
 
     public function getMetrics(): array
     {
-        return array_merge($this->metrics, [
-            'uptime' => microtime(true) - $this->metrics['start_time'],
-        ]);
-    }
+        $hits = $this->metrics['hits'];
+        $misses = $this->metrics['misses'];
+        $totalOperations = $hits + $misses;
 
-    public function reset(): void
-    {
-        $this->metrics = [
-            'hits' => 0,
-            'misses' => 0,
-            'generations' => 0,
-            'clears' => 0,
-            'hit_rate' => 0.0,
-            'total_operations' => 0,
-            'average_hit_time' => 0.0,
-            'average_generation_time' => 0.0,
-            'start_time' => microtime(true),
+        return [
+            'hits' => $hits,
+            'misses' => $misses,
+            'hit_rate' => $totalOperations > 0 ? round($hits / $totalOperations, 4) : 0.0,
+            'total_operations' => $totalOperations,
+            'average_hit_time' => $hits > 0 ? $this->metrics['total_hit_time'] / $hits : 0.0,
+            'average_generation_time' => $this->metrics['generations'] > 0 ? $this->metrics['total_generation_time'] / $this->metrics['generations'] : 0.0,
+            'uptime' => microtime(true) - $this->startTime,
         ];
-        $this->hitTimes = [];
-        $this->generationTimes = [];
     }
 
-    private function updateHitRate(): void
+    public function reset(): self
     {
-        if ($this->metrics['total_operations'] > 0) {
-            $this->metrics['hit_rate'] = $this->metrics['hits'] / $this->metrics['total_operations'];
-        }
-    }
-
-    private function updateAverages(): void
-    {
-        if (!empty($this->hitTimes)) {
-            $this->metrics['average_hit_time'] = array_sum($this->hitTimes) / count($this->hitTimes);
-        }
-
-        if (!empty($this->generationTimes)) {
-            $this->metrics['average_generation_time'] = array_sum($this->generationTimes) / count($this->generationTimes);
-        }
+        return new self();
     }
 }
