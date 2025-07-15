@@ -52,4 +52,9 @@ interface CacheItem extends CacheItemInterface
      * @return string[] an array of subscribed topics
      */
     public function getTopics(): array;
+
+    /**
+     * Returns the expiration timestamp.
+     */
+    public function getExpiration(): ?\DateTimeInterface;
 }

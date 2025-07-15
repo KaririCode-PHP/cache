@@ -4,48 +4,55 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Item;
 
-use KaririCode\Cache\Contract\CacheItem;
+use KaririCode\Cache\Contract\Behavioral\CompareAndSwapAware;
+use KaririCode\Cache\Contract\CacheItem as CacheItemContact;
 use KaririCode\Cache\Contract\CacheItemPool;
 use KaririCode\Cache\Contract\CacheSerializer;
 use KaririCode\Cache\Contract\LayeredCache;
 use Psr\Cache\CacheItemInterface;
 
 /**
- * Advanced cache proxy providing full PSR-6 compatibility with enhanced features.
+ * PSR-6 CacheItemPool Proxy (Adapter).
+ * Bridges the public-facing PSR-6 standard with the framework's internal cache logic.
  */
 final class AdvancedCacheProxy implements CacheItemPool
 {
-    private LayeredCache $layeredCache;
-    private CacheSerializer $serializer;
+    /**
+     * @var array<string, CacheItemInterface>
+     */
     private array $deferred = [];
 
-    public function __construct(LayeredCache $layeredCache, CacheSerializer $serializer)
-    {
-        $this->layeredCache = $layeredCache;
-        $this->serializer = $serializer;
+    public function __construct(
+        private readonly LayeredCache $layeredCache,
+        private readonly CacheSerializer $serializer
+    ) {
     }
 
     public function getItem(string $key): CacheItemInterface
     {
-        // Check deferred items first
         if (isset($this->deferred[$key])) {
-            return $this->deferred[$key];
+            return clone $this->deferred[$key];
         }
 
         $item = $this->layeredCache->getItem($key);
 
-        if ($item->isHit()) {
-            $value = $this->serializer->unserialize($item->get());
-            $item->set($value);
+        if ($item->isHit() && is_string($rawValue = $item->get())) {
+            $value = $this->serializer->unserialize($rawValue);
+
+            return new CacheItem($key, $value, true);
         }
 
-        return $item;
+        return new CacheItem($key, null, false);
     }
 
+    /**
+     * @param string[] $keys
+     *
+     * @return iterable<string, CacheItemInterface>
+     */
     public function getItems(array $keys = []): iterable
     {
         $items = [];
-
         foreach ($keys as $key) {
             $items[$key] = $this->getItem($key);
         }
@@ -83,16 +90,25 @@ final class AdvancedCacheProxy implements CacheItemPool
 
     public function save(CacheItemInterface $item): bool
     {
-        // Clone the item to avoid modifying the original
-        $serializedItem = clone $item;
-        $serializedItem->set($this->serializer->serialize($item->get()));
+        $internalItem = new CacheItem(
+            $item->getKey(),
+            $this->serializer->serialize($item->get())
+        );
 
-        return $this->layeredCache->save($serializedItem);
+        if ($item instanceof CacheItemContact) {
+            if ($expiration = $item->getExpiration()) {
+                $internalItem->expiresAt($expiration);
+            }
+        }
+
+        unset($this->deferred[$item->getKey()]);
+
+        return $this->layeredCache->save($internalItem);
     }
 
     public function saveDeferred(CacheItemInterface $item): bool
     {
-        $this->deferred[$item->getKey()] = $item;
+        $this->deferred[$item->getKey()] = clone $item;
 
         return true;
     }
@@ -100,13 +116,11 @@ final class AdvancedCacheProxy implements CacheItemPool
     public function commit(): bool
     {
         $success = true;
-
         foreach ($this->deferred as $item) {
             if (!$this->save($item)) {
                 $success = false;
             }
         }
-
         $this->deferred = [];
 
         return $success;
@@ -117,65 +131,27 @@ final class AdvancedCacheProxy implements CacheItemPool
         return $this->layeredCache->increment($key, $step, $initialValue, $ttl);
     }
 
+    public function decrement(string $key, int $step = 1, int $initialValue = 0, mixed $ttl = null): int
+    {
+        return $this->layeredCache->decrement($key, $step, $initialValue, $ttl);
+    }
+
     public function add(string $key, mixed $value, $ttl = null): bool
     {
-        return $this->layeredCache->add($key, $value, $ttl);
+        $serializedValue = $this->serializer->serialize($value);
+
+        return $this->layeredCache->add($key, $serializedValue, $ttl);
     }
 
-    public function invalidateTags(array $tags): bool
+    public function compareAndSwap(string $key, mixed $expected, mixed $value, \DateInterval|int|null $ttl = null): bool
     {
-        return $this->layeredCache->invalidateTags($tags);
-    }
+        if ($this->layeredCache instanceof CompareAndSwapAware) {
+            $serializedExpected = $this->serializer->serialize($expected);
+            $serializedValue = $this->serializer->serialize($value);
 
-    public function subscribeTo(string $key, array $topics): void
-    {
-        $this->layeredCache->subscribeTo($key, $topics);
-    }
-
-    public function invalidateTopics(array $topics): bool
-    {
-        return $this->layeredCache->invalidateTopics($topics);
-    }
-
-    /**
-     * Create a tagged cache item with fluent API.
-     */
-    public function createItem(string $key): CacheItem
-    {
-        return new CacheItem($key);
-    }
-
-    /**
-     * Batch operations for better performance.
-     */
-    public function getItemsWithTags(array $keys, array $tags = []): iterable
-    {
-        $items = $this->getItems($keys);
-
-        if (!empty($tags)) {
-            foreach ($items as $item) {
-                if ($item instanceof CacheItem) {
-                    $item->tag($tags);
-                }
-            }
+            return $this->layeredCache->compareAndSwap($key, $serializedExpected, $serializedValue, $ttl);
         }
 
-        return $items;
-    }
-
-    /**
-     * Advanced invalidation with callback.
-     */
-    public function invalidateBy(callable $predicate): int
-    {
-        $count = 0;
-        $allLayers = $this->layeredCache->getLayers();
-
-        foreach ($allLayers as $layer) {
-            // This would require implementing a scan mechanism in drivers
-            // For now, we'll return 0 as this is an advanced feature
-        }
-
-        return $count;
+        return false;
     }
 }
