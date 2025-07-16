@@ -15,7 +15,11 @@ final class CacheItem implements CacheItemContract
     private mixed $value;
     private bool $isHit;
     private ?\DateTimeInterface $expiration = null;
+
+    /** @var array<string> */
     private array $tags = [];
+
+    /** @var array<string> */
     private array $topics = [];
 
     public function __construct(string $key, mixed $value = null, bool $isHit = false)

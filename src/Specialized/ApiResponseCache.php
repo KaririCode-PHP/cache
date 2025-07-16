@@ -13,95 +13,96 @@ final class ApiResponseCache
 {
     private Cache $cache;
     private string $prefix;
+
+    /**
+     * @var array<string, mixed>
+     */
     private array $config;
 
+    /**
+     * @param array<string, mixed> $config
+     */
     public function __construct(Cache $cache, string $prefix = 'api:', array $config = [])
     {
         $this->cache = $cache;
         $this->prefix = $prefix;
         $this->config = array_merge([
             'default_ttl' => 3600,
-            'max_response_size' => 1024 * 1024, // 1MB
-            'compress_responses' => true,
-            'cache_headers' => true,
+            'max_response_size' => 1024 * 1024,
             'vary_on_headers' => ['Accept', 'Accept-Language'],
         ], $config);
     }
 
+    /**
+     * @param array<string, mixed> $params
+     * @param array<string, string> $headers
+     *
+     * @return array<string, mixed>|null
+     */
     public function getResponse(string $endpoint, array $params = [], array $headers = []): ?array
     {
         $key = $this->generateKey($endpoint, $params, $headers);
         $cached = $this->cache->get($key);
 
-        if ($cached && $this->isValidResponse($cached)) {
+        if (is_array($cached) && $this->isValidResponse($cached)) {
             return $cached;
         }
 
         return null;
     }
 
+    /**
+     * @param array<string, mixed> $params <-- FIX: Type updated to allow associative array
+     * @param array<string, string> $headers
+     * @param array<string, mixed> $response
+     */
     public function cacheResponse(string $endpoint, array $params, array $headers, array $response, ?int $ttl = null): bool
     {
-        if ($this->shouldCacheResponse($response)) {
-            $key = $this->generateKey($endpoint, $params, $headers);
-            $ttl = $ttl ?? $this->calculateTtl($response);
-
-            $cacheData = [
-                'response' => $response,
-                'cached_at' => time(),
-                'endpoint' => $endpoint,
-                'params' => $params,
-                'headers' => $this->config['cache_headers'] ? $headers : [],
-            ];
-
-            $tags = $this->generateTags($endpoint, $params);
-
-            if (method_exists($this->cache, 'setWithTags')) {
-                return $this->cache->setWithTags($key, $cacheData, $ttl, $tags);
-            }
-
-            return $this->cache->set($key, $cacheData, $ttl);
+        if (!$this->shouldCacheResponse($response)) {
+            return false;
         }
 
-        return false;
+        $key = $this->generateKey($endpoint, $params, $headers);
+        $ttl = $ttl ?? $this->calculateTtl($response);
+
+        $cacheData = [
+            'response' => $response,
+            'cached_at' => time(),
+            'endpoint' => $endpoint,
+            'params' => $params,
+            'headers' => $this->config['vary_on_headers'],
+        ];
+
+        $tags = $this->generateTags($endpoint, $params);
+
+        return $this->cache->setWithTags($key, $cacheData, $tags, $ttl);
     }
 
     public function invalidateEndpoint(string $endpoint): bool
     {
         $tag = $this->prefix . 'endpoint:' . hash('sha256', $endpoint);
 
-        if (method_exists($this->cache, 'invalidateTags')) {
-            return $this->cache->invalidateTags([$tag]);
-        }
-
-        return true;
+        return $this->cache->invalidateTags([$tag]);
     }
 
-    public function invalidatePattern(string $pattern): bool
-    {
-        $tag = $this->prefix . 'pattern:' . hash('sha256', $pattern);
-
-        if (method_exists($this->cache, 'invalidateTags')) {
-            return $this->cache->invalidateTags([$tag]);
-        }
-
-        return true;
-    }
-
+    /**
+     * @param array<int, array<string, mixed>> $parameterSets
+     *
+     * @return array<string, array{success: bool, cached: bool, error?: string}>
+     */
     public function warmUpEndpoint(string $endpoint, array $parameterSets = [], ?callable $fetcher = null): array
     {
         $results = [];
-
         foreach ($parameterSets as $params) {
             $key = $this->generateKey($endpoint, $params);
-
             if (!$this->cache->has($key) && $fetcher) {
                 try {
                     $response = $fetcher($endpoint, $params);
                     $this->cacheResponse($endpoint, $params, [], $response);
                     $results[$key] = ['success' => true, 'cached' => true];
                 } catch (\Exception $e) {
-                    $results[$key] = ['success' => false, 'error' => $e->getMessage()];
+                    // FIX: Ensure the returned array shape is consistent on error.
+                    $results[$key] = ['success' => false, 'cached' => false, 'error' => $e->getMessage()];
                 }
             } else {
                 $results[$key] = ['success' => true, 'cached' => false];
@@ -111,9 +112,12 @@ final class ApiResponseCache
         return $results;
     }
 
+    /**
+     * @return array<string, mixed>
+     */
     public function getStats(): array
     {
-        $metrics = method_exists($this->cache, 'getMetrics') ? $this->cache->getMetrics() : [];
+        $metrics = method_exists($this->cache, 'getMetrics') ? $this->cache->getMetrics()->toArray() : [];
 
         return [
             'cache_metrics' => $metrics,
@@ -125,38 +129,36 @@ final class ApiResponseCache
     private function generateKey(string $endpoint, array $params = [], array $headers = []): string
     {
         $keyParts = [$endpoint];
-
         if (!empty($params)) {
             ksort($params);
             $keyParts[] = http_build_query($params);
         }
 
-        foreach ($this->config['vary_on_headers'] as $header) {
-            if (isset($headers[$header])) {
-                $keyParts[] = $header . ':' . $headers[$header];
+        if (is_array($this->config['vary_on_headers'])) {
+            foreach ($this->config['vary_on_headers'] as $header) {
+                if (isset($headers[$header])) {
+                    $keyParts[] = $header . ':' . $headers[$header];
+                }
             }
         }
 
         return $this->prefix . hash('sha256', implode('|', $keyParts));
     }
 
+    /**
+     * @return string[]
+     */
     private function generateTags(string $endpoint, array $params): array
     {
         $tags = [];
-
-        // Tag by endpoint
         $tags[] = $this->prefix . 'endpoint:' . hash('sha256', $endpoint);
 
-        // Tag by resource type (extract from endpoint)
         if (preg_match('/\/api\/v\d+\/([^\/]+)/', $endpoint, $matches)) {
             $tags[] = $this->prefix . 'resource:' . $matches[1];
         }
-
-        // Tag by specific parameters
         if (isset($params['id'])) {
             $tags[] = $this->prefix . 'id:' . $params['id'];
         }
-
         if (isset($params['user_id'])) {
             $tags[] = $this->prefix . 'user:' . $params['user_id'];
         }
@@ -166,21 +168,18 @@ final class ApiResponseCache
 
     private function shouldCacheResponse(array $response): bool
     {
-        // Don't cache error responses
         if (isset($response['error']) || isset($response['errors'])) {
             return false;
         }
 
-        // Don't cache responses that are too large
         $size = strlen(serialize($response));
-        if ($size > $this->config['max_response_size']) {
+        if ($size > ($this->config['max_response_size'] ?? 1048576)) {
             return false;
         }
 
-        // Don't cache responses with cache-control headers preventing caching
         if (isset($response['headers']['Cache-Control'])) {
             $cacheControl = $response['headers']['Cache-Control'];
-            if (false !== strpos($cacheControl, 'no-cache') || false !== strpos($cacheControl, 'no-store')) {
+            if (is_string($cacheControl) && (str_contains($cacheControl, 'no-cache') || str_contains($cacheControl, 'no-store'))) {
                 return false;
             }
         }
@@ -188,44 +187,29 @@ final class ApiResponseCache
         return true;
     }
 
+    /**
+     * @param array<string, mixed> $cached
+     */
     private function isValidResponse(array $cached): bool
     {
-        // Check if the response structure is valid
-        if (!isset($cached['response'], $cached['cached_at'])) {
-            return false;
-        }
-
-        // Additional validation can be added here
-        return true;
+        return isset($cached['response'], $cached['cached_at']);
     }
 
     private function calculateTtl(array $response): int
     {
-        // Use Cache-Control header if available
         if (isset($response['headers']['Cache-Control'])) {
             $cacheControl = $response['headers']['Cache-Control'];
-            if (preg_match('/max-age=(\d+)/', $cacheControl, $matches)) {
+            if (is_string($cacheControl) && preg_match('/max-age=(\d+)/', $cacheControl, $matches)) {
                 return (int) $matches[1];
             }
         }
-
-        // Use Expires header if available
         if (isset($response['headers']['Expires'])) {
-            $expires = strtotime($response['headers']['Expires']);
+            $expires = strtotime((string) $response['headers']['Expires']);
             if ($expires > time()) {
                 return $expires - time();
             }
         }
 
-        // Default TTL based on response characteristics
-        $dataSize = strlen(serialize($response));
-
-        if ($dataSize > 100 * 1024) { // Large responses
-            return 7200; // 2 hours
-        } elseif ($dataSize > 10 * 1024) { // Medium responses
-            return 3600; // 1 hour
-        } else { // Small responses
-            return 1800; // 30 minutes
-        }
+        return ($this->config['default_ttl'] ?? 3600) * 1;
     }
 }

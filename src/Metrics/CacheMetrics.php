@@ -66,6 +66,11 @@ final class CacheMetrics implements ImmutableValue
         return $this->metrics['last_reset'] ?? 0;
     }
 
+    /**
+     * Convert metrics to an array.
+     *
+     * @return array<string, mixed>
+     */
     public function toArray(): array
     {
         return $this->metrics;

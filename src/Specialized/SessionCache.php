@@ -7,7 +7,7 @@ namespace KaririCode\Cache\Specialized;
 use KaririCode\Cache\Contract\Cache;
 
 /**
- * Specialized cache for user session data.
+ * A specialized cache helper for managing user session data.
  */
 final class SessionCache
 {
@@ -22,13 +22,21 @@ final class SessionCache
         $this->defaultTtl = $defaultTtl;
     }
 
+    /**
+     * @return array<string, mixed>|null
+     */
     public function getSessionData(string $sessionId): ?array
     {
         $key = $this->getSessionKey($sessionId);
+        $data = $this->cache->get($key);
 
-        return $this->cache->get($key);
+        // FIX: Validate that the data retrieved from cache is actually an array.
+        return is_array($data) ? $data : null;
     }
 
+    /**
+     * @param array<string, mixed> $data
+     */
     public function setSessionData(string $sessionId, array $data, ?int $ttl = null): bool
     {
         $key = $this->getSessionKey($sessionId);
@@ -36,11 +44,17 @@ final class SessionCache
         return $this->cache->set($key, $data, $ttl ?? $this->defaultTtl);
     }
 
+    /**
+     * @param array<string, mixed> $data
+     */
     public function updateSessionData(string $sessionId, array $data, ?int $ttl = null): bool
     {
         $key = $this->getSessionKey($sessionId);
-        $existing = $this->cache->get($key, []);
-        $merged = array_merge($existing, $data);
+
+        // FIX: Use the now-safe getSessionData() method to ensure we start with an array.
+        $existingData = $this->getSessionData($sessionId) ?? [];
+
+        $merged = array_merge($existingData, $data);
 
         return $this->cache->set($key, $merged, $ttl ?? $this->defaultTtl);
     }
@@ -55,7 +69,7 @@ final class SessionCache
     public function touchSession(string $sessionId, ?int $ttl = null): bool
     {
         $key = $this->getSessionKey($sessionId);
-        $data = $this->cache->get($key);
+        $data = $this->getSessionData($sessionId); // Use the safe method
 
         if (null === $data) {
             return false;
