@@ -31,7 +31,7 @@ interface AtomicCacheDriver extends CacheDriver
      *
      * @return int the new value after the increment
      */
-    public function increment(string $key, int $step = 1, int $initialValue = 0, $ttl = null): int;
+    public function increment(string $key, int $step = 1, int $initialValue = 0, \DateInterval|int|null $ttl = null): int;
 
     /**
      * Atomically adds an item to the cache only if the key doesn't already exist.
@@ -42,5 +42,5 @@ interface AtomicCacheDriver extends CacheDriver
      *
      * @return bool true if the item was set, false if the key already existed
      */
-    public function add(string $key, mixed $value, $ttl = null): bool;
+    public function add(string $key, mixed $value, \DateInterval|int|null $ttl = null): bool;
 }
