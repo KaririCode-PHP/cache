@@ -8,6 +8,7 @@ use KaririCode\Cache\Contract\AtomicCacheDriver;
 use KaririCode\Cache\Contract\Behavioral\CompareAndSwapAware;
 use KaririCode\Cache\Contract\CacheCapabilities;
 use KaririCode\Cache\Contract\CacheDriver;
+use KaririCode\Cache\Contract\DriverStats as DriverStatsContract;
 use KaririCode\Cache\Contract\TaggableCacheDriver;
 use KaririCode\Cache\Exception\CacheException;
 use KaririCode\Cache\Exception\InvalidArgumentException;
@@ -16,37 +17,6 @@ use Psr\Log\NullLogger;
 
 /**
  * Enterprise-grade Memcached driver with comprehensive error handling and monitoring.
- *
- * Features:
- * - Robust connection management with failover
- * - Performance monitoring and statistics
- * - Comprehensive error handling and logging
- * - Batch operations optimization
- * - Memory-efficient operations
- * - Security validation and sanitization
- * - Automatic server health monitoring
- *
- * Performance Optimizations:
- * - Connection pooling and persistence
- * - Efficient batch operations
- * - Optimized serialization handling
- * - Server load balancing
- * - Network timeout management
- *
- * Security Features:
- * - Input validation and sanitization
- * - Size limits and quotas
- * - Connection security (SASL auth)
- * - Audit logging
- * - Rate limiting capabilities
- *
- * Limitations:
- * - No native tagging support (simulated with warning)
- * - No topic subscription support
- * - Limited transaction support
- *
- * @see https://www.php.net/manual/en/book.memcached.php Memcached Documentation
- * @see https://github.com/memcached/memcached/wiki Memcached Wiki
  */
 final class MemcachedDriver implements
     CacheDriver,
@@ -58,16 +28,13 @@ final class MemcachedDriver implements
     private string $keyPrefix;
     private LoggerInterface $logger;
     private bool $connected = false;
-    private array $serverStats = [];
     private int $operationCount = 0;
 
     // Security and performance limits
-    private const MAX_KEY_LENGTH = 250; // Memcached limit
+    private const MAX_KEY_LENGTH = 250;
     private const MAX_VALUE_SIZE = 1024 * 1024; // 1MB default limit
     private const MAX_BATCH_SIZE = 1000;
-    private const CONNECTION_TIMEOUT = 5;
-    private const STATS_CACHE_TIME = 60; // Cache stats for 60 seconds
-    private const HEALTH_CHECK_INTERVAL = 100; // Check every 100 operations
+    private const HEALTH_CHECK_INTERVAL = 100;
 
     public function __construct(\Memcached $memcached, string $keyPrefix = 'cache:', ?LoggerInterface $logger = null)
     {
@@ -100,7 +67,7 @@ final class MemcachedDriver implements
 
             $this->logger->debug('Memcached get successful', [
                 'key' => $key,
-                'size' => strlen(serialize($value)),
+                'size' => is_string($value) ? strlen($value) : null,
             ]);
 
             return $value;
@@ -167,7 +134,6 @@ final class MemcachedDriver implements
             $result = $this->memcached->delete($this->keyPrefix . $key);
             $resultCode = $this->memcached->getResultCode();
 
-            // Consider it successful if key didn't exist
             if (\Memcached::RES_NOTFOUND === $resultCode) {
                 return true;
             }
@@ -211,16 +177,19 @@ final class MemcachedDriver implements
         }
     }
 
+    /**
+     * @param string[] $keys
+     *
+     * @return array<string, mixed>
+     */
     public function getMultiple(array $keys): array
     {
         $this->validateKeys($keys);
-
         if (empty($keys)) {
             return [];
         }
 
         try {
-            // Process in batches to avoid memory issues
             $results = [];
             $batches = array_chunk($keys, self::MAX_BATCH_SIZE);
 
@@ -230,15 +199,12 @@ final class MemcachedDriver implements
 
                 if (false === $batchResults) {
                     $this->handleMemcachedError('getMultiple', implode(',', $batch), $this->memcached->getResultCode());
-
-                    // Fill with nulls for this batch
                     foreach ($batch as $key) {
                         $results[$key] = null;
                     }
                     continue;
                 }
 
-                // Map results back to original keys
                 foreach ($batch as $key) {
                     $prefixedKey = $this->keyPrefix . $key;
                     $results[$key] = $batchResults[$prefixedKey] ?? null;
@@ -254,7 +220,6 @@ final class MemcachedDriver implements
         } catch (\Throwable $e) {
             $this->handleError('getMultiple', implode(',', $keys), $e);
 
-            // Return nulls for all keys on error
             return array_fill_keys($keys, null);
         }
     }
@@ -262,7 +227,6 @@ final class MemcachedDriver implements
     public function setMultiple(array $values, ?\DateTimeInterface $expiration = null): bool
     {
         $this->validateMultipleValues($values);
-
         if (empty($values)) {
             return true;
         }
@@ -302,15 +266,12 @@ final class MemcachedDriver implements
     public function deleteMultiple(array $keys): bool
     {
         $this->validateKeys($keys);
-
         if (empty($keys)) {
             return true;
         }
 
         try {
             $prefixedKeys = array_map(fn ($k) => $this->keyPrefix . $k, $keys);
-
-            // Memcached doesn't have deleteMulti, so delete individually
             $success = true;
             $deletedCount = 0;
 
@@ -343,7 +304,7 @@ final class MemcachedDriver implements
         }
     }
 
-    public function increment(string $key, int $step = 1, int $initialValue = 0, $ttl = null): int
+    public function increment(string $key, int $step = 1, int $initialValue = 0, \DateInterval|int|null $ttl = null): int
     {
         $this->validateKey($key);
         $this->validateStep($step);
@@ -353,38 +314,18 @@ final class MemcachedDriver implements
         $ttlValue = $this->calculateTtl($ttl);
 
         try {
-            // Try atomic increment first
-            if ($step > 0) {
-                $result = $this->memcached->increment($fullKey, $step);
-            } else {
-                $result = $this->memcached->decrement($fullKey, abs($step));
-            }
+            $result = ($step > 0) ? $this->memcached->increment($fullKey, $step) : $this->memcached->decrement($fullKey, abs($step));
 
             if (false === $result) {
                 $resultCode = $this->memcached->getResultCode();
-
                 if (\Memcached::RES_NOTFOUND === $resultCode) {
-                    // Key doesn't exist, create it with initial value
                     $newValue = $initialValue + $step;
-                    $addResult = $this->memcached->add($fullKey, $newValue, $ttlValue);
-
-                    if ($addResult) {
-                        $this->logger->debug('Memcached increment initialized', [
-                            'key' => $key,
-                            'initial_value' => $initialValue,
-                            'step' => $step,
-                            'result' => $newValue,
-                        ]);
+                    if ($this->memcached->add($fullKey, $newValue, $ttlValue)) {
+                        $this->logger->debug('Memcached increment initialized', ['key' => $key, 'result' => $newValue]);
 
                         return $newValue;
                     }
-
-                    // Race condition - try increment again
-                    if ($step > 0) {
-                        $result = $this->memcached->increment($fullKey, $step);
-                    } else {
-                        $result = $this->memcached->decrement($fullKey, abs($step));
-                    }
+                    $result = ($step > 0) ? $this->memcached->increment($fullKey, $step) : $this->memcached->decrement($fullKey, abs($step));
                 }
 
                 if (false === $result) {
@@ -393,11 +334,7 @@ final class MemcachedDriver implements
                 }
             }
 
-            $this->logger->debug('Memcached increment successful', [
-                'key' => $key,
-                'step' => $step,
-                'result' => $result,
-            ]);
+            $this->logger->debug('Memcached increment successful', ['key' => $key, 'step' => $step, 'result' => $result]);
 
             return (int) $result;
         } catch (\Throwable $e) {
@@ -406,7 +343,7 @@ final class MemcachedDriver implements
         }
     }
 
-    public function add(string $key, mixed $value, $ttl = null): bool
+    public function add(string $key, mixed $value, \DateInterval|int|null $ttl = null): bool
     {
         $this->validateKey($key);
         $this->validateValue($value);
@@ -418,22 +355,15 @@ final class MemcachedDriver implements
 
             if (!$result) {
                 $resultCode = $this->memcached->getResultCode();
-
                 if (\Memcached::RES_NOTSTORED === $resultCode) {
-                    // Key already exists, this is expected behavior
-                    return false;
+                    return false; // Key already exists
                 }
-
                 $this->handleMemcachedError('add', $key, $resultCode);
 
                 return false;
             }
 
-            $this->logger->debug('Memcached add successful', [
-                'key' => $key,
-                'size' => strlen(serialize($value)),
-                'ttl' => $ttlValue,
-            ]);
+            $this->logger->debug('Memcached add successful', ['key' => $key]);
 
             return true;
         } catch (\Throwable $e) {
@@ -443,133 +373,92 @@ final class MemcachedDriver implements
         }
     }
 
-    /**
-     * Simulated tag invalidation (not natively supported by Memcached).
-     */
+    public function compareAndSwap(string $key, mixed $expected, mixed $value, \DateInterval|int|null $ttl = null): bool
+    {
+        $this->validateKey($key);
+
+        // A forma correta de obter o token CAS é com a flag GET_EXTENDED
+        $result = $this->memcached->get($this->keyPrefix . $key, null, \Memcached::GET_EXTENDED);
+
+        // Se o get falhar ou a chave não existir, a operação falha.
+        if (!is_array($result) || !isset($result['cas']) || !isset($result['value'])) {
+            return false;
+        }
+
+        // Compara o valor atual com o esperado
+        if ($result['value'] === $expected) {
+            $ttlValue = $this->calculateTtl($ttl);
+
+            // Usa o token CAS obtido para fazer a troca atômica
+            return $this->memcached->cas($result['cas'], $this->keyPrefix . $key, $value, $ttlValue);
+        }
+
+        return false;
+    }
+
     public function invalidateTags(array $tags): bool
     {
         $this->validateTags($tags);
-
-        // Memcached doesn't support native tagging
-        $this->logger->warning('Tag invalidation requested but not natively supported by Memcached', [
-            'tags' => $tags,
-            'driver' => 'memcached',
-        ]);
-
-        // In a real implementation, you might:
-        // 1. Use a separate tagging system with Redis
-        // 2. Implement versioning-based invalidation
-        // 3. Use key namespaces for grouping
-
-        return true; // Return true to not break the application
-    }
-
-    /**
-     * Topic subscription (not supported by Memcached).
-     */
-    public function subscribeTo(string $key, array $topics): void
-    {
-        $this->validateKey($key);
-        $this->validateTopics($topics);
-
-        // Memcached doesn't support topic subscription
-        $this->logger->debug('Topic subscription requested but not supported by Memcached', [
-            'key' => $key,
-            'topics' => $topics,
-        ]);
-    }
-
-    /**
-     * Topic invalidation (not supported by Memcached).
-     */
-    public function invalidateTopics(array $topics): bool
-    {
-        $this->validateTopics($topics);
-
-        $this->logger->debug('Topic invalidation requested but not supported by Memcached', [
-            'topics' => $topics,
-        ]);
+        $this->logger->warning('Tag invalidation is not natively supported by Memcached.', ['tags' => $tags]);
 
         return true;
     }
 
-    public function hasCapability(string $capability): bool
+    /**
+     * @return string[]
+     */
+    public function getTags(): array
     {
-        return match ($capability) {
-            CacheCapabilities::ATOMIC_OPERATIONS => true,
-            CacheCapabilities::TAGGING => false,
-            CacheCapabilities::TOPICS => false,
-            CacheCapabilities::TRANSACTIONS => false,
-            default => false,
-        };
+        $this->logger->warning('getTags is not natively supported by Memcached.');
+
+        return [];
     }
 
     /**
-     * Get comprehensive Memcached statistics.
+     * @return list<string>
      */
-    public function getStats(): array
+    public function getCapabilities(): array
+    {
+        return [
+            CacheCapabilities::ATOMIC_OPERATIONS,
+        ];
+    }
+
+    public function getStats(): DriverStatsContract
     {
         try {
-            // Cache expensive stats call
-            $statsKey = $this->keyPrefix . 'memcached_stats_cache';
-            $cached = $this->memcached->get($statsKey);
-
-            if (false !== $cached && is_array($cached)) {
-                return $cached;
-            }
-
-            $servers = $this->memcached->getServerList();
-            $stats = $this->memcached->getStats();
+            $stats = $this->memcached->getStats() ?: [];
+            /** @var array<string, string>|false $version */
             $version = $this->memcached->getVersion();
+            $aggregated = $this->aggregateServerStats($stats);
 
-            $aggregatedStats = [
-                'servers' => $servers,
-                'server_count' => count($servers),
-                'versions' => $version,
-                'prefix' => $this->keyPrefix,
-                'operations_count' => $this->operationCount,
-                'connected' => $this->connected,
-                'aggregated' => $this->aggregateServerStats($stats),
-            ];
-
-            // Cache stats for a short time
-            $this->memcached->set($statsKey, $aggregatedStats, self::STATS_CACHE_TIME);
-
-            return $aggregatedStats;
+            return new DriverStats(
+                driverName: 'Memcached',
+                memoryUsage: $aggregated['total_bytes'], // O erro aqui será resolvido pelo PHPDoc abaixo
+                itemCount: $aggregated['total_items'],   // O erro aqui será resolvido pelo PHPDoc abaixo
+                driverVersion: is_array($version) ? (string) reset($version) : null,
+                rawStats: $stats
+            );
         } catch (\Throwable $e) {
-            return [
-                'error' => $e->getMessage(),
-                'prefix' => $this->keyPrefix,
-                'operations_count' => $this->operationCount,
-                'connected' => $this->connected,
-            ];
+            return new DriverStats('Memcached', null, null, null, ['error' => $e->getMessage()]);
         }
     }
 
     /**
-     * Health check for monitoring.
+     * @return array{status: string, write_success?: bool, read_success?: bool, delete_success?: bool, latency_ms?: float, server_count?: int, healthy_servers?: int, memcached_version?: string|null, error?: string, connected?: bool}
      */
     public function healthCheck(): array
     {
         try {
             $testKey = $this->keyPrefix . 'health_check_' . uniqid();
             $testValue = 'health_check_value';
-
             $start = microtime(true);
 
-            // Test write
             $writeResult = $this->memcached->set($testKey, $testValue, 10);
-
-            // Test read
             $readResult = $this->memcached->get($testKey);
-
-            // Test delete
             $deleteResult = $this->memcached->delete($testKey);
-
             $latency = microtime(true) - $start;
-
-            $servers = $this->memcached->getServerList();
-            $stats = $this->memcached->getStats();
+            $stats = $this->memcached->getStats() ?: [];
 
             return [
                 'status' => 'healthy',
@@ -577,7 +466,7 @@ final class MemcachedDriver implements
                 'read_success' => $readResult === $testValue,
                 'delete_success' => $deleteResult,
                 'latency_ms' => round($latency * 1000, 2),
-                'server_count' => count($servers),
+                'server_count' => count($this->memcached->getServerList()),
                 'healthy_servers' => $this->countHealthyServers($stats),
                 'memcached_version' => $this->getAnyVersion(),
             ];
@@ -590,19 +479,14 @@ final class MemcachedDriver implements
         }
     }
 
-    // Private helper methods...
-
     private function validateKey(string $key): void
     {
         if (empty($key)) {
             throw InvalidArgumentException::emptyKey();
         }
-
         if (strlen($key) > self::MAX_KEY_LENGTH) {
             throw InvalidArgumentException::keyTooLong($key, self::MAX_KEY_LENGTH);
         }
-
-        // Memcached key validation - no spaces or control characters
         if (preg_match('/[\s\x00-\x1F\x7F]/', $key)) {
             throw InvalidArgumentException::invalidKeyFormat($key . ' (contains invalid characters)');
         }
@@ -613,7 +497,6 @@ final class MemcachedDriver implements
         if (count($keys) > self::MAX_BATCH_SIZE) {
             throw InvalidArgumentException::invalidKeyFormat('Too many keys: ' . count($keys));
         }
-
         foreach ($keys as $key) {
             if (!is_string($key)) {
                 throw InvalidArgumentException::invalidKeyFormat('Key must be string');
@@ -625,7 +508,6 @@ final class MemcachedDriver implements
     private function validateValue(mixed $value): void
     {
         $serialized = serialize($value);
-
         if (strlen($serialized) > self::MAX_VALUE_SIZE) {
             throw InvalidArgumentException::invalidKeyFormat('Value too large: ' . strlen($serialized) . ' bytes');
         }
@@ -636,7 +518,6 @@ final class MemcachedDriver implements
         if (count($values) > self::MAX_BATCH_SIZE) {
             throw InvalidArgumentException::invalidKeyFormat('Too many values: ' . count($values));
         }
-
         foreach ($values as $key => $value) {
             if (!is_string($key)) {
                 throw InvalidArgumentException::invalidKeyFormat('Key must be string');
@@ -655,15 +536,6 @@ final class MemcachedDriver implements
         }
     }
 
-    private function validateTopics(array $topics): void
-    {
-        foreach ($topics as $topic) {
-            if (!is_string($topic) || empty($topic)) {
-                throw InvalidArgumentException::invalidTopic($topic);
-            }
-        }
-    }
-
     private function validateStep(int $step): void
     {
         if (0 === $step) {
@@ -673,28 +545,21 @@ final class MemcachedDriver implements
 
     private function sanitizePrefix(string $prefix): string
     {
-        // Remove any problematic characters for Memcached keys
-        $sanitized = preg_replace('/[^\w\-\.\:]/', '_', $prefix);
+        $sanitized = (string) preg_replace('/[^\w\-\.\:]/', '_', $prefix);
 
-        return substr($sanitized, 0, 50); // Limit prefix length
+        return substr($sanitized, 0, 50);
     }
 
-    private function calculateTtl($ttl): int
+    private function calculateTtl(\DateTimeInterface|int|\DateInterval|null $ttl): int
     {
-        if (null === $ttl) {
-            return 0; // No expiration
-        }
-
-        if (is_int($ttl)) {
-            return max(0, $ttl);
-        }
-
-        if ($ttl instanceof \DateTimeInterface) {
-            return max(0, $ttl->getTimestamp() - time());
-        }
-
         if ($ttl instanceof \DateInterval) {
-            return max(0, (new \DateTime())->add($ttl)->getTimestamp() - time());
+            return (new \DateTimeImmutable())->add($ttl)->getTimestamp() - time();
+        }
+        if ($ttl instanceof \DateTimeInterface) {
+            return $ttl->getTimestamp() - time();
+        }
+        if (is_int($ttl)) {
+            return $ttl > 0 ? $ttl : 0;
         }
 
         return 0;
@@ -703,47 +568,27 @@ final class MemcachedDriver implements
     private function verifyConnection(): void
     {
         try {
-            $servers = $this->memcached->getServerList();
-
-            if (empty($servers)) {
+            if (empty($this->memcached->getServerList())) {
                 throw new \RuntimeException('No Memcached servers configured');
             }
-
-            $version = $this->memcached->getVersion();
-
-            if (empty($version)) {
+            if (empty($this->memcached->getVersion())) {
                 throw new \RuntimeException('Cannot connect to Memcached servers');
             }
-
             $this->connected = true;
         } catch (\Throwable $e) {
             $this->connected = false;
-            $this->logger->error('Memcached connection verification failed', [
-                'error' => $e->getMessage(),
-            ]);
-
+            $this->logger->error('Memcached connection verification failed', ['error' => $e->getMessage()]);
             throw CacheException::connectionFailed('memcached', $e);
         }
     }
 
     private function handleMemcachedError(string $operation, string $key, int $resultCode): void
     {
-        $errorMessage = $this->getResultCodeMessage($resultCode);
-
+        $errorMessage = $this->memcached->getResultMessage();
         $this->logger->error('Memcached operation failed', [
-            'operation' => $operation,
-            'key' => $key,
-            'result_code' => $resultCode,
-            'error_message' => $errorMessage,
+            'operation' => $operation, 'key' => $key, 'result_code' => $resultCode, 'error_message' => $errorMessage,
         ]);
-
-        // Update connection status on certain errors
-        if (in_array($resultCode, [
-            \Memcached::RES_HOST_LOOKUP_FAILURE,
-            \Memcached::RES_CONNECTION_SOCKET_CREATE_FAILURE,
-            \Memcached::RES_SERVER_ERROR,
-            \Memcached::RES_TIMEOUT,
-        ])) {
+        if (in_array($resultCode, [\Memcached::RES_HOST_LOOKUP_FAILURE, \Memcached::RES_SERVER_ERROR, \Memcached::RES_TIMEOUT])) {
             $this->connected = false;
         }
     }
@@ -751,99 +596,54 @@ final class MemcachedDriver implements
     private function handleError(string $operation, string $key, \Throwable $e): void
     {
         $this->connected = false;
-
         $this->logger->error('Memcached operation error', [
-            'operation' => $operation,
-            'key' => $key,
-            'error' => $e->getMessage(),
+            'operation' => $operation, 'key' => $key, 'error' => $e->getMessage(),
         ]);
     }
 
-    private function getResultCodeMessage(int $code): string
-    {
-        return match ($code) {
-            \Memcached::RES_SUCCESS => 'Success',
-            \Memcached::RES_FAILURE => 'Failure',
-            \Memcached::RES_HOST_LOOKUP_FAILURE => 'Host lookup failure',
-            \Memcached::RES_CONNECTION_SOCKET_CREATE_FAILURE => 'Connection socket create failure',
-            \Memcached::RES_UNKNOWN_READ_FAILURE => 'Unknown read failure',
-            \Memcached::RES_PROTOCOL_ERROR => 'Protocol error',
-            \Memcached::RES_CLIENT_ERROR => 'Client error',
-            \Memcached::RES_SERVER_ERROR => 'Server error',
-            \Memcached::RES_WRITE_FAILURE => 'Write failure',
-            \Memcached::RES_DATA_EXISTS => 'Data exists',
-            \Memcached::RES_NOTSTORED => 'Not stored',
-            \Memcached::RES_NOTFOUND => 'Not found',
-            \Memcached::RES_PARTIAL_READ => 'Partial read',
-            \Memcached::RES_SOME_ERRORS => 'Some errors',
-            \Memcached::RES_NO_SERVERS => 'No servers',
-            \Memcached::RES_END => 'End',
-            \Memcached::RES_ERRNO => 'Errno',
-            \Memcached::RES_BUFFERED => 'Buffered',
-            \Memcached::RES_TIMEOUT => 'Timeout',
-            \Memcached::RES_BAD_KEY_PROVIDED => 'Bad key provided',
-            \Memcached::RES_STORED => 'Stored',
-            \Memcached::RES_DELETED => 'Deleted',
-            \Memcached::RES_STAT => 'Stat',
-            \Memcached::RES_ITEM => 'Item',
-            \Memcached::RES_NOT_SUPPORTED => 'Not supported',
-            \Memcached::RES_FETCH_NOTFINISHED => 'Fetch not finished',
-            \Memcached::RES_SERVER_MARKED_DEAD => 'Server marked dead',
-            \Memcached::RES_UNKNOWN_STAT_KEY => 'Unknown stat key',
-            \Memcached::RES_INVALID_HOST_PROTOCOL => 'Invalid host protocol',
-            \Memcached::RES_MEMORY_ALLOCATION_FAILURE => 'Memory allocation failure',
-            \Memcached::RES_CONNECTION_FAILURE => 'Connection failure',
-            \Memcached::RES_E2BIG => 'E2BIG',
-            \Memcached::RES_KEY_TOO_BIG => 'Key too big',
-            \Memcached::RES_SERVER_TEMPORARILY_DISABLED => 'Server temporarily disabled',
-            \Memcached::RES_SERVER_MEMORY_ALLOCATION_FAILURE => 'Server memory allocation failure',
-            default => "Unknown error code: {$code}",
-        };
-    }
-
+    /**
+     * @param array<string, array<string, int|string>> $stats
+     *
+     * @return array{
+     * total_items: int,
+     * total_connections: int,
+     * total_get_hits: int,
+     * total_get_misses: int,
+     * total_cmd_get: int,
+     * total_cmd_set: int,
+     * total_bytes: int,
+     * total_bytes_read: int,
+     * total_bytes_written: int,
+     * uptime_min: int|null,
+     * hit_rate: float
+     * }
+     */
     private function aggregateServerStats(array $stats): array
     {
         $aggregated = [
-            'total_items' => 0,
-            'total_connections' => 0,
-            'total_get_hits' => 0,
-            'total_get_misses' => 0,
-            'total_cmd_get' => 0,
-            'total_cmd_set' => 0,
-            'total_bytes' => 0,
-            'total_bytes_read' => 0,
-            'total_bytes_written' => 0,
-            'uptime_min' => null,
-            'version_info' => [],
+            'total_items' => 0, 'total_connections' => 0, 'total_get_hits' => 0, 'total_get_misses' => 0,
+            'total_cmd_get' => 0, 'total_cmd_set' => 0, 'total_bytes' => 0, 'total_bytes_read' => 0,
+            'total_bytes_written' => 0, 'uptime_min' => null, 'hit_rate' => 0.0,
         ];
 
-        foreach ($stats as $server => $serverStats) {
+        foreach ($stats as $serverStats) {
             if (is_array($serverStats)) {
-                $aggregated['total_items'] += $serverStats['curr_items'] ?? 0;
-                $aggregated['total_connections'] += $serverStats['curr_connections'] ?? 0;
-                $aggregated['total_get_hits'] += $serverStats['get_hits'] ?? 0;
-                $aggregated['total_get_misses'] += $serverStats['get_misses'] ?? 0;
-                $aggregated['total_cmd_get'] += $serverStats['cmd_get'] ?? 0;
-                $aggregated['total_cmd_set'] += $serverStats['cmd_set'] ?? 0;
-                $aggregated['total_bytes'] += $serverStats['bytes'] ?? 0;
-                $aggregated['total_bytes_read'] += $serverStats['bytes_read'] ?? 0;
-                $aggregated['total_bytes_written'] += $serverStats['bytes_written'] ?? 0;
-
-                if (isset($serverStats['uptime'])) {
-                    $aggregated['uptime_min'] = min($aggregated['uptime_min'] ?? $serverStats['uptime'], $serverStats['uptime']);
-                }
-
-                if (isset($serverStats['version'])) {
-                    $aggregated['version_info'][$server] = $serverStats['version'];
-                }
+                $aggregated['total_items'] += (int) ($serverStats['curr_items'] ?? 0);
+                $aggregated['total_connections'] += (int) ($serverStats['curr_connections'] ?? 0);
+                $aggregated['total_get_hits'] += (int) ($serverStats['get_hits'] ?? 0);
+                $aggregated['total_get_misses'] += (int) ($serverStats['get_misses'] ?? 0);
+                $aggregated['total_cmd_get'] += (int) ($serverStats['cmd_get'] ?? 0);
+                $aggregated['total_cmd_set'] += (int) ($serverStats['cmd_set'] ?? 0);
+                $aggregated['total_bytes'] += (int) ($serverStats['bytes'] ?? 0);
+                $aggregated['total_bytes_read'] += (int) ($serverStats['bytes_read'] ?? 0);
+                $aggregated['total_bytes_written'] += (int) ($serverStats['bytes_written'] ?? 0);
+                $uptime = (int) ($serverStats['uptime'] ?? 0);
+                $aggregated['uptime_min'] = is_null($aggregated['uptime_min']) ? $uptime : min($aggregated['uptime_min'], $uptime);
             }
         }
 
-        // Calculate hit rate
         $totalRequests = $aggregated['total_get_hits'] + $aggregated['total_get_misses'];
-        $aggregated['hit_rate'] = $totalRequests > 0
-            ? round(($aggregated['total_get_hits'] / $totalRequests) * 100, 2)
-            : 0;
+        $aggregated['hit_rate'] = $totalRequests > 0 ? round(($aggregated['total_get_hits'] / $totalRequests) * 100, 2) : 0.0;
 
         return $aggregated;
     }
@@ -851,9 +651,8 @@ final class MemcachedDriver implements
     private function countHealthyServers(array $stats): int
     {
         $healthy = 0;
-
         foreach ($stats as $serverStats) {
-            if (is_array($serverStats) && !empty($serverStats)) {
+            if (is_array($serverStats) && isset($serverStats['pid']) && $serverStats['pid'] > 0) {
                 ++$healthy;
             }
         }
@@ -861,25 +660,23 @@ final class MemcachedDriver implements
         return $healthy;
     }
 
-    private function getAnyVersion(): string
+    private function getAnyVersion(): ?string
     {
         try {
             $versions = $this->memcached->getVersion();
-            if (is_array($versions) && !empty($versions)) {
-                return reset($versions);
+            if (!$versions) {
+                return null;
             }
 
-            return 'unknown';
-        } catch (\Throwable $e) {
-            return 'unknown';
+            return (string) reset($versions);
+        } catch (\Throwable) {
+            return null;
         }
     }
 
     private function incrementOperations(): void
     {
         ++$this->operationCount;
-
-        // Periodic health check
         if (0 === $this->operationCount % self::HEALTH_CHECK_INTERVAL) {
             $this->performHealthCheck();
         }
@@ -890,31 +687,17 @@ final class MemcachedDriver implements
         try {
             $stats = $this->memcached->getStats();
             $this->connected = !empty($stats);
-
-            $this->logger->debug('Memcached health check performed', [
-                'operations' => $this->operationCount,
-                'connected' => $this->connected,
-                'healthy_servers' => $this->countHealthyServers($stats),
-            ]);
         } catch (\Throwable $e) {
             $this->connected = false;
-
-            $this->logger->warning('Memcached health check failed', [
-                'error' => $e->getMessage(),
-            ]);
+            $this->logger->warning('Memcached health check failed', ['error' => $e->getMessage()]);
         }
     }
 
     private function logInitialization(): void
     {
-        $servers = $this->memcached->getServerList();
-        $versions = $this->memcached->getVersion();
-
         $this->logger->info('Memcached driver initialized', [
             'prefix' => $this->keyPrefix,
-            'server_count' => count($servers),
-            'servers' => $servers,
-            'versions' => $versions,
+            'server_count' => count($this->memcached->getServerList()),
             'connected' => $this->connected,
         ]);
     }

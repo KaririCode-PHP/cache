@@ -19,6 +19,9 @@ final class TagInvalidationEvent extends CacheEvent implements StoppableEventInt
         parent::__construct('tags:' . implode(',', $tags), $context);
     }
 
+    /**
+     * @return array<string, mixed>
+     */
     public function getTags(): array
     {
         return $this->tags;

@@ -19,9 +19,6 @@ final class AnalyticsData
     ) {
     }
 
-    /**
-     * @return int<0, max>
-     */
     public function total(): int
     {
         return $this->hits + $this->misses + $this->sets + $this->deletes + $this->clears;

@@ -19,6 +19,9 @@ final class CacheClearEvent extends CacheEvent implements StoppableEventInterfac
         parent::__construct('*', $context);
     }
 
+    /**
+     * @return string[]|null
+     */
     public function getTags(): ?array
     {
         return $this->tags;

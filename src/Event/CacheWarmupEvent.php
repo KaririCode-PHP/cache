@@ -13,18 +13,21 @@ final class CacheWarmupEvent extends CacheEvent implements StoppableEventInterfa
 {
     public function __construct(
         private array $data,
-        private $ttl = null,
+        private \DateInterval|int|null $ttl = null,
         array $context = []
     ) {
         parent::__construct('warmup', $context);
     }
 
+    /**
+     * @return array<string, mixed>
+     */
     public function getData(): array
     {
         return $this->data;
     }
 
-    public function getTtl()
+    public function getTtl(): \DateInterval|int|null
     {
         return $this->ttl;
     }

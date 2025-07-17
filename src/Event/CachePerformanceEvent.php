@@ -40,6 +40,9 @@ final class CachePerformanceEvent
         return $this->valueSize;
     }
 
+    /**
+     * @return array<string, mixed>
+     */
     public function getAdditionalData(): array
     {
         return $this->additionalData;

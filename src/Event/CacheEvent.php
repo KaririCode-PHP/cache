@@ -24,6 +24,9 @@ abstract class CacheEvent
         return $this->key;
     }
 
+    /**
+     * @return array<string, mixed>
+     */
     public function getContext(): array
     {
         return $this->context;
