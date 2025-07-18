@@ -19,6 +19,9 @@ final class ArrayDriverFactory implements CacheDriverFactory
         return new ArrayDriver();
     }
 
+    /**
+     * @return list<string>
+     */
     public function getSupportedOptions(): array
     {
         return [];

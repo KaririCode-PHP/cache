@@ -7,15 +7,22 @@ namespace KaririCode\Cache\Driver;
 use KaririCode\Cache\Contract\AtomicCacheDriver;
 use KaririCode\Cache\Contract\CacheCapabilities;
 use KaririCode\Cache\Contract\CacheDriver;
+use KaririCode\Cache\Contract\DriverStats as DriverStatsContract;
 use KaririCode\Cache\Contract\TaggableCacheDriver;
 use KaririCode\Cache\Contract\TopicAwareCacheDriver;
 
 /**
- * Wrapper that provides safe fallbacks for drivers without specific capabilities.
+ * A wrapper that provides safe fallbacks for drivers without specific capabilities.
  */
-final class CapabilityAwareDriver implements CacheDriver, AtomicCacheDriver, TaggableCacheDriver, TopicAwareCacheDriver
+final class CapabilityAwareDriver implements
+    CacheDriver,
+    AtomicCacheDriver,
+    TaggableCacheDriver,
+    TopicAwareCacheDriver
 {
     private CacheDriver $driver;
+
+    /** @var array<string, bool> */
     private array $capabilities = [];
 
     public function __construct(CacheDriver $driver)
@@ -24,7 +31,6 @@ final class CapabilityAwareDriver implements CacheDriver, AtomicCacheDriver, Tag
         $this->detectCapabilities();
     }
 
-    // Basic CacheDriver methods - delegate to wrapped driver
     public function get(string $key): mixed
     {
         return $this->driver->get($key);
@@ -50,6 +56,11 @@ final class CapabilityAwareDriver implements CacheDriver, AtomicCacheDriver, Tag
         return $this->driver->clear();
     }
 
+    /**
+     * @param string[] $keys
+     *
+     * @return array<string, mixed>
+     */
     public function getMultiple(array $keys): array
     {
         return $this->driver->getMultiple($keys);
@@ -65,106 +76,87 @@ final class CapabilityAwareDriver implements CacheDriver, AtomicCacheDriver, Tag
         return $this->driver->deleteMultiple($keys);
     }
 
-    public function hasCapability(string $capability): bool
+    public function increment(string $key, int $step = 1, int $initialValue = 0, \DateInterval|int|\DateTimeInterface|null $ttl = null): int
     {
-        return $this->capabilities[$capability] ?? false;
-    }
-
-    // AtomicCacheDriver methods
-    public function increment(string $key, int $step = 1, int $initialValue = 0, $ttl = null): int
-    {
-        if ($this->driver instanceof AtomicCacheDriver && $this->hasCapability(CacheCapabilities::ATOMIC_OPERATIONS)) {
+        if ($this->hasCapability(CacheCapabilities::ATOMIC_OPERATIONS) && $this->driver instanceof AtomicCacheDriver) {
             return $this->driver->increment($key, $step, $initialValue, $ttl);
         }
 
-        // Fallback implementation
+        // Non-atomic fallback
         $current = $this->driver->get($key);
-        if (null === $current) {
-            $current = $initialValue;
-        } else {
-            $current = (int) $current;
-        }
-
-        $newValue = $current + $step;
-        $expiration = null;
-
-        if (null !== $ttl) {
-            if (is_int($ttl)) {
-                $expiration = new \DateTime('+' . $ttl . ' seconds');
-            } elseif ($ttl instanceof \DateInterval) {
-                $expiration = (new \DateTime())->add($ttl);
-            }
-        }
-
-        $this->driver->set($key, $newValue, $expiration);
+        $currentValue = is_numeric($current) ? (int) $current : $initialValue;
+        $newValue = $currentValue + $step;
+        $this->driver->set($key, $newValue);
 
         return $newValue;
     }
 
-    public function add(string $key, mixed $value, $ttl = null): bool
+    public function add(string $key, mixed $value, \DateInterval|int|\DateTimeInterface|null $ttl = null): bool
     {
-        if ($this->driver instanceof AtomicCacheDriver) {
+        if ($this->hasCapability(CacheCapabilities::ATOMIC_OPERATIONS) && $this->driver instanceof AtomicCacheDriver) {
             return $this->driver->add($key, $value, $ttl);
         }
 
-        // Fallback implementation
+        // Non-atomic fallback
         if ($this->driver->has($key)) {
             return false;
         }
 
-        $expiration = null;
-        if (null !== $ttl) {
-            if (is_int($ttl)) {
-                $expiration = new \DateTime('+' . $ttl . ' seconds');
-            } elseif ($ttl instanceof \DateInterval) {
-                $expiration = (new \DateTime())->add($ttl);
-            }
-        }
-
-        return $this->driver->set($key, $value, $expiration);
+        return $this->driver->set($key, $value);
     }
 
-    // TaggableCacheDriver methods
     public function invalidateTags(array $tags): bool
     {
-        if ($this->driver instanceof TaggableCacheDriver) {
+        if ($this->hasCapability(CacheCapabilities::TAGGING) && $this->driver instanceof TaggableCacheDriver) {
             return $this->driver->invalidateTags($tags);
         }
-
-        // No tagging support - return true but log warning if possible
-        trigger_error(
-            'Driver ' . get_class($this->driver) . ' does not support tag invalidation',
-            E_USER_NOTICE
-        );
 
         return true;
     }
 
-    // TopicAwareCacheDriver methods
     public function subscribeTo(string $key, array $topics): void
     {
-        if ($this->driver instanceof TopicAwareCacheDriver) {
+        if ($this->hasCapability(CacheCapabilities::TOPICS) && $this->driver instanceof TopicAwareCacheDriver) {
             $this->driver->subscribeTo($key, $topics);
         }
-
-        // No topic support - silently ignore
     }
 
     public function invalidateTopics(array $topics): bool
     {
-        if ($this->driver instanceof TopicAwareCacheDriver) {
+        if ($this->hasCapability(CacheCapabilities::TOPICS) && $this->driver instanceof TopicAwareCacheDriver) {
             return $this->driver->invalidateTopics($topics);
         }
 
         return true;
     }
 
-    /**
-     * Get the wrapped driver for direct access if needed.
-     */
-    public function getInnerDriver(): CacheDriver
+    /** @return list<string> */
+    public function getCapabilities(): array
     {
-        return $this->driver;
+        return $this->driver->getCapabilities();
+    }
+
+    public function getStats(): DriverStatsContract
+    {
+        return $this->driver->getStats();
+    }
+
+    /** @return string[] */
+    public function getTags(): array
+    {
+        if ($this->hasCapability(CacheCapabilities::TAGGING) && $this->driver instanceof TaggableCacheDriver) {
+            return $this->driver->getTags();
+        }
+
+        return [];
+    }
+
+    /**
+     * Checks if the underlying driver supports a given capability.
+     */
+    public function hasCapability(string $capability): bool
+    {
+        return $this->capabilities[$capability] ?? false;
     }
 
     private function detectCapabilities(): void
@@ -172,11 +164,5 @@ final class CapabilityAwareDriver implements CacheDriver, AtomicCacheDriver, Tag
         $this->capabilities[CacheCapabilities::ATOMIC_OPERATIONS] = $this->driver instanceof AtomicCacheDriver;
         $this->capabilities[CacheCapabilities::TAGGING] = $this->driver instanceof TaggableCacheDriver;
         $this->capabilities[CacheCapabilities::TOPICS] = $this->driver instanceof TopicAwareCacheDriver;
-
-        // Check method existence as backup
-        if (!$this->capabilities[CacheCapabilities::ATOMIC_OPERATIONS]) {
-            $this->capabilities[CacheCapabilities::ATOMIC_OPERATIONS] =
-                method_exists($this->driver, 'increment') && method_exists($this->driver, 'add');
-        }
     }
 }

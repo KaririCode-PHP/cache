@@ -7,16 +7,22 @@ namespace KaririCode\Cache\Driver\Factory;
 use KaririCode\Cache\Contract\CacheDriver;
 use KaririCode\Cache\Contract\CacheDriverFactory;
 use KaririCode\Cache\Contract\DriverManager;
+use KaririCode\Cache\Driver\Filesystem\Cache\FileSystemCacheOperations;
+use KaririCode\Cache\Driver\Filesystem\Directory\DirectoryManager;
+use KaririCode\Cache\Driver\Filesystem\Expiration\ExpirationManager;
+use KaririCode\Cache\Driver\Filesystem\File\FileManager;
+use KaririCode\Cache\Driver\Filesystem\Serialization\SerializationManager;
+use KaririCode\Cache\Driver\Filesystem\Statistics\FileSystemStatistics;
+use KaririCode\Cache\Driver\Filesystem\Validation\FileSystemValidator;
 use KaririCode\Cache\Driver\FilesystemDriver;
 use KaririCode\Cache\Exception\ConfigurationException;
+use Psr\Log\NullLogger;
 
 /**
  * Enhanced filesystem driver factory with comprehensive validation.
  */
 final class FilesystemDriverFactory implements CacheDriverFactory
 {
-    private const DEFAULT_MAX_SIZE = 100 * 1024 * 1024; // 100MB
-    private const DEFAULT_CLEANUP_PROBABILITY = 0.01; // 1%
     private const MIN_MAX_SIZE = 1024 * 1024; // 1MB minimum
     private const MAX_DIRECTORY_LEVELS = 4;
 
@@ -24,25 +30,40 @@ final class FilesystemDriverFactory implements CacheDriverFactory
     {
         $this->validateOptions($options);
 
-        $directory = $this->prepareDirectory($options['directory'] ?? $this->getDefaultDirectory());
-        $keyPrefix = $options['key_prefix'] ?? 'cache_';
-        $maxSize = $options['max_size'] ?? self::DEFAULT_MAX_SIZE;
-        $cleanupProbability = $options['cleanup_probability'] ?? self::DEFAULT_CLEANUP_PROBABILITY;
-        $directoryLevels = $options['directory_levels'] ?? 2;
-        $useCompression = $options['use_compression'] ?? true;
+        // Instancia todas as dependências necessárias para o FilesystemDriver
+        $logger = new NullLogger(); // Ou injete um logger real se disponível
         $useLocking = $options['use_locking'] ?? true;
+        $useCompression = $options['use_compression'] ?? true;
+
+        $fileManager = new FileManager($useLocking, $logger);
+        $directoryManager = new DirectoryManager($options['directory'] ?? $this->getDefaultDirectory(), $logger, $options['key_prefix'] ?? 'cache_');
+        $serializer = new SerializationManager($useCompression, $logger);
+        $expirationManager = new ExpirationManager((float) ($options['cleanup_probability'] ?? 0.01));
+        $statistics = new FileSystemStatistics($directoryManager, $fileManager, $logger);
+        $validator = new FileSystemValidator();
+
+        $cacheOperations = new FileSystemCacheOperations(
+            $fileManager,
+            $directoryManager,
+            $serializer,
+            $expirationManager,
+            $logger,
+            $options['key_prefix'] ?? 'cache_',
+            $options['directory_levels'] ?? 2
+        );
 
         return new FilesystemDriver(
-            $directory,
-            $keyPrefix,
-            $maxSize,
-            $cleanupProbability,
-            $directoryLevels,
-            $useCompression,
-            $useLocking
+            $directoryManager,
+            $cacheOperations,
+            $statistics,
+            $validator,
+            $logger
         );
     }
 
+    /**
+     * @return list<string>
+     */
     public function getSupportedOptions(): array
     {
         return [

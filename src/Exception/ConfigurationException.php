@@ -105,12 +105,13 @@ final class ConfigurationException extends AbstractException
         );
     }
 
-    public static function connectionTimeout(string $server, int $timeout): static
+    public static function connectionTimeout(string $server, int $timeout, ?\Throwable $previous = null): static
     {
         return static::createException(
             self::CODE_CONNECTION_TIMEOUT,
             'CONNECTION_TIMEOUT',
-            "Connection timeout to cache server '{$server}' after {$timeout} seconds"
+            "Connection timeout to cache server '{$server}' after {$timeout} seconds",
+            $previous
         );
     }
 }

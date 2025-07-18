@@ -56,6 +56,9 @@ final class RedisDriverFactory implements CacheDriverFactory
         );
     }
 
+    /**
+     * @return list<string>
+     */
     public function getSupportedOptions(): array
     {
         return [

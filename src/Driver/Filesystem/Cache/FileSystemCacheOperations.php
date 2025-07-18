@@ -4,10 +4,10 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Driver\Filesystem\Cache;
 
+use KaririCode\Cache\Contract\CacheSerializer;
 use KaririCode\Cache\Contract\Filesystem\DirectoryManager;
 use KaririCode\Cache\Contract\Filesystem\ExpirationManager;
 use KaririCode\Cache\Contract\Filesystem\FileManager;
-use KaririCode\Cache\Contract\Filesystem\SerializationManager;
 use Psr\Log\LoggerInterface;
 
 /**
@@ -23,11 +23,11 @@ final class FileSystemCacheOperations
     public function __construct(
         private FileManager $fileManager,
         private DirectoryManager $directoryManager,
-        private SerializationManager $serializer,
+        private CacheSerializer $serializer,
         private ExpirationManager $expirationManager,
+        private LoggerInterface $logger,
         private string $keyPrefix = 'cache_',
-        private int $directoryLevels = 2,
-        private LoggerInterface $logger
+        private int $directoryLevels = 2
     ) {
     }
 
@@ -48,7 +48,8 @@ final class FileSystemCacheOperations
             $metadata = $this->serializer->unserialize($content);
 
             if (!is_array($metadata) || !isset($metadata['value'])) {
-                $this->logger->warning('Invalid cache metadata', ['key' => $key]);
+                $this->logger->warning('Invalid cache metadata, deleting file.', ['key' => $key, 'filename' => $filename]);
+                $this->fileManager->deleteFile($filename);
 
                 return null;
             }
@@ -59,16 +60,17 @@ final class FileSystemCacheOperations
                 return null;
             }
 
-            // Update access time
             $this->expirationManager->updateAccessTime($metadata);
             $this->updateMetadataFile($filename, $metadata);
 
             return $metadata['value'];
         } catch (\Throwable $e) {
-            $this->logger->error('Failed to deserialize cache data', [
+            $this->logger->error('Failed to deserialize cache data.', [
                 'key' => $key,
+                'filename' => $filename,
                 'error' => $e->getMessage(),
             ]);
+            $this->fileManager->deleteFile($filename); // Delete corrupted file
 
             return null;
         }
@@ -83,27 +85,16 @@ final class FileSystemCacheOperations
             $serializedData = $this->serializer->serialize($metadata);
             $metadata['size'] = strlen($serializedData);
 
-            // Update metadata with size
-            $serializedData = $this->serializer->serialize($metadata);
+            $finalSerializedData = $this->serializer->serialize($metadata);
+            $success = $this->fileManager->writeSecurely($filename, $finalSerializedData);
 
-            $success = $this->fileManager->writeSecurely($filename, $serializedData);
-
-            if ($success) {
-                $this->logger->debug('Cache item stored', [
-                    'key' => $key,
-                    'size' => $metadata['size'],
-                    'expiration' => $expiration?->format('Y-m-d H:i:s'),
-                ]);
-
-                // Probabilistic cleanup
-                if ($this->expirationManager->shouldCleanup()) {
-                    $this->performCleanup();
-                }
+            if ($success && $this->expirationManager->shouldCleanup()) {
+                $this->performCleanup();
             }
 
             return $success;
         } catch (\Throwable $e) {
-            $this->logger->error('Failed to store cache item', [
+            $this->logger->error('Failed to store cache item.', [
                 'key' => $key,
                 'error' => $e->getMessage(),
             ]);
@@ -127,7 +118,6 @@ final class FileSystemCacheOperations
 
         try {
             $metadata = $this->serializer->unserialize($content);
-
             if (!is_array($metadata)) {
                 return false;
             }
@@ -148,51 +138,10 @@ final class FileSystemCacheOperations
     {
         $filename = $this->generateFilename($key);
 
-        $result = $this->fileManager->deleteFile($filename);
-
-        if ($result) {
-            $this->logger->debug('Cache item deleted', [
-                'key' => $key,
-                'filename' => $filename,
-            ]);
-        }
-
-        return $result;
+        return $this->fileManager->deleteFile($filename);
     }
 
-    private function generateFilename(string $key): string
-    {
-        $hash = hash(self::HASH_ALGORITHM, $key);
-        $safeKey = $this->sanitizeKeyForFilename($key);
-
-        $filename = $this->keyPrefix . $safeKey . '_' . substr($hash, 0, self::FILENAME_HASH_LENGTH) . '.cache';
-
-        $directory = $this->directoryManager->createSubdirectoryPath($hash, $this->directoryLevels);
-
-        return $directory . $filename;
-    }
-
-    private function sanitizeKeyForFilename(string $key): string
-    {
-        $safeKey = preg_replace('/[^a-zA-Z0-9_-]/', '_', $key);
-
-        return substr($safeKey, 0, self::MAX_KEY_LENGTH_IN_FILENAME);
-    }
-
-    private function updateMetadataFile(string $filename, array $metadata): void
-    {
-        try {
-            $serializedData = $this->serializer->serialize($metadata);
-            $this->fileManager->writeSecurely($filename, $serializedData);
-        } catch (\Throwable $e) {
-            $this->logger->warning('Failed to update access time', [
-                'filename' => $filename,
-                'error' => $e->getMessage(),
-            ]);
-        }
-    }
-
-    private function performCleanup(): void
+    public function performCleanup(): void
     {
         $files = $this->directoryManager->getCacheFiles();
         $deletedCount = 0;
@@ -211,15 +160,48 @@ final class FileSystemCacheOperations
                     ++$deletedCount;
                 }
             } catch (\Throwable) {
-                // If we can't read/parse the file, consider it corrupted and delete it
                 $this->fileManager->deleteFile($file);
                 ++$deletedCount;
             }
         }
 
         if ($deletedCount > 0) {
-            $this->logger->info('Cleanup completed', [
+            $this->logger->info('Filesystem cache cleanup completed.', [
                 'deleted_files' => $deletedCount,
+            ]);
+        }
+    }
+
+    private function generateFilename(string $key): string
+    {
+        $hash = hash(self::HASH_ALGORITHM, $key);
+        $safeKey = $this->sanitizeKeyForFilename($key);
+
+        $filename = $this->keyPrefix . $safeKey . '_' . substr($hash, 0, self::FILENAME_HASH_LENGTH) . '.cache';
+        $directory = $this->directoryManager->createSubdirectoryPath($hash, $this->directoryLevels);
+
+        return $directory . $filename;
+    }
+
+    private function sanitizeKeyForFilename(string $key): string
+    {
+        $safeKey = (string) preg_replace('/[^a-zA-Z0-9_-]/', '_', $key);
+
+        return substr($safeKey, 0, self::MAX_KEY_LENGTH_IN_FILENAME);
+    }
+
+    /**
+     * @param array<string, mixed> $metadata
+     */
+    private function updateMetadataFile(string $filename, array $metadata): void
+    {
+        try {
+            $serializedData = $this->serializer->serialize($metadata);
+            $this->fileManager->writeSecurely($filename, $serializedData);
+        } catch (\Throwable $e) {
+            $this->logger->warning('Failed to update access time for cache file.', [
+                'filename' => $filename,
+                'error' => $e->getMessage(),
             ]);
         }
     }

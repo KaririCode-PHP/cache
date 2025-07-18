@@ -33,6 +33,9 @@ final class MemcachedDriverFactory implements CacheDriverFactory
         );
     }
 
+    /**
+     * @return list<string>
+     */
     public function getSupportedOptions(): array
     {
         return [

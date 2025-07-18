@@ -119,7 +119,7 @@ final class InvalidArgumentException extends AbstractException
     public static function unserializableValue(string $type): static
     {
         return static::createException(
-            self::CODE_INVALID_VALUE, // Supondo um novo código de erro
+            self::CODE_INVALID_VALUE,
             'UNSERIALIZABLE_VALUE',
             "The provided value of type '{$type}' cannot be serialized."
         );
@@ -128,9 +128,18 @@ final class InvalidArgumentException extends AbstractException
     public static function invalidConfiguration(string $message): static
     {
         return static::createException(
-            self::CODE_INVALID_CONFIGURATION, // Supondo um novo código de erro
+            self::CODE_INVALID_CONFIGURATION,
             'INVALID_CONFIGURATION',
             $message
+        );
+    }
+
+    public static function invalidValue(string $reason): static
+    {
+        return static::createException(
+            self::CODE_INVALID_VALUE,
+            'INVALID_VALUE',
+            $reason
         );
     }
 }
