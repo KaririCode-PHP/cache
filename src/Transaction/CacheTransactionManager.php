@@ -235,7 +235,7 @@ final class CacheTransactionManager implements CacheTransactionManagerContract
         }
 
         if (!is_string($key) || '' === $key) {
-            throw InvalidArgumentException::invalidKeyFormat($key);
+            throw InvalidArgumentException::invalidKeyFormat((string) $key);
         }
 
         // Store current state for rollback
@@ -307,7 +307,7 @@ final class CacheTransactionManager implements CacheTransactionManagerContract
         $expiration = $operation['expiration'] ?? null;
 
         if (!is_string($key) || '' === $key) {
-            throw InvalidArgumentException::invalidKeyFormat($key);
+            throw InvalidArgumentException::invalidKeyFormat((string) $key);
         }
 
         // Ensure expiration is properly typed

@@ -11,8 +11,8 @@ use KaririCode\Cache\Contract\CacheDriver;
 use KaririCode\Cache\Contract\DriverStats as DriverStatsContract;
 use KaririCode\Cache\Contract\TaggableCacheDriver;
 use KaririCode\Cache\Contract\TopicAwareCacheDriver;
+use KaririCode\Cache\Driver\Concern\DriverValidationTrait;
 use KaririCode\Cache\Exception\CacheException;
-use KaririCode\Cache\Exception\InvalidArgumentException;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
 
@@ -29,6 +29,8 @@ final class RedisDriver implements
     TopicAwareCacheDriver,
     CompareAndSwapAware
 {
+    use DriverValidationTrait;
+
     private \Redis $redis;
     private string $keyPrefix;
     private string $tagPrefix;
@@ -41,14 +43,10 @@ final class RedisDriver implements
     /** @var array<string, mixed> */
     private array $connectionConfig = [];
 
-    // Security limits
-    private const MAX_KEY_LENGTH = 250;
-    private const MAX_VALUE_SIZE = 512 * 1024 * 1024; // 512MB (Redis default)
-    private const MAX_BATCH_SIZE = 1000;
-    private const SCAN_BATCH_SIZE = 500;
-
     /** @var array<string, string> */
     private array $luaScripts = [];
+
+    private const SCAN_BATCH_SIZE = 500;
 
     /**
      * @param array<string, mixed> $connectionConfig
@@ -561,85 +559,6 @@ final class RedisDriver implements
                 'error' => $e->getMessage(),
                 'connected' => false,
             ];
-        }
-    }
-
-    private function validateKey(string $key): void
-    {
-        if ('' === $key) {
-            throw InvalidArgumentException::emptyKey();
-        }
-        if (strlen($key) > self::MAX_KEY_LENGTH) {
-            throw InvalidArgumentException::keyTooLong($key, self::MAX_KEY_LENGTH);
-        }
-    }
-
-    /**
-     * @param string[] $keys
-     */
-    private function validateKeys(array $keys): void
-    {
-        if (count($keys) > self::MAX_BATCH_SIZE) {
-            throw InvalidArgumentException::invalidKeyFormat('Too many keys: ' . count($keys));
-        }
-        foreach ($keys as $key) {
-            if (!is_string($key)) {
-                throw InvalidArgumentException::invalidKeyFormat('Key must be string');
-            }
-            $this->validateKey($key);
-        }
-    }
-
-    private function validateValue(mixed $value): void
-    {
-        $serialized = $this->serialize($value);
-        if (strlen($serialized) > self::MAX_VALUE_SIZE) {
-            throw InvalidArgumentException::invalidKeyFormat('Value too large: ' . strlen($serialized) . ' bytes');
-        }
-    }
-
-    private function validateMultipleValues(array $values): void
-    {
-        if (count($values) > self::MAX_BATCH_SIZE) {
-            throw InvalidArgumentException::invalidKeyFormat('Too many values: ' . count($values));
-        }
-        foreach ($values as $key => $value) {
-            if (!is_string($key)) {
-                throw InvalidArgumentException::invalidKeyFormat('Key must be string');
-            }
-            $this->validateKey($key);
-            $this->validateValue($value);
-        }
-    }
-
-    /**
-     * @param string[] $tags
-     */
-    private function validateTags(array $tags): void
-    {
-        foreach ($tags as $tag) {
-            if (!is_string($tag) || '' === $tag) {
-                throw InvalidArgumentException::invalidTag($tag);
-            }
-        }
-    }
-
-    /**
-     * @param string[] $topics
-     */
-    private function validateTopics(array $topics): void
-    {
-        foreach ($topics as $topic) {
-            if (!is_string($topic) || '' === $topic) {
-                throw InvalidArgumentException::invalidTopic($topic);
-            }
-        }
-    }
-
-    private function validateStep(int $step): void
-    {
-        if (0 === $step) {
-            throw InvalidArgumentException::invalidKeyFormat('Step cannot be zero');
         }
     }
 

@@ -10,9 +10,9 @@ use KaririCode\Cache\Contract\CacheCapabilities;
 use KaririCode\Cache\Contract\CacheDriver;
 use KaririCode\Cache\Contract\DriverStats as DriverStatsContract;
 use KaririCode\Cache\Contract\TaggableCacheDriver;
+use KaririCode\Cache\Driver\Concern\DriverValidationTrait;
 use KaririCode\Cache\Exception\CacheException;
 use KaririCode\Cache\Exception\ConfigurationException;
-use KaririCode\Cache\Exception\InvalidArgumentException;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
 
@@ -25,6 +25,8 @@ final class MemcachedDriver implements
     TaggableCacheDriver,
     CompareAndSwapAware
 {
+    use DriverValidationTrait;
+
     private \Memcached $memcached;
     private string $keyPrefix;
     private LoggerInterface $logger;
@@ -32,9 +34,6 @@ final class MemcachedDriver implements
     private int $operationCount = 0;
 
     // Security and performance limits
-    private const MAX_KEY_LENGTH = 250;
-    private const MAX_VALUE_SIZE = 1024 * 1024; // 1MB default limit
-    private const MAX_BATCH_SIZE = 1000;
     private const HEALTH_CHECK_INTERVAL = 100;
 
     public function __construct(\Memcached $memcached, string $keyPrefix = 'cache:', ?LoggerInterface $logger = null)
@@ -477,70 +476,6 @@ final class MemcachedDriver implements
                 'error' => $e->getMessage(),
                 'connected' => $this->connected,
             ];
-        }
-    }
-
-    private function validateKey(string $key): void
-    {
-        if (empty($key)) {
-            throw InvalidArgumentException::emptyKey();
-        }
-        if (strlen($key) > self::MAX_KEY_LENGTH) {
-            throw InvalidArgumentException::keyTooLong($key, self::MAX_KEY_LENGTH);
-        }
-        if (preg_match('/[\s\x00-\x1F\x7F]/', $key)) {
-            throw InvalidArgumentException::invalidKeyFormat($key . ' (contains invalid characters)');
-        }
-    }
-
-    private function validateKeys(array $keys): void
-    {
-        if (count($keys) > self::MAX_BATCH_SIZE) {
-            throw InvalidArgumentException::invalidKeyFormat('Too many keys: ' . count($keys));
-        }
-        foreach ($keys as $key) {
-            if (!is_string($key)) {
-                throw InvalidArgumentException::invalidKeyFormat('Key must be string');
-            }
-            $this->validateKey($key);
-        }
-    }
-
-    private function validateValue(mixed $value): void
-    {
-        $serialized = serialize($value);
-        if (strlen($serialized) > self::MAX_VALUE_SIZE) {
-            throw InvalidArgumentException::invalidKeyFormat('Value too large: ' . strlen($serialized) . ' bytes');
-        }
-    }
-
-    private function validateMultipleValues(array $values): void
-    {
-        if (count($values) > self::MAX_BATCH_SIZE) {
-            throw InvalidArgumentException::invalidKeyFormat('Too many values: ' . count($values));
-        }
-        foreach ($values as $key => $value) {
-            if (!is_string($key)) {
-                throw InvalidArgumentException::invalidKeyFormat('Key must be string');
-            }
-            $this->validateKey($key);
-            $this->validateValue($value);
-        }
-    }
-
-    private function validateTags(array $tags): void
-    {
-        foreach ($tags as $tag) {
-            if (!is_string($tag) || empty($tag)) {
-                throw InvalidArgumentException::invalidTag($tag);
-            }
-        }
-    }
-
-    private function validateStep(int $step): void
-    {
-        if (0 === $step) {
-            throw InvalidArgumentException::invalidKeyFormat('Step cannot be zero');
         }
     }
 

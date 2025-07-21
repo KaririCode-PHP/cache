@@ -10,6 +10,7 @@ use KaririCode\Cache\Contract\CacheDriver;
 use KaririCode\Cache\Contract\DriverStats as DriverStatsContract;
 use KaririCode\Cache\Contract\TaggableCacheDriver;
 use KaririCode\Cache\Contract\TopicAwareCacheDriver;
+use KaririCode\Cache\Driver\Concern\DriverValidationTrait;
 use KaririCode\Cache\Exception\CacheException;
 use KaririCode\Cache\Exception\InvalidArgumentException;
 
@@ -19,6 +20,8 @@ final class ArrayDriver implements
     TaggableCacheDriver,
     TopicAwareCacheDriver
 {
+    use DriverValidationTrait;
+
     /** @var array<string, mixed> */
     private array $data = [];
 
@@ -39,8 +42,6 @@ final class ArrayDriver implements
 
     private const MAX_MEMORY_SIZE = 50 * 1024 * 1024;
     private const MAX_ITEMS = 10000;
-    private const MAX_KEY_LENGTH = 250;
-    private const MAX_VALUE_SIZE = 1024 * 1024;
     private const CLEANUP_INTERVAL = 100;
 
     public function get(string $key): mixed
@@ -263,69 +264,6 @@ final class ArrayDriver implements
         ];
 
         return new DriverStats('Array', $stats['memory_usage'], $stats['total_items'], phpversion(), $stats);
-    }
-
-    private function validateKey(string $key): void
-    {
-        if (empty($key)) {
-            throw InvalidArgumentException::emptyKey();
-        }
-        if (strlen($key) > self::MAX_KEY_LENGTH) {
-            throw InvalidArgumentException::keyTooLong($key, self::MAX_KEY_LENGTH);
-        }
-    }
-
-    private function validateKeys(array $keys): void
-    {
-        foreach ($keys as $key) {
-            if (!is_string($key)) {
-                throw InvalidArgumentException::invalidKeyFormat('Key must be a string');
-            }
-            $this->validateKey($key);
-        }
-    }
-
-    private function validateValue(mixed $value): void
-    {
-        if ($this->calculateSize($value) > self::MAX_VALUE_SIZE) {
-            throw InvalidArgumentException::invalidValue('Value size exceeds limit');
-        }
-    }
-
-    private function validateMultipleValues(array $values): void
-    {
-        foreach ($values as $key => $value) {
-            if (!is_string($key)) {
-                throw InvalidArgumentException::invalidKeyFormat('Key must be a string');
-            }
-            $this->validateKey($key);
-            $this->validateValue($value);
-        }
-    }
-
-    private function validateTags(array $tags): void
-    {
-        foreach ($tags as $tag) {
-            if (!is_string($tag) || empty($tag)) {
-                throw InvalidArgumentException::invalidTag((string) $tag);
-            }
-        }
-    }
-
-    private function validateTopics(array $topics): void
-    {
-        foreach ($topics as $topic) {
-            if (!is_string($topic) || empty($topic)) {
-                throw InvalidArgumentException::invalidTopic((string) $topic);
-            }
-        }
-    }
-
-    private function validateStep(int $step): void
-    {
-        if (0 === $step) {
-            throw InvalidArgumentException::invalidValue('Step cannot be zero');
-        }
     }
 
     private function calculateSize(mixed $value): int

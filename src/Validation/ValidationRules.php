@@ -288,7 +288,7 @@ final class ValidationRules implements ImmutableValue
 
         foreach ($rules as $name => $value) {
             if (!is_string($name) || '' === $name) {
-                throw InvalidArgumentException::invalidConfiguration('ValidationRules', 'Rule names must be non-empty strings');
+                throw InvalidArgumentException::invalidConfiguration('Rule names must be non-empty strings');
             }
 
             $normalized[$name] = $this->normalizeRuleValue($name, $value);
@@ -333,7 +333,7 @@ final class ValidationRules implements ImmutableValue
         $pattern = is_string($value) ? $value : '/^[a-zA-Z0-9_.:-]+$/';
 
         if (false === @preg_match($pattern, 'test')) {
-            throw InvalidArgumentException::invalidConfiguration('ValidationRules', 'valid_pattern must be a valid regular expression');
+            throw InvalidArgumentException::invalidConfiguration('valid_pattern must be a valid regular expression');
         }
 
         return $pattern;
