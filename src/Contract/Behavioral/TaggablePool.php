@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Contract\Behavioral;
 
+use KaririCode\Cache\ValueObject\Tag;
+
 /**
  * Defines the contract for a cache pool that supports tag-based operations.
  *
@@ -19,7 +21,7 @@ interface TaggablePool
     /**
      * Invalidates all cache items associated with any of the specified tags.
      *
-     * @param string[] $tags an array of tags to invalidate
+     * @param Tag[] $tags an array of tags to invalidate
      *
      * @return bool true if the invalidation was successful
      */

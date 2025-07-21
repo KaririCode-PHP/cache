@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Contract\Behavioral;
 
+use KaririCode\Cache\ValueObject\Tag;
+
 /**
  * Taggable interface.
  *
@@ -25,7 +27,7 @@ interface Taggable
      *
      * @param string $key the unique cache key
      * @param mixed $value the value to cache
-     * @param array $tags the tags to associate with this item
+     * @param Tag[] $tags the tags to associate with this item
      * @param \DateInterval|int|null $ttl the time-to-live for the item
      *
      * @return bool true on success, false on failure
@@ -35,7 +37,7 @@ interface Taggable
     /**
      * Invalidates all cache items associated with the specified tags.
      *
-     * @param array $tags the tags to invalidate
+     * @param Tag[] $tags the tags to invalidate
      *
      * @return bool true on success, false on failure
      */

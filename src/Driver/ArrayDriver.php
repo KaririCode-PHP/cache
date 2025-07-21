@@ -10,9 +10,16 @@ use KaririCode\Cache\Contract\CacheDriver;
 use KaririCode\Cache\Contract\DriverStats as DriverStatsContract;
 use KaririCode\Cache\Contract\TaggableCacheDriver;
 use KaririCode\Cache\Contract\TopicAwareCacheDriver;
-use KaririCode\Cache\Driver\Concern\DriverValidationTrait;
 use KaririCode\Cache\Exception\CacheException;
 use KaririCode\Cache\Exception\InvalidArgumentException;
+use KaririCode\Cache\Serializer\Trait\SerializationTrait;
+use KaririCode\Cache\Validation\Trait\CacheKeyValidationTrait;
+use KaririCode\Cache\Validation\Trait\CacheValueValidationTrait;
+use KaririCode\Cache\Validation\Trait\ExpirationCalculatorTrait;
+use KaririCode\Cache\Validation\Trait\TagValidationTrait;
+use KaririCode\Cache\Validation\Trait\TopicValidationTrait;
+use KaririCode\Cache\ValueObject\Tag;
+use KaririCode\Cache\ValueObject\Topic;
 
 final class ArrayDriver implements
     CacheDriver,
@@ -20,7 +27,12 @@ final class ArrayDriver implements
     TaggableCacheDriver,
     TopicAwareCacheDriver
 {
-    use DriverValidationTrait;
+    use CacheKeyValidationTrait;
+    use CacheValueValidationTrait;
+    use TagValidationTrait;
+    use TopicValidationTrait;
+    use ExpirationCalculatorTrait;
+    use SerializationTrait;
 
     /** @var array<string, mixed> */
     private array $data = [];
@@ -68,15 +80,18 @@ final class ArrayDriver implements
         $this->validateValue($value);
         $this->incrementOperations();
 
-        if (!$this->hasSpace($key, $value)) {
-            if (!$this->makeSpace($key, $value)) {
+        $valueSize = strlen($this->serialize($value));
+
+        if (!$this->hasSpace($key, $valueSize)) {
+            if (!$this->makeSpace($key, $valueSize)) {
                 throw CacheException::memoryLimit(self::MAX_MEMORY_SIZE, $this->currentSize);
             }
         }
-        $valueSize = $this->calculateSize($value);
+
         if (isset($this->data[$key])) {
-            $this->currentSize -= $this->calculateSize($this->data[$key]);
+            $this->currentSize -= strlen($this->serialize($this->data[$key]));
         }
+
         $this->data[$key] = $value;
         $this->currentSize += $valueSize;
         $this->accessTimes[$key] = microtime(true);
@@ -111,7 +126,7 @@ final class ArrayDriver implements
         $this->validateKey($key);
         $this->incrementOperations();
         if (isset($this->data[$key])) {
-            $this->currentSize -= $this->calculateSize($this->data[$key]);
+            $this->currentSize -= strlen($this->serialize($this->data[$key]));
             unset($this->data[$key]);
         }
         unset($this->expirations[$key], $this->accessTimes[$key]);
@@ -133,7 +148,6 @@ final class ArrayDriver implements
         return true;
     }
 
-    /** @return array<string, mixed> */
     public function getMultiple(array $keys): array
     {
         $this->validateKeys($keys);
@@ -168,7 +182,7 @@ final class ArrayDriver implements
         return true;
     }
 
-    public function increment(string $key, int $step = 1, int $initialValue = 0, \DateInterval|int|\DateTimeInterface|null $ttl = null): int
+    public function increment(string $key, int $step = 1, int $initialValue = 0, \DateInterval|int|null $ttl = null): int
     {
         $this->validateKey($key);
         $this->validateStep($step);
@@ -188,7 +202,7 @@ final class ArrayDriver implements
         return $newValue;
     }
 
-    public function add(string $key, mixed $value, \DateInterval|int|\DateTimeInterface|null $ttl = null): bool
+    public function add(string $key, mixed $value, \DateInterval|int|null $ttl = null): bool
     {
         $this->validateKey($key);
         $this->validateValue($value);
@@ -200,12 +214,16 @@ final class ArrayDriver implements
         return $this->set($key, $value, $expiration);
     }
 
+    /** @param Tag[] $tags */
     public function invalidateTags(array $tags): bool
     {
         $this->validateTags($tags);
         $this->incrementOperations();
         $keysToDelete = [];
-        foreach ($tags as $tag) {
+
+        $tagStrings = array_map(fn (Tag $tag) => (string) $tag, $tags);
+
+        foreach ($tagStrings as $tag) {
             if (isset($this->tagIndex[$tag])) {
                 $keysToDelete = array_merge($keysToDelete, $this->tagIndex[$tag]);
                 unset($this->tagIndex[$tag]);
@@ -216,22 +234,30 @@ final class ArrayDriver implements
         return true;
     }
 
+    /** @param Topic[] $topics */
     public function subscribeTo(string $key, array $topics): void
     {
         $this->validateKey($key);
         $this->validateTopics($topics);
-        foreach ($topics as $topic) {
+
+        $topicStrings = array_map(fn (Topic $topic) => (string) $topic, $topics);
+
+        foreach ($topicStrings as $topic) {
             $this->topicIndex[$topic][] = $key;
             $this->topicIndex[$topic] = array_unique($this->topicIndex[$topic]);
         }
     }
 
+    /** @param Topic[] $topics */
     public function invalidateTopics(array $topics): bool
     {
         $this->validateTopics($topics);
         $this->incrementOperations();
         $keysToInvalidate = [];
-        foreach ($topics as $topic) {
+
+        $topicStrings = array_map(fn (Topic $topic) => (string) $topic, $topics);
+
+        foreach ($topicStrings as $topic) {
             if (isset($this->topicIndex[$topic])) {
                 $keysToInvalidate = array_merge($keysToInvalidate, $this->topicIndex[$topic]);
                 unset($this->topicIndex[$topic]);
@@ -242,13 +268,11 @@ final class ArrayDriver implements
         return true;
     }
 
-    /** @return list<string> */
     public function getCapabilities(): array
     {
         return [CacheCapabilities::ATOMIC_OPERATIONS, CacheCapabilities::TAGGING, CacheCapabilities::TOPICS];
     }
 
-    /** @return string[] */
     public function getTags(): array
     {
         return array_keys($this->tagIndex);
@@ -266,40 +290,36 @@ final class ArrayDriver implements
         return new DriverStats('Array', $stats['memory_usage'], $stats['total_items'], phpversion(), $stats);
     }
 
-    private function calculateSize(mixed $value): int
-    {
-        return strlen(serialize($value));
-    }
-
     private function isExpired(string $key): bool
     {
         return isset($this->expirations[$key]) && $this->expirations[$key] < time();
     }
 
-    private function hasSpace(string $key, mixed $value): bool
+    private function hasSpace(string $key, int $valueSize): bool
     {
         if (!isset($this->data[$key]) && count($this->data) >= self::MAX_ITEMS) {
             return false;
         }
-        $valueSize = $this->calculateSize($value);
-        $currentKeySize = isset($this->data[$key]) ? $this->calculateSize($this->data[$key]) : 0;
+
+        $currentKeySize = isset($this->data[$key]) ? strlen($this->serialize($this->data[$key])) : 0;
 
         return ($this->currentSize - $currentKeySize + $valueSize) <= self::MAX_MEMORY_SIZE;
     }
 
-    private function makeSpace(string $key, mixed $value): bool
+    private function makeSpace(string $key, int $valueSize): bool
     {
         $this->cleanup();
-        if ($this->hasSpace($key, $value)) {
+        if ($this->hasSpace($key, $valueSize)) {
             return true;
         }
 
-        return $this->evictLru($key, $value);
+        return $this->evictLru($key, $valueSize);
     }
 
-    private function evictLru(string $keyToSet, mixed $valueToSet): bool
+    private function evictLru(string $keyToSet, int $valueSizeToSet): bool
     {
-        $neededSpace = $this->calculateSize($valueToSet) - (isset($this->data[$keyToSet]) ? $this->calculateSize($this->data[$keyToSet]) : 0);
+        $currentKeySize = isset($this->data[$keyToSet]) ? strlen($this->serialize($this->data[$keyToSet])) : 0;
+        $neededSpace = $valueSizeToSet - $currentKeySize;
         if ($neededSpace <= 0) {
             return true;
         }
@@ -310,7 +330,7 @@ final class ArrayDriver implements
             if ($evictKey === $keyToSet) {
                 continue;
             }
-            $freedSpace += $this->calculateSize($this->data[$evictKey]);
+            $freedSpace += strlen($this->serialize($this->data[$evictKey]));
             $this->delete($evictKey);
             if ($freedSpace >= $neededSpace) {
                 return true;
@@ -338,21 +358,6 @@ final class ArrayDriver implements
                 }
             }
         }
-    }
-
-    private function calculateExpiration(\DateInterval|int|\DateTimeInterface|null $ttl): ?\DateTimeInterface
-    {
-        if ($ttl instanceof \DateInterval) {
-            return (new \DateTimeImmutable())->add($ttl);
-        }
-        if ($ttl instanceof \DateTimeInterface) {
-            return $ttl;
-        }
-        if (is_int($ttl) && $ttl > 0) {
-            return new \DateTimeImmutable('+' . $ttl . ' seconds');
-        }
-
-        return null;
     }
 
     private function incrementOperations(): void

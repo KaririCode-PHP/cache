@@ -5,15 +5,21 @@ declare(strict_types=1);
 namespace KaririCode\Cache\Driver\Concern;
 
 use KaririCode\Cache\Exception\InvalidArgumentException;
+use KaririCode\Cache\ValueObject\Tag;
+use KaririCode\Cache\ValueObject\Topic;
 
 /**
- * Trait para centralizar a lógica de validação para os drivers de cache.
+ * DriverValidationTrait provides validation methods for cache drivers.
+ *
+ * This trait includes methods to validate cache keys, values, and batch operations,
+ * ensuring compliance with defined constraints.
+ *
+ * @category  Cache
  */
 trait DriverValidationTrait
 {
-    // Constantes de validação centralizadas
     private const MAX_KEY_LENGTH = 250;
-    private const MAX_VALUE_SIZE = 512 * 1024 * 1024; // 512MB (usando o maior limite como padrão)
+    private const MAX_VALUE_SIZE = 512 * 1024 * 1024; // 512MB
     private const MAX_BATCH_SIZE = 1000;
 
     private function validateKey(string $key): void
@@ -61,28 +67,34 @@ trait DriverValidationTrait
         }
     }
 
-    private function validateTags(array $tags): void
-    {
-        foreach ($tags as $tag) {
-            if (!is_string($tag) || '' === $tag) {
-                throw InvalidArgumentException::invalidTag((string) $tag);
-            }
-        }
-    }
-
-    private function validateTopics(array $topics): void
-    {
-        foreach ($topics as $topic) {
-            if (!is_string($topic) || '' === $topic) {
-                throw InvalidArgumentException::invalidTopic((string) $topic);
-            }
-        }
-    }
-
     private function validateStep(int $step): void
     {
         if (0 === $step) {
             throw InvalidArgumentException::invalidValue('Step cannot be zero');
+        }
+    }
+
+    /**
+     * @param array<Tag> $tags
+     */
+    private function validateTags(array $tags): void
+    {
+        foreach ($tags as $tag) {
+            if (!$tag instanceof Tag) {
+                throw InvalidArgumentException::invalidTag(get_debug_type($tag));
+            }
+        }
+    }
+
+    /**
+     * @param array<Topic> $topics
+     */
+    private function validateTopics(array $topics): void
+    {
+        foreach ($topics as $topic) {
+            if (!$topic instanceof Topic) {
+                throw InvalidArgumentException::invalidTopic(get_debug_type($topic));
+            }
         }
     }
 }

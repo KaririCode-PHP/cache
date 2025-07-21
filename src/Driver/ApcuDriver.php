@@ -12,32 +12,37 @@ use KaririCode\Cache\Contract\DriverStats as DriverStatsContract;
 use KaririCode\Cache\Contract\TaggableCacheDriver;
 use KaririCode\Cache\Exception\CacheException;
 use KaririCode\Cache\Exception\ConfigurationException;
-use KaririCode\Cache\Exception\InvalidArgumentException;
+use KaririCode\Cache\Serializer\Trait\SerializationTrait;
+use KaririCode\Cache\Specialized\Trait\PrefixSanitizerTrait;
+use KaririCode\Cache\Validation\Trait\CacheKeyValidationTrait;
+use KaririCode\Cache\Validation\Trait\CacheValueValidationTrait;
+use KaririCode\Cache\Validation\Trait\TagValidationTrait;
+use KaririCode\Cache\Validation\Trait\TtlCalculatorTrait;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
 
-/**
- * Enterprise-grade APCu driver with enhanced security and cross-process safety.
- *
- * @see https://www.php.net/manual/en/book.apcu.php APCu Documentation
- */
 final class ApcuDriver implements
     CacheDriver,
     AtomicCacheDriver,
     TaggableCacheDriver,
     CompareAndSwapAware
 {
+    use CacheKeyValidationTrait;
+    use CacheValueValidationTrait;
+    use TagValidationTrait;
+    use SerializationTrait;
+    use TtlCalculatorTrait;
+    use PrefixSanitizerTrait;
+
     private string $keyPrefix;
     private LoggerInterface $logger;
     private bool $memoryWarningIssued = false;
     private int $operationCount = 0;
 
+    // Constantes específicas da implementação do ApcuDriver
     private const TAG_INDEX_PREFIX = 'tag_index::';
     private const LOCK_PREFIX = 'lock::';
     private const METADATA_PREFIX = 'meta::';
-    private const MAX_KEY_LENGTH = 200;
-    private const MAX_VALUE_SIZE = 64 * 1024 * 1024;
-    private const MAX_BATCH_SIZE = 100;
     private const LOCK_TIMEOUT = 5;
     private const MEMORY_WARNING_THRESHOLD = 0.9;
     private const CLEANUP_INTERVAL = 1000;
@@ -108,11 +113,6 @@ final class ApcuDriver implements
         return true;
     }
 
-    /**
-     * @param string[] $keys
-     *
-     * @return array<string, mixed>
-     */
     public function getMultiple(array $keys): array
     {
         $this->validateKeys($keys);
@@ -124,7 +124,6 @@ final class ApcuDriver implements
         $rawValues = apcu_fetch($prefixedKeys);
         $results = [];
 
-        // Ensure $rawValues is an array before accessing it
         if (!is_array($rawValues)) {
             $rawValues = [];
         }
@@ -182,19 +181,17 @@ final class ApcuDriver implements
             $this->removeFromAllTags($fullKey);
         }
 
-        /** @var array<string>|bool $result */
         $result = apcu_delete($prefixedKeys);
 
         foreach ($keys as $key) {
             $this->deleteMetadata($key);
         }
 
-        // APCu returns array of failed keys or bool
-        if (is_array($result)) {
-            return empty($result);
+        if (!is_array($result)) {
+            return false;
         }
 
-        return $result;
+        return empty($result);
     }
 
     public function increment(string $key, int $step = 1, int $initialValue = 0, \DateInterval|int|\DateTimeInterface|null $ttl = null): int
@@ -206,26 +203,22 @@ final class ApcuDriver implements
         $fullKey = $this->keyPrefix . $key;
         $ttlValue = $this->calculateTtl($ttl);
 
-        $success = false;
-        /** @var int|false $result */
-        $result = apcu_inc($fullKey, $step, $success);
-
-        if (!$success) {
-            $newValue = $initialValue + $step;
-            // Try to add atomically. If successful, return the new value
-            if (apcu_add($fullKey, $newValue, $ttlValue)) {
-                return $newValue;
-            }
-            // If failed (race condition), the value now exists, so try increment again
-            $result = apcu_inc($fullKey, $step, $success);
+        $newValue = apcu_inc($fullKey, $step, $success);
+        if ($success) {
+            return $newValue;
         }
 
-        // If result is still false, the operation failed irrecoverably
-        if (false === $result || !is_int($result)) {
-            throw CacheException::operationFailed('increment', $key);
+        $newValue = $initialValue + $step;
+        if (apcu_add($fullKey, $newValue, $ttlValue)) {
+            return $newValue;
         }
 
-        return $result;
+        $finalValue = apcu_inc($fullKey, $step, $success);
+        if ($success) {
+            return $finalValue;
+        }
+
+        throw CacheException::operationFailed('increment', $key);
     }
 
     public function add(string $key, mixed $value, \DateInterval|int|\DateTimeInterface|null $ttl = null): bool
@@ -255,7 +248,7 @@ final class ApcuDriver implements
         $ttlValue = $this->calculateTtl($ttl);
 
         if (!apcu_add($lockKey, 1, self::LOCK_TIMEOUT)) {
-            return false; // Could not acquire lock
+            return false;
         }
 
         try {
@@ -276,7 +269,7 @@ final class ApcuDriver implements
 
     public function invalidateTags(array $tags): bool
     {
-        $this->validateTags($tags);
+        $this->validateTagStrings($tags);
         $this->incrementOperations();
         if (empty($tags)) {
             return true;
@@ -285,13 +278,11 @@ final class ApcuDriver implements
         return $this->invalidateByPrefix(self::TAG_INDEX_PREFIX, $tags);
     }
 
-    /** @return string[] */
     public function getTags(): array
     {
         $tags = [];
         $iterator = new \APCUIterator('#^' . preg_quote(self::TAG_INDEX_PREFIX) . '#', \APC_ITER_KEY);
         foreach ($iterator as $item) {
-            // Ensure $item is an array with 'key' before accessing
             if (is_array($item) && isset($item['key']) && is_string($item['key'])) {
                 $tags[] = substr($item['key'], strlen(self::TAG_INDEX_PREFIX));
             }
@@ -300,7 +291,6 @@ final class ApcuDriver implements
         return $tags;
     }
 
-    /** @return list<string> */
     public function getCapabilities(): array
     {
         return [CacheCapabilities::ATOMIC_OPERATIONS, CacheCapabilities::TAGGING];
@@ -310,18 +300,10 @@ final class ApcuDriver implements
     {
         $info = apcu_cache_info(true) ?: [];
         $smaInfo = apcu_sma_info() ?: [];
-        /** @var string|false $phpVersion */
         $phpVersion = phpversion('apcu');
 
-        $memSize = null;
-        if (isset($info['mem_size']) && is_numeric($info['mem_size'])) {
-            $memSize = (int) $info['mem_size'];
-        }
-
-        $numEntries = null;
-        if (isset($info['num_entries']) && is_numeric($info['num_entries'])) {
-            $numEntries = (int) $info['num_entries'];
-        }
+        $memSize = isset($info['mem_size']) && is_numeric($info['mem_size']) ? (int) $info['mem_size'] : null;
+        $numEntries = isset($info['num_entries']) && is_numeric($info['num_entries']) ? (int) $info['num_entries'] : null;
 
         return new DriverStats(
             'Apcu',
@@ -330,22 +312,6 @@ final class ApcuDriver implements
             $phpVersion ?: null,
             ['cache_info' => $info, 'memory_info' => $smaInfo]
         );
-    }
-
-    /** @return array{status: string} */
-    public function healthCheck(): array
-    {
-        $testKey = $this->keyPrefix . 'health_check_' . uniqid('', true);
-        $testValue = 'ok';
-        if (apcu_store($testKey, $testValue, 10)) {
-            $read = apcu_fetch($testKey);
-            apcu_delete($testKey);
-            if ($read === $testValue) {
-                return ['status' => 'healthy'];
-            }
-        }
-
-        return ['status' => 'unhealthy'];
     }
 
     private function validateEnvironment(): void
@@ -361,112 +327,6 @@ final class ApcuDriver implements
         }
     }
 
-    private function validateKey(string $key): void
-    {
-        if (empty($key)) {
-            throw InvalidArgumentException::emptyKey();
-        }
-        if (strlen($key) > self::MAX_KEY_LENGTH) {
-            throw InvalidArgumentException::keyTooLong($key, self::MAX_KEY_LENGTH);
-        }
-        if (preg_match('/[\s\x00-\x1F\x7F]/', $key)) {
-            throw InvalidArgumentException::invalidKeyFormat($key);
-        }
-    }
-
-    private function validateKeys(array $keys): void
-    {
-        if (count($keys) > self::MAX_BATCH_SIZE) {
-            throw InvalidArgumentException::invalidKeyFormat('Batch size exceeds limit');
-        }
-        foreach ($keys as $key) {
-            if (!is_string($key)) {
-                throw InvalidArgumentException::invalidKeyFormat('All keys must be strings');
-            }
-            $this->validateKey($key);
-        }
-    }
-
-    private function validateValue(mixed $value): void
-    {
-        if (strlen($this->serialize($value)) > self::MAX_VALUE_SIZE) {
-            throw InvalidArgumentException::invalidValue('Value size exceeds limit');
-        }
-    }
-
-    private function validateMultipleValues(array $values): void
-    {
-        if (count($values) > self::MAX_BATCH_SIZE) {
-            throw InvalidArgumentException::invalidValue('Too many values');
-        }
-        foreach ($values as $key => $value) {
-            if (!is_string($key)) {
-                throw InvalidArgumentException::invalidKeyFormat('All keys must be strings');
-            }
-            $this->validateKey($key);
-            $this->validateValue($value);
-        }
-    }
-
-    private function validateTags(array $tags): void
-    {
-        foreach ($tags as $tag) {
-            if (!is_string($tag) || empty($tag)) {
-                throw InvalidArgumentException::invalidTag((string) $tag);
-            }
-        }
-    }
-
-    private function validateStep(int $step): void
-    {
-        if (0 === $step) {
-            throw InvalidArgumentException::invalidValue('Step cannot be zero');
-        }
-    }
-
-    private function sanitizePrefix(string $prefix): string
-    {
-        $sanitized = (string) preg_replace('/[^\w\-\.\:]/', '_', $prefix);
-
-        return substr($sanitized, 0, 50);
-    }
-
-    private function serialize(mixed $value): string
-    {
-        try {
-            return serialize($value);
-        } catch (\Throwable $e) {
-            throw CacheException::serializationFailed(get_debug_type($value), $e);
-        }
-    }
-
-    private function unserialize(mixed $data): mixed
-    {
-        if (!is_string($data)) {
-            return $data;
-        }
-        try {
-            return unserialize($data);
-        } catch (\Throwable $e) {
-            throw CacheException::deserializationFailed('apcu', $e);
-        }
-    }
-
-    private function calculateTtl(\DateInterval|int|\DateTimeInterface|null $ttl): int
-    {
-        if ($ttl instanceof \DateInterval) {
-            return (new \DateTimeImmutable())->add($ttl)->getTimestamp() - time();
-        }
-        if ($ttl instanceof \DateTimeInterface) {
-            return $ttl->getTimestamp() - time();
-        }
-        if (is_int($ttl)) {
-            return $ttl > 0 ? $ttl : 0;
-        }
-
-        return 0;
-    }
-
     private function incrementOperations(): void
     {
         ++$this->operationCount;
@@ -479,12 +339,14 @@ final class ApcuDriver implements
     {
         $memoryInfo = $this->getMemoryInfo();
         if ($memoryInfo['usage_percent'] > self::MEMORY_WARNING_THRESHOLD * 100 && !$this->memoryWarningIssued) {
-            $this->logger->warning('APCu memory usage high', (array) $memoryInfo);
+            $this->logger->warning('APCu memory usage high', $memoryInfo);
             $this->memoryWarningIssued = true;
         }
     }
 
-    /** @return array{total_memory: int, available_memory: int, used_memory: int, usage_percent: float} */
+    /**
+     * @return array{total_memory: int, available_memory: int, used_memory: int, usage_percent: float}
+     */
     private function getMemoryInfo(): array
     {
         $smaInfo = apcu_sma_info() ?: [];
@@ -496,7 +358,7 @@ final class ApcuDriver implements
             'total_memory' => $totalMemory,
             'available_memory' => $availableMemory,
             'used_memory' => $usedMemory,
-            'usage_percent' => round(($usedMemory / $totalMemory) * 100, 2),
+            'usage_percent' => round(($usedMemory / ($totalMemory ?: 1)) * 100, 2),
         ];
     }
 
@@ -516,11 +378,11 @@ final class ApcuDriver implements
         $memoryInfo = $this->getMemoryInfo();
         if ($this->memoryWarningIssued && $memoryInfo['usage_percent'] < (self::MEMORY_WARNING_THRESHOLD * 100 * 0.8)) {
             $this->memoryWarningIssued = false;
-            $this->logger->info('APCu memory usage is back to normal.', (array) $memoryInfo);
+            $this->logger->info('APCu memory usage is back to normal.', $memoryInfo);
         }
     }
 
-    /** @param list<string> $prefixes */
+    /** @param string[] $prefixes */
     private function clearByPrefix(array $prefixes): int
     {
         $deletedCount = 0;
@@ -546,11 +408,10 @@ final class ApcuDriver implements
     {
         $iterator = new \APCUIterator('#^' . preg_quote(self::TAG_INDEX_PREFIX) . '#', \APC_ITER_KEY | \APC_ITER_VALUE);
         foreach ($iterator as $tagItem) {
-            if (!is_array($tagItem) || !isset($tagItem['key']) || !isset($tagItem['value']) || !is_array($tagItem['value'])) {
+            if (!is_array($tagItem) || !isset($tagItem['key'], $tagItem['value']) || !is_array($tagItem['value'])) {
                 continue;
             }
 
-            /** @var array<string> $keysInIndex */
             $keysInIndex = $tagItem['value'];
             $index = array_search($fullKey, $keysInIndex, true);
 

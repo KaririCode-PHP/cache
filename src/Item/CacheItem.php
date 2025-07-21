@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace KaririCode\Cache\Item;
 
 use KaririCode\Cache\Contract\CacheItem as CacheItemContract;
+use KaririCode\Cache\ValueObject\Tag;
 
 /**
  * Enhanced cache item with tagging and topic subscription support.
@@ -76,9 +77,13 @@ final class CacheItem implements CacheItemContract
         return $this->expiration;
     }
 
+    /**
+     * @param Tag[] $tags an array of tags to associate with the cache item
+     */
     public function tag(array $tags): static
     {
-        $this->tags = array_merge($this->tags, $tags);
+        $tagStrings = array_map(fn (Tag $tag) => (string) $tag, $tags);
+        $this->tags = array_unique(array_merge($this->tags, $tagStrings));
 
         return $this;
     }

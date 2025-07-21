@@ -142,4 +142,13 @@ final class InvalidArgumentException extends AbstractException
             $reason
         );
     }
+
+    public static function reservedKey(string $key): static
+    {
+        return static::createException(
+            self::CODE_INVALID_KEY_FORMAT,
+            'RESERVED_KEY',
+            "The key '{$key}' is reserved and cannot be used"
+        );
+    }
 }

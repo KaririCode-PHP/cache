@@ -8,15 +8,12 @@ use KaririCode\Cache\Config\CacheConfig;
 use KaririCode\Cache\Config\DTO\FeatureConfig;
 use KaririCode\Cache\Config\DTO\LayerConfig;
 use KaririCode\Cache\Config\DTO\StoreConfig;
-use KaririCode\Cache\Contract\CacheEventListener as CacheEventListenerContract;
 use KaririCode\Cache\Contract\CacheSerializer;
-use KaririCode\Cache\Contract\CacheValidator;
 use KaririCode\Cache\Contract\LayeredCache;
 use KaririCode\Cache\Contract\MetricsCollector as MetricsCollectorContract;
 use KaririCode\Cache\Contract\StampedeProtector as StampedeProtectorContract;
 use KaririCode\Cache\Driver\Factory\DriverFactoryRegistry;
 use KaririCode\Cache\Event\Factory\CacheEventFactory;
-use KaririCode\Cache\Event\Listener\DefaultCacheEventListener;
 use KaririCode\Cache\Exception\ConfigurationException;
 use KaririCode\Cache\Item\CachePoolManager;
 use KaririCode\Cache\Metrics\MetricsCollector;
@@ -34,9 +31,6 @@ use Psr\Log\LoggerInterface;
  *
  * This builder receives all dependencies injected and acts as a factory
  * for Cache instances based on configuration.
- *
- * @see https://refactoring.guru/design-patterns/builder Builder Pattern
- * @see https://www.php-fig.org/psr/psr-6/ PSR-6 Cache Interface
  */
 final class CacheBuilder
 {
@@ -46,8 +40,6 @@ final class CacheBuilder
     private ?CacheSerializer $serializer = null;
     private ?StampedeProtectorContract $stampedeProtector = null;
     private ?MetricsCollectorContract $metricsCollector = null;
-    private ?CacheEventListenerContract $eventListener = null;
-    private ?CacheValidator $keyValidator = null;
     private ?EventDispatcherInterface $eventDispatcher = null;
 
     /** @var array<string, bool> */
@@ -117,26 +109,6 @@ final class CacheBuilder
     }
 
     /**
-     * Override event listener (dependency injection).
-     */
-    public function withEventListener(?CacheEventListenerContract $eventListener): self
-    {
-        $this->eventListener = $eventListener;
-
-        return $this;
-    }
-
-    /**
-     * Override key validator (dependency injection).
-     */
-    public function withKeyValidator(?CacheValidator $keyValidator): self
-    {
-        $this->keyValidator = $keyValidator;
-
-        return $this;
-    }
-
-    /**
      * Override PSR-14 event dispatcher (dependency injection).
      */
     public function withEventDispatcher(?EventDispatcherInterface $eventDispatcher): self
@@ -190,27 +162,20 @@ final class CacheBuilder
     public function build(): Cache
     {
         $this->validateConfiguration();
-
         $layeredCache = $this->buildLayeredCache();
 
+        // Instantiate Cache with the new, simpler constructor signature.
         return new Cache(
             $layeredCache,
             $this->serializer,
             $this->stampedeProtector,
             $this->metricsCollector,
             $this->logger,
-            $this->eventListener,
-            $this->keyValidator,
             $this->eventDispatcher,
             $this->buildEffectiveConfig()
         );
     }
 
-    /**
-     * Setup builder from store configuration.
-     *
-     * @param StoreConfig $storeConfig // CORREÇÃO: O tipo do parâmetro foi atualizado para o DTO
-     */
     private function setupFromStoreConfig(StoreConfig $storeConfig): void
     {
         $driver = $storeConfig->driver;
@@ -235,7 +200,11 @@ final class CacheBuilder
     private function setupLayeredCache(StoreConfig $storeConfig): void
     {
         foreach ($storeConfig->layers as $layerData) {
-            $layerConfig = $this->createLayerConfig($layerData);
+            $layerConfig = new LayerConfig(
+                driver: $layerData['driver'],
+                config: $layerData['config'],
+                priority: $layerData['priority']
+            );
             $this->addCustomLayer(
                 $layerConfig->driver,
                 $layerConfig->config,
@@ -244,20 +213,7 @@ final class CacheBuilder
         }
     }
 
-    private function createLayerConfig(array $data): LayerConfig
-    {
-        return new LayerConfig(
-            driver: $data['driver'],
-            config: $data['config'],
-            priority: $data['priority']
-        );
-    }
-
-    /**
-     * Setup single layer cache.
-     *
-     * @param array<string, mixed> $config
-     */
+    /** @param array<string, mixed> $config */
     private function setupSingleLayerCache(string $driver, array $config): void
     {
         $this->addCustomLayer($driver, $config, 50);
@@ -283,47 +239,28 @@ final class CacheBuilder
             $this->metricsCollector = new MetricsCollector();
         }
 
-        if ($features->eventsEnabled && !$this->eventListener) {
-            $this->eventListener = new DefaultCacheEventListener($this->config->getMaxEvents());
-        }
-
+        // The event listener is part of the PSR-14 event system, no longer created here.
         if ($features->psr14EventsEnabled && !$this->eventDispatcher) {
             $eventFactory = new CacheEventFactory($this->config);
             $eventSystem = $eventFactory->createCompleteEventSystem();
             $this->eventDispatcher = $eventSystem->eventDispatcher;
         }
-
-        if ($features->strictValidation && !$this->keyValidator) {
-            $this->keyValidator = new CacheKeyValidator();
-        }
     }
 
-    /**
-     * Build the effective configuration by merging defaults, features, and overrides.
-     *
-     * @return array<string, mixed>
-     */
+    /** @return array<string, mixed> */
     private function buildEffectiveConfig(): array
     {
         $features = $this->config->getFeatureConfig();
-
         $baseConfig = [
             'default_ttl' => $this->config->getDefaultTtl(),
             'key_prefix' => $this->config->getDefaultKeyPrefix(),
             'namespace_separator' => $this->config->getNamespaceSeparator(),
         ];
-
-        // Merge features as array
         $baseConfig = array_merge($baseConfig, $features->toArray());
 
         return array_merge($baseConfig, $this->overrides);
     }
 
-    /**
-     * Create serializer based on configuration.
-     *
-     * @return IgbinarySerializer|JsonSerializer|CompressingSerializer|NativeSerializer
-     */
     private function createSerializerFromConfig(): CacheSerializer
     {
         $serializerType = $this->config->getSerializer();
@@ -337,19 +274,13 @@ final class CacheBuilder
         };
     }
 
-    /**
-     * Build layered cache from configuration using proper factory pattern.
-     *
-     * @throws ConfigurationException
-     */
     private function buildLayeredCache(): LayeredCache
     {
         if (empty($this->layers)) {
-            throw ConfigurationException::invalidConfiguration('layers', 'No cache layers configured. Check your configuration.');
+            throw ConfigurationException::invalidConfiguration('layers', 'No cache layers configured.');
         }
 
         $layeredCache = new LayeredCacheManager($this->logger);
-
         usort($this->layers, fn (array $a, array $b): int => $b['priority'] <=> $a['priority']);
 
         foreach ($this->layers as $layerConfig) {
@@ -364,7 +295,7 @@ final class CacheBuilder
                     $this->serializer
                 );
 
-                $pool = new CachePoolManager($driver, $this->keyValidator ?? new CacheKeyValidator());
+                $pool = new CachePoolManager($driver, new CacheKeyValidator());
                 $layeredCache->addLayer($pool, $layerConfig['priority']);
 
                 $this->logger->debug('Cache layer created', [
@@ -376,9 +307,7 @@ final class CacheBuilder
                 $this->logger->error('Failed to create cache layer', [
                     'driver' => $layerConfig['driver'],
                     'error' => $e->getMessage(),
-                    'config' => $layerConfig['config'],
                 ]);
-
                 throw ConfigurationException::invalidConfiguration($layerConfig['driver'], "Failed to create cache layer: {$e->getMessage()}");
             }
         }
@@ -386,9 +315,6 @@ final class CacheBuilder
         return $layeredCache;
     }
 
-    /**
-     * Validate builder configuration.
-     */
     private function validateConfiguration(): void
     {
         if (empty($this->layers)) {
@@ -409,7 +335,6 @@ final class CacheBuilder
         $this->logger->info('Cache configuration validated successfully', [
             'layers_count' => count($this->layers),
             'serializer' => $this->serializer ? get_class($this->serializer) : 'none',
-            'features' => array_keys(array_filter($this->overrides)),
         ]);
     }
 }

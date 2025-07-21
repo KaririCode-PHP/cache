@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Contract;
 
+use KaririCode\Cache\ValueObject\Tag;
 use Psr\Cache\CacheItemInterface;
 
 /**
@@ -24,7 +25,7 @@ interface CacheItem extends CacheItemInterface
     /**
      * Add tags to this cache item.
      *
-     * @param string[] $tags an array of tags to associate with the cache item
+     * @param Tag[] $tags an array of tags to associate with the cache item
      *
      * @return static the instance of the cache item for method chaining
      */

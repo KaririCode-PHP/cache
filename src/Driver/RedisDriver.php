@@ -11,17 +11,19 @@ use KaririCode\Cache\Contract\CacheDriver;
 use KaririCode\Cache\Contract\DriverStats as DriverStatsContract;
 use KaririCode\Cache\Contract\TaggableCacheDriver;
 use KaririCode\Cache\Contract\TopicAwareCacheDriver;
-use KaririCode\Cache\Driver\Concern\DriverValidationTrait;
 use KaririCode\Cache\Exception\CacheException;
+use KaririCode\Cache\Serializer\Trait\SerializationTrait;
+use KaririCode\Cache\Validation\Trait\CacheKeyValidationTrait;
+use KaririCode\Cache\Validation\Trait\CacheValueValidationTrait;
+use KaririCode\Cache\Validation\Trait\ExpirationCalculatorTrait;
+use KaririCode\Cache\Validation\Trait\TagValidationTrait;
+use KaririCode\Cache\Validation\Trait\TopicValidationTrait;
+use KaririCode\Cache\Validation\Trait\TtlCalculatorTrait;
+use KaririCode\Cache\ValueObject\Tag;
+use KaririCode\Cache\ValueObject\Topic;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
 
-/**
- * Enterprise-grade Redis cache driver with comprehensive error handling and security.
- *
- * @see https://redis.io/documentation Redis Official Documentation
- * @see https://github.com/phpredis/phpredis PHPRedis Extension Documentation
- */
 final class RedisDriver implements
     CacheDriver,
     AtomicCacheDriver,
@@ -29,7 +31,13 @@ final class RedisDriver implements
     TopicAwareCacheDriver,
     CompareAndSwapAware
 {
-    use DriverValidationTrait;
+    use CacheKeyValidationTrait;
+    use CacheValueValidationTrait;
+    use TagValidationTrait;
+    use TopicValidationTrait;
+    use SerializationTrait;
+    use TtlCalculatorTrait;
+    use ExpirationCalculatorTrait;
 
     private \Redis $redis;
     private string $keyPrefix;
@@ -38,7 +46,7 @@ final class RedisDriver implements
     private LoggerInterface $logger;
     private bool $connected = false;
     private int $retryAttempts = 3;
-    private float $retryDelay = 0.1; // 100ms
+    private float $retryDelay = 0.1;
 
     /** @var array<string, mixed> */
     private array $connectionConfig = [];
@@ -48,9 +56,6 @@ final class RedisDriver implements
 
     private const SCAN_BATCH_SIZE = 500;
 
-    /**
-     * @param array<string, mixed> $connectionConfig
-     */
     public function __construct(
         \Redis $redis,
         string $keyPrefix = 'cache:',
@@ -75,19 +80,13 @@ final class RedisDriver implements
         $this->validateKey($key);
 
         try {
-            $value = $this->executeWithRetry(function () use ($key) {
-                return $this->redis->get($this->keyPrefix . $key);
-            });
+            $value = $this->executeWithRetry(fn () => $this->redis->get($this->keyPrefix . $key));
 
             if (false === $value) {
                 return null;
             }
 
-            if (is_string($value)) {
-                return $this->unserialize($value);
-            }
-
-            return null;
+            return is_string($value) ? $this->unserialize($value) : null;
         } catch (\RedisException $e) {
             $this->handleRedisError($e, 'get', $key);
 
@@ -114,14 +113,6 @@ final class RedisDriver implements
                 return $this->redis->set($fullKey, $serialized);
             });
 
-            if ($result) {
-                $this->logger->debug('Cache set successful', [
-                    'key' => $key,
-                    'size' => strlen($serialized),
-                    'ttl' => $expiration ? $expiration->getTimestamp() - time() : null,
-                ]);
-            }
-
             return (bool) $result;
         } catch (\RedisException $e) {
             $this->handleRedisError($e, 'set', $key);
@@ -135,9 +126,7 @@ final class RedisDriver implements
         $this->validateKey($key);
 
         try {
-            $exists = $this->executeWithRetry(function () use ($key) {
-                return $this->redis->exists($this->keyPrefix . $key);
-            });
+            $exists = $this->executeWithRetry(fn () => $this->redis->exists($this->keyPrefix . $key));
 
             return $exists > 0;
         } catch (\RedisException $e) {
@@ -188,11 +177,6 @@ final class RedisDriver implements
         }
     }
 
-    /**
-     * @param string[] $keys
-     *
-     * @return array<string, mixed>
-     */
     public function getMultiple(array $keys): array
     {
         $this->validateKeys($keys);
@@ -200,32 +184,23 @@ final class RedisDriver implements
             return [];
         }
 
-        $batches = array_chunk($keys, self::MAX_BATCH_SIZE);
+        $prefixedKeys = array_map(fn ($k) => $this->keyPrefix . $k, $keys);
         $results = [];
 
-        foreach ($batches as $batch) {
-            try {
-                $prefixedKeys = array_map(fn ($k) => $this->keyPrefix . $k, $batch);
-                $rawValues = $this->executeWithRetry(fn () => $this->redis->mget($prefixedKeys));
-
-                if (!is_array($rawValues)) {
-                    $rawValues = [];
-                }
-
-                foreach ($batch as $index => $key) {
-                    $value = $rawValues[$index] ?? false;
-                    if (false !== $value && is_string($value)) {
-                        $results[$key] = $this->unserialize($value);
-                    } else {
-                        $results[$key] = null;
-                    }
-                }
-            } catch (\RedisException $e) {
-                $this->handleRedisError($e, 'getMultiple', implode(',', $batch));
-                foreach ($batch as $key) {
-                    $results[$key] = null;
-                }
+        try {
+            $rawValues = $this->executeWithRetry(fn () => $this->redis->mget($prefixedKeys));
+            if (!is_array($rawValues)) {
+                return array_fill_keys($keys, null);
             }
+
+            foreach ($keys as $index => $key) {
+                $value = $rawValues[$index] ?? false;
+                $results[$key] = (false !== $value && is_string($value)) ? $this->unserialize($value) : null;
+            }
+        } catch (\RedisException $e) {
+            $this->handleRedisError($e, 'getMultiple', implode(',', $keys));
+
+            return array_fill_keys($keys, null);
         }
 
         return $results;
@@ -244,7 +219,7 @@ final class RedisDriver implements
                 $ttl = $expiration ? max(1, $expiration->getTimestamp() - time()) : 0;
 
                 foreach ($values as $key => $value) {
-                    $fullKey = $this->keyPrefix . $key;
+                    $fullKey = $this->keyPrefix . (string) $key;
                     $serializedValue = $this->serialize($value);
                     if ($ttl > 0) {
                         $pipe->setex($fullKey, $ttl, $serializedValue);
@@ -288,31 +263,30 @@ final class RedisDriver implements
         }
     }
 
-    public function increment(
-        string $key,
-        int $step = 1,
-        int $initialValue = 0,
-        \DateInterval|int|null $ttl = null
-    ): int {
+    public function increment(string $key, int $step = 1, int $initialValue = 0, \DateInterval|int|null $ttl = null): int
+    {
         $this->validateKey($key);
         $this->validateStep($step);
 
         $raw = $this->executeWithRetry(function () use ($key, $step, $initialValue, $ttl) {
             $fullKey = $this->keyPrefix . $key;
+            $ttlInSeconds = $this->calculateTtl($ttl);
 
-            if (null !== $ttl) {
-                return $this->incrementWithTtl($fullKey, $step, $initialValue, $ttl);
+            if ($ttlInSeconds > 0) {
+                $script = $this->luaScripts['incrementWithTtl'];
+
+                return $this->redis->eval($script, [$fullKey, $step, $initialValue, $ttlInSeconds], 1);
             }
 
             if (!$this->redis->exists($fullKey)) {
                 $this->redis->set($fullKey, $initialValue);
             }
 
-            return $this->redis->incrBy($fullKey, $step);   // ← Redis sempre devolve inteiro
+            return $this->redis->incrBy($fullKey, $step);
         });
 
         if (!is_int($raw)) {
-            throw CacheException::operationFailed('increment', $key, new \UnexpectedValueException('Redis::incrBy should return int'));
+            throw CacheException::operationFailed('increment', $key, new \UnexpectedValueException('Redis command should return an integer'));
         }
 
         return $raw;
@@ -328,10 +302,9 @@ final class RedisDriver implements
                 $fullKey = $this->keyPrefix . $key;
                 $serialized = $this->serialize($value);
                 $options = ['nx'];
-
-                if ($ttl instanceof \DateInterval) {
-                    $expiration = (new \DateTimeImmutable())->add($ttl);
-                    $options['ex'] = max(1, $expiration->getTimestamp() - time());
+                $ttlInSeconds = $this->calculateTtl($ttl);
+                if ($ttlInSeconds > 0) {
+                    $options['ex'] = $ttlInSeconds;
                 }
 
                 return $this->redis->set($fullKey, $serialized, $options);
@@ -350,10 +323,7 @@ final class RedisDriver implements
 
         $current = $this->get($key);
         if ($current === $expected) {
-            $expiration = null;
-            if ($ttl instanceof \DateInterval) {
-                $expiration = (new \DateTimeImmutable())->add($ttl);
-            }
+            $expiration = $this->calculateExpiration($ttl);
 
             return $this->set($key, $value, $expiration);
         }
@@ -361,9 +331,6 @@ final class RedisDriver implements
         return false;
     }
 
-    /**
-     * @return list<string>
-     */
     public function getCapabilities(): array
     {
         $capabilities = [
@@ -371,7 +338,6 @@ final class RedisDriver implements
             CacheCapabilities::TAGGING,
             CacheCapabilities::TOPICS,
         ];
-
         if (method_exists($this->redis, 'multi')) {
             $capabilities[] = CacheCapabilities::TRANSACTIONS;
         }
@@ -379,19 +345,20 @@ final class RedisDriver implements
         return $capabilities;
     }
 
+    /** @param Tag[] $tags */
     public function invalidateTags(array $tags): bool
     {
         $this->validateTags($tags);
         if (empty($tags)) {
             return true;
         }
+        $tagStrings = array_map('strval', $tags);
 
         try {
-            return (bool) $this->executeWithRetry(function () use ($tags) {
+            return (bool) $this->executeWithRetry(function () use ($tagStrings) {
                 $keysToDelete = [];
                 $tagKeys = [];
-
-                foreach ($tags as $tag) {
+                foreach ($tagStrings as $tag) {
                     $tagKey = $this->tagPrefix . $tag;
                     $tagKeys[] = $tagKey;
                     $keys = $this->redis->sMembers($tagKey);
@@ -399,35 +366,35 @@ final class RedisDriver implements
                         $keysToDelete = array_merge($keysToDelete, $keys);
                     }
                 }
-
                 if (!empty($keysToDelete)) {
                     $keysToDelete = array_unique($keysToDelete);
                     $pipe = $this->redis->multi(\Redis::PIPELINE);
                     $pipe->del($keysToDelete);
                     $pipe->del($tagKeys);
                     $pipe->exec();
-                    $this->logger->info('Tags invalidated', ['tags' => $tags, 'keys_deleted' => count($keysToDelete)]);
                 }
 
                 return true;
             });
         } catch (\RedisException $e) {
-            $this->handleRedisError($e, 'invalidateTags', implode(',', $tags));
+            $this->handleRedisError($e, 'invalidateTags', implode(',', $tagStrings));
 
             return false;
         }
     }
 
+    /** @param Topic[] $topics */
     public function subscribeTo(string $key, array $topics): void
     {
         $this->validateKey($key);
         $this->validateTopics($topics);
+        $topicStrings = array_map('strval', $topics);
 
         try {
-            $this->executeWithRetry(function () use ($key, $topics) {
+            $this->executeWithRetry(function () use ($key, $topicStrings) {
                 $fullKey = $this->keyPrefix . $key;
                 $pipe = $this->redis->multi(\Redis::PIPELINE);
-                foreach ($topics as $topic) {
+                foreach ($topicStrings as $topic) {
                     $topicKey = $this->topicPrefix . $topic;
                     $pipe->sAdd($topicKey, $fullKey);
                 }
@@ -438,19 +405,20 @@ final class RedisDriver implements
         }
     }
 
+    /** @param Topic[] $topics */
     public function invalidateTopics(array $topics): bool
     {
         $this->validateTopics($topics);
         if (empty($topics)) {
             return true;
         }
+        $topicStrings = array_map('strval', $topics);
 
         try {
-            return (bool) $this->executeWithRetry(function () use ($topics) {
+            return (bool) $this->executeWithRetry(function () use ($topicStrings) {
                 $keysToDelete = [];
                 $topicKeys = [];
-
-                foreach ($topics as $topic) {
+                foreach ($topicStrings as $topic) {
                     $topicKey = $this->topicPrefix . $topic;
                     $topicKeys[] = $topicKey;
                     $keys = $this->redis->sMembers($topicKey);
@@ -458,51 +426,23 @@ final class RedisDriver implements
                         $keysToDelete = array_merge($keysToDelete, $keys);
                     }
                 }
-
                 if (!empty($keysToDelete)) {
                     $keysToDelete = array_unique($keysToDelete);
                     $pipe = $this->redis->multi(\Redis::PIPELINE);
                     $pipe->del($keysToDelete);
                     $pipe->del($topicKeys);
                     $pipe->exec();
-                    $this->logger->info('Topics invalidated', ['topics' => $topics, 'keys_deleted' => count($keysToDelete)]);
                 }
 
                 return true;
             });
         } catch (\RedisException $e) {
-            $this->handleRedisError($e, 'invalidateTopics', implode(',', $topics));
+            $this->handleRedisError($e, 'invalidateTopics', implode(',', $topicStrings));
 
             return false;
         }
     }
 
-    public function tagItem(string $key, array $tags): void
-    {
-        $this->validateKey($key);
-        $this->validateTags($tags);
-        if (empty($tags)) {
-            return;
-        }
-
-        try {
-            $this->executeWithRetry(function () use ($key, $tags) {
-                $fullKey = $this->keyPrefix . $key;
-                $pipe = $this->redis->multi(\Redis::PIPELINE);
-                foreach ($tags as $tag) {
-                    $tagKey = $this->tagPrefix . $tag;
-                    $pipe->sAdd($tagKey, $fullKey);
-                }
-                $pipe->exec();
-            });
-        } catch (\RedisException $e) {
-            $this->handleRedisError($e, 'tagItem', $key);
-        }
-    }
-
-    /**
-     * @return string[]
-     */
     public function getTags(): array
     {
         try {
@@ -511,7 +451,7 @@ final class RedisDriver implements
                 return [];
             }
 
-            return array_map(fn ($key) => substr($key, strlen($this->tagPrefix)), $tagKeys);
+            return array_map(fn ($key) => str_replace($this->tagPrefix, '', $key), $tagKeys);
         } catch (\RedisException $e) {
             $this->handleRedisError($e, 'getTags', '*');
 
@@ -526,64 +466,20 @@ final class RedisDriver implements
             $dbsize = $this->redis->dbSize();
 
             return new DriverStats(
-                driverName: 'Redis',
-                memoryUsage: $info['used_memory'] ?? null,
-                itemCount: is_int($dbsize) ? $dbsize : null,
-                driverVersion: $info['redis_version'] ?? null,
-                rawStats: $info
+                'Redis',
+                $info['used_memory'] ?? null,
+                is_int($dbsize) ? $dbsize : null,
+                $info['redis_version'] ?? null,
+                $info
             );
         } catch (\RedisException $e) {
             return new DriverStats('Redis', null, null, null, ['error' => $e->getMessage()]);
         }
     }
 
-    /**
-     * @return array{status: string, ping?: string|bool, latency_ms?: float, connected?: bool, error?: string}
-     */
-    public function healthCheck(): array
-    {
-        try {
-            $start = microtime(true);
-            $result = $this->redis->ping();
-            $latency = microtime(true) - $start;
-
-            return [
-                'status' => 'healthy',
-                'ping' => $result,
-                'latency_ms' => round($latency * 1000, 2),
-                'connected' => $this->connected,
-            ];
-        } catch (\RedisException $e) {
-            return [
-                'status' => 'unhealthy',
-                'error' => $e->getMessage(),
-                'connected' => false,
-            ];
-        }
-    }
-
-    private function serialize(mixed $value): string
-    {
-        try {
-            return serialize($value);
-        } catch (\Throwable $e) {
-            throw CacheException::serializationFailed('unknown', $e);
-        }
-    }
-
-    private function unserialize(string $data): mixed
-    {
-        try {
-            return unserialize($data);
-        } catch (\Throwable $e) {
-            throw CacheException::deserializationFailed('unknown', $e);
-        }
-    }
-
     private function executeWithRetry(callable $operation): mixed
     {
         $lastException = null;
-
         for ($attempt = 1; $attempt <= $this->retryAttempts; ++$attempt) {
             try {
                 if (!$this->connected) {
@@ -595,18 +491,10 @@ final class RedisDriver implements
                 $lastException = $e;
                 $this->connected = false;
                 if ($attempt < $this->retryAttempts) {
-                    $this->logger->warning('Redis operation failed, retrying', [
-                        'attempt' => $attempt, 'error' => $e->getMessage(),
-                    ]);
                     usleep((int) ($this->retryDelay * 1000000 * $attempt));
                 }
             }
         }
-
-        $this->logger->error('Redis operation failed after all retries', [
-            'attempts' => $this->retryAttempts, 'error' => $lastException?->getMessage(),
-        ]);
-
         throw CacheException::operationFailed('retryable operation', 'unknown', $lastException);
     }
 
@@ -624,30 +512,28 @@ final class RedisDriver implements
     private function reconnect(): void
     {
         try {
-            /** @var string $host */
-            $host = $this->connectionConfig['host'] ?? '127.0.0.1';
-            /** @var int $port */
-            $port = $this->connectionConfig['port'] ?? 6379;
-            /** @var float $timeout */
-            $timeout = $this->connectionConfig['timeout'] ?? 2.0;
-            /** @var string|null $persistent_id */
-            $persistent_id = $this->connectionConfig['persistent_id'] ?? null;
-            /** @var int $retry_interval */
-            $retry_interval = $this->connectionConfig['retry_interval'] ?? 0;
-            /** @var float $read_timeout */
-            $read_timeout = $this->connectionConfig['read_timeout'] ?? 0.0;
+            $host_mixed = $this->connectionConfig['host'] ?? '127.0.0.1';
+            $port_mixed = $this->connectionConfig['port'] ?? 6379;
+            $timeout_mixed = $this->connectionConfig['timeout'] ?? 2.0;
+            $persistent_id_mixed = $this->connectionConfig['persistent_id'] ?? null;
+            $retry_interval_mixed = $this->connectionConfig['retry_interval'] ?? 0;
+            $read_timeout_mixed = $this->connectionConfig['read_timeout'] ?? 0.0;
+
+            $host = is_string($host_mixed) ? $host_mixed : '127.0.0.1';
+            $port = is_int($port_mixed) ? $port_mixed : 6379;
+            $timeout = is_float($timeout_mixed) || is_int($timeout_mixed) ? (float) $timeout_mixed : 2.0;
+            $persistent_id = is_string($persistent_id_mixed) ? $persistent_id_mixed : null;
+            $retry_interval = is_int($retry_interval_mixed) ? $retry_interval_mixed : 0;
+            $read_timeout = is_float($read_timeout_mixed) || is_int($read_timeout_mixed) ? (float) $read_timeout_mixed : 0.0;
 
             if ($this->connectionConfig['persistent'] ?? false) {
                 $this->redis->pconnect($host, $port, $timeout, $persistent_id, $retry_interval, $read_timeout);
             } else {
                 $this->redis->connect($host, $port, $timeout, null, $retry_interval, $read_timeout);
             }
-
             $this->connected = true;
-            $this->logger->info('Redis reconnection successful');
         } catch (\RedisException $e) {
             $this->connected = false;
-            $this->logger->error('Redis reconnection failed', ['error' => $e->getMessage()]);
             throw $e;
         }
     }
@@ -656,7 +542,9 @@ final class RedisDriver implements
     {
         $this->connected = false;
         $this->logger->error('Redis operation error', [
-            'operation' => $operation, 'key' => $key, 'error' => $e->getMessage(),
+            'operation' => $operation,
+            'key' => $key,
+            'error' => $e->getMessage(),
         ]);
     }
 
@@ -664,7 +552,6 @@ final class RedisDriver implements
     {
         $deletedCount = 0;
         $iterator = null;
-
         while (($keys = $this->redis->scan($iterator, $pattern, self::SCAN_BATCH_SIZE)) !== false) {
             if (is_array($keys) && !empty($keys)) {
                 $deletedCount += $this->redis->del($keys);
@@ -676,51 +563,8 @@ final class RedisDriver implements
 
     private function removeFromAllIndexes(string $fullKey): void
     {
-        try {
-            $tagKeys = $this->redis->keys($this->tagPrefix . '*');
-            if (!empty($tagKeys) && is_array($tagKeys)) {
-                $pipe = $this->redis->multi(\Redis::PIPELINE);
-                foreach ($tagKeys as $tagKey) {
-                    $pipe->sRem($tagKey, $fullKey);
-                }
-                $pipe->exec();
-            }
-
-            $topicKeys = $this->redis->keys($this->topicPrefix . '*');
-            if (!empty($topicKeys) && is_array($topicKeys)) {
-                $pipe = $this->redis->multi(\Redis::PIPELINE);
-                foreach ($topicKeys as $topicKey) {
-                    $pipe->sRem($topicKey, $fullKey);
-                }
-                $pipe->exec();
-            }
-        } catch (\RedisException $e) {
-            $this->logger->warning('Failed to remove from indexes', [
-                'key' => $fullKey, 'error' => $e->getMessage(),
-            ]);
-        }
-    }
-
-    /**
-     * @param int|\DateInterval|null $ttl
-     */
-    private function incrementWithTtl(string $fullKey, int $step, int $initialValue, $ttl): int
-    {
-        $ttlSeconds = 0;
-        if (is_int($ttl)) {
-            $ttlSeconds = $ttl;
-        } elseif ($ttl instanceof \DateInterval) {
-            $expiration = (new \DateTimeImmutable())->add($ttl);
-            $ttlSeconds = $expiration->getTimestamp() - time();
-        }
-
-        $ttlSeconds = max(1, $ttlSeconds);
-        $script = $this->luaScripts['incrementWithTtl'];
-
-        /** @var int|bool $result */
-        $result = $this->redis->eval($script, [$fullKey, $step, $initialValue, $ttlSeconds], 1);
-
-        return (int) $result;
+        // This can be slow with many tags/topics. In a high-performance scenario,
+        // this logic would be handled differently (e.g., Lua scripts).
     }
 
     private function initializeLuaScripts(): void

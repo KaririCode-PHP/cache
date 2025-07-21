@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace KaririCode\Cache\Specialized;
 
 use KaririCode\Cache\Contract\Cache;
+use KaririCode\Cache\ValueObject\Tag;
 
 /**
  * Specialized cache for API responses with smart invalidation.
@@ -73,16 +74,18 @@ final class ApiResponseCache
             'headers' => $this->config['vary_on_headers'],
         ];
 
-        $tags = $this->generateTags($endpoint, $params);
+        $tagStrings = $this->generateTags($endpoint, $params);
+        $tags = array_map(fn (string $tag) => new Tag($tag), $tagStrings);
 
         return $this->cache->setWithTags($key, $cacheData, $tags, $ttl);
     }
 
     public function invalidateEndpoint(string $endpoint): bool
     {
-        $tag = $this->prefix . 'endpoint:' . hash('sha256', $endpoint);
+        $tagString = $this->prefix . 'endpoint:' . hash('sha256', $endpoint);
+        $tags = [new Tag($tagString)];
 
-        return $this->cache->invalidateTags([$tag]);
+        return $this->cache->invalidateTags($tags);
     }
 
     /**
