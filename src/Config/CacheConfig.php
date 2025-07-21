@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Config;
 
+use KaririCode\Cache\Config\DTO\FeatureConfig;
+use KaririCode\Cache\Config\DTO\ObservabilityConfig;
 use KaririCode\Cache\Config\DTO\StoreConfig;
 use KaririCode\Cache\Exception\ConfigurationException;
 use KaririCode\Configurator\Contract\Configurator\ConfigurationManager;
@@ -20,6 +22,8 @@ use KaririCode\Contract\ImmutableValue;
 final class CacheConfig implements ImmutableValue
 {
     private ConfigurationManager $configurator;
+    private ?FeatureConfig $featureConfig = null;
+    private ?ObservabilityConfig $observabilityConfig = null;
     private string $namespace;
 
     /** @var array<string, mixed> */
@@ -158,55 +162,93 @@ final class CacheConfig implements ImmutableValue
         return $serializer;
     }
 
-    /**
-     * Check if feature is enabled.
-     */
     public function isFeatureEnabled(string $feature): bool
     {
-        return (bool) $this->get("features.{$feature}", false);
+        return (bool) $this->getFeatureValue($feature, false);
+    }
+
+    private function getFeatureValue(string $feature, mixed $default): mixed
+    {
+        $features = $this->getFeatures();
+
+        return $features[$feature] ?? $default;
     }
 
     /**
-     * Get all features configuration.
-     *
-     * @return array<string, mixed> associative array of feature names and their configurations
+     * @return array<string, bool>
      */
     public function getFeatures(): array
     {
+        // CORREÇÃO: Garante que o retorno seja sempre um array.
         $features = $this->get('features', []);
 
-        /** @phpstan-var array<string, mixed> $features */
-        return $features;
+        return is_array($features) ? $features : [];
     }
 
+    /**
+     * Get structured features configuration.
+     */
+    public function getFeatureConfig(): FeatureConfig
+    {
+        if (!isset($this->featureConfig)) {
+            $this->featureConfig = FeatureConfig::fromArray($this->getFeatures());
+        }
+
+        return $this->featureConfig;
+    }
+
+    /**
+     * Get structured observability configuration.
+     */
+    public function getObservabilityConfig(): ObservabilityConfig
+    {
+        if (!isset($this->observabilityConfig)) {
+            $config = $this->get('observability', []);
+            $this->observabilityConfig = ObservabilityConfig::fromArray(is_array($config) ? $config : []);
+        }
+
+        return $this->observabilityConfig;
+    }
+
+    /**
+     * Get observability configuration.
+     *
+     * @return array<string, mixed> associative array of observability settings
+     */
+    public function getObservability(): array
+    {
+        return $this->getObservabilityConfig()->toArray();
+    }
+
+    // Métodos de conveniência mantidos para compatibilidade
     public function isStampedeProtectionEnabled(): bool
     {
-        return $this->isFeatureEnabled('stampede_protection');
+        return $this->getFeatureConfig()->stampedeProtection;
     }
 
     public function isMetricsEnabled(): bool
     {
-        return $this->isFeatureEnabled('metrics_enabled');
+        return $this->getFeatureConfig()->metricsEnabled;
     }
 
     public function isSlidingExpirationEnabled(): bool
     {
-        return $this->isFeatureEnabled('sliding_expiration');
+        return $this->getFeatureConfig()->slidingExpiration;
     }
 
     public function isEventsEnabled(): bool
     {
-        return $this->isFeatureEnabled('events_enabled');
+        return $this->getFeatureConfig()->eventsEnabled;
     }
 
     public function isPsr14EventsEnabled(): bool
     {
-        return $this->isFeatureEnabled('psr14_events_enabled');
+        return $this->getFeatureConfig()->psr14EventsEnabled;
     }
 
     public function isStrictValidationEnabled(): bool
     {
-        return $this->isFeatureEnabled('strict_validation');
+        return $this->getFeatureConfig()->strictValidation;
     }
 
     /**
@@ -253,19 +295,6 @@ final class CacheConfig implements ImmutableValue
 
         /** @phpstan-var array<string, mixed> $security */
         return $security;
-    }
-
-    /**
-     * Get observability configuration.
-     *
-     * @return array<string, mixed> associative array of observability settings
-     */
-    public function getObservability(): array
-    {
-        $observability = $this->get('observability', []);
-
-        /** @phpstan-var array<string, mixed> $observability */
-        return $observability;
     }
 
     /**
@@ -332,6 +361,8 @@ final class CacheConfig implements ImmutableValue
     public function validate(): array
     {
         $errors = [];
+
+        // Validações existentes...
         $defaultStore = $this->getDefaultStore();
         $stores = $this->getStores();
 
@@ -339,21 +370,26 @@ final class CacheConfig implements ImmutableValue
             $errors[] = "Default store '{$defaultStore}' is not configured";
         }
 
-        foreach ($stores as $name => $config) {
-            if ('layered' === $config->driver && empty($config->layers)) {
-                $errors[] = "Layered store '{$name}' has no layers configured";
-            }
+        $features = $this->getFeatureConfig();
+        $featureErrors = $this->validateFeatures($features);
+        $errors = array_merge($errors, $featureErrors);
+
+        return $errors;
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function validateFeatures(FeatureConfig $features): array
+    {
+        $errors = [];
+
+        if ($features->psr14EventsEnabled && !$features->eventsEnabled) {
+            $errors[] = 'PSR-14 events require basic events to be enabled';
         }
 
-        $serializer = $this->getSerializer();
-        $validSerializers = ['native', 'igbinary', 'json', 'compressed', 'compressed_igbinary'];
-        if (!in_array($serializer, $validSerializers, true)) {
-            $errors[] = "Invalid serializer '{$serializer}'. Valid options: " . implode(', ', $validSerializers);
-        }
-
-        $ttl = $this->getDefaultTtl();
-        if ($ttl < 0) {
-            $errors[] = "Default TTL must be positive, got {$ttl}";
+        if ($features->slidingExpiration && !$features->metricsEnabled) {
+            $errors[] = 'Sliding expiration requires metrics to be enabled for optimal performance';
         }
 
         return $errors;

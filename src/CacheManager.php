@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace KaririCode\Cache;
 
 use KaririCode\Cache\Config\CacheConfig;
+use KaririCode\Cache\Config\DTO\FeatureConfig;
+use KaririCode\Cache\Config\DTO\StoreConfig;
 use KaririCode\Cache\Contract\Cache;
 use KaririCode\Cache\Exception\ConfigurationException;
 use KaririCode\Configurator\Contract\Configurator\ConfigurationManager;
@@ -302,19 +304,44 @@ final class CacheManager
 
     private function getStoreDriver(string $storeName): string
     {
-        $store = $this->config->getStore($storeName);
-
-        return $store->driver;
+        return $this->getStoreConfiguration($storeName)->driver;
     }
 
     private function validateStoreConfiguration(string $storeName): void
     {
         $store = $this->config->getStore($storeName);
+        $features = $this->config->getFeatureConfig();
 
         if ('layered' === $store->driver) {
             if (empty($store->layers)) {
                 throw ConfigurationException::invalidConfiguration($storeName, 'Layered cache must have at least one layer');
             }
         }
+
+        // Validação baseada em features
+        $this->validateFeatureDependencies($features);
+
+        $this->logger->info('Store configuration validated', [
+            'store' => $storeName,
+            'driver' => $store->driver,
+            'features' => $features->toArray(),
+            'monitoring_enabled' => $features->hasMonitoringEnabled(),
+        ]);
+    }
+
+    private function validateFeatureDependencies(FeatureConfig $features): void
+    {
+        if ($features->psr14EventsEnabled && !$features->eventsEnabled) {
+            throw ConfigurationException::invalidConfiguration('features', 'PSR-14 events require basic events to be enabled');
+        }
+
+        if ($features->slidingExpiration && !$features->metricsEnabled) {
+            $this->logger->warning('Sliding expiration works better with metrics enabled');
+        }
+    }
+
+    private function getStoreConfiguration(string $storeName): StoreConfig
+    {
+        return $this->config->getStore($storeName);
     }
 }

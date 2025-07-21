@@ -196,7 +196,7 @@ final class LayeredCacheManager implements LayeredCache
         return $success;
     }
 
-    public function increment(string $key, int $step = 1, int $initialValue = 0, mixed $ttl = null): int
+    public function increment(string $key, int $step = 1, int $initialValue = 0, \DateInterval|int|null $ttl = null): int
     {
         $atomicResult = $this->tryAtomicIncrement($key, $step, $initialValue, $ttl);
         if (null !== $atomicResult) {
@@ -206,7 +206,7 @@ final class LayeredCacheManager implements LayeredCache
         return $this->performNonAtomicIncrement($key, $step, $initialValue, $ttl);
     }
 
-    private function tryAtomicIncrement(string $key, int $step, int $initialValue, mixed $ttl): ?int
+    private function tryAtomicIncrement(string $key, int $step, int $initialValue, \DateInterval|int|null $ttl): ?int
     {
         foreach ($this->layers as $layer) {
             if ($layer instanceof AtomicOperable) {
@@ -227,7 +227,7 @@ final class LayeredCacheManager implements LayeredCache
         return null;
     }
 
-    private function saveIncrementedValue(string $key, int $value, mixed $ttl): void
+    private function saveIncrementedValue(string $key, int $value, \DateInterval|int|null $ttl): void
     {
         $item = new CacheItem($key);
         $item->set($value);
@@ -237,7 +237,8 @@ final class LayeredCacheManager implements LayeredCache
         $this->save($item);
     }
 
-    private function performNonAtomicIncrement(string $key, int $step, int $initialValue, mixed $ttl): int
+    // CORREÇÃO: A assinatura agora usa o tipo correto para $ttl.
+    private function performNonAtomicIncrement(string $key, int $step, int $initialValue, \DateInterval|int|null $ttl): int
     {
         $currentValue = $this->getCurrentNumericValue($key, $initialValue);
         $newValue = $currentValue + $step;
@@ -260,12 +261,14 @@ final class LayeredCacheManager implements LayeredCache
         return is_numeric($value) ? (int) $value : $default;
     }
 
-    public function decrement(string $key, int $step = 1, int $initialValue = 0, mixed $ttl = null): int
+    // CORREÇÃO: A assinatura agora usa o tipo correto para $ttl.
+    public function decrement(string $key, int $step = 1, int $initialValue = 0, \DateInterval|int|null $ttl = null): int
     {
         return $this->increment($key, -$step, $initialValue, $ttl);
     }
 
-    public function add(string $key, mixed $value, mixed $ttl = null): bool
+    // CORREÇÃO: A assinatura agora usa o tipo correto para $ttl.
+    public function add(string $key, mixed $value, \DateInterval|int|null $ttl = null): bool
     {
         if ($this->hasItem($key)) {
             return false;
@@ -387,7 +390,7 @@ final class LayeredCacheManager implements LayeredCache
     private function propagateToHigherLayers(string $key, CacheItemInterface $item, int $currentPriority): void
     {
         foreach ($this->layers as $priority => $layer) {
-            if ($priority < $currentPriority) {
+            if ($priority > $currentPriority) { // CORREÇÃO: A lógica deve ser propagar para camadas de MAIOR prioridade (número menor, mas krsort inverte a ordem de verificação)
                 try {
                     if (!$layer->hasItem($key)) {
                         $layer->save(clone $item);

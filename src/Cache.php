@@ -135,6 +135,8 @@ final class Cache implements CacheContract
             return null;
         }
 
+        $this->handleSlidingExpiration($item);
+
         $rawValue = $item->get();
         if (!is_string($rawValue)) {
             throw CacheException::deserializationFailed($key, new \UnexpectedValueException('Cached value is not a string.'));

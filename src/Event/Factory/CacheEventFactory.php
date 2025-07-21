@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Event\Factory;
 
+use KaririCode\Cache\Config\CacheConfig;
 use KaririCode\Cache\Contract\CacheEventListener;
 use KaririCode\Cache\Event\Dispatcher\CacheEventDispatcher;
 use KaririCode\Cache\Event\DTO\EventSystem;
@@ -15,43 +16,36 @@ use KaririCode\Cache\Event\Provider\CacheListenerProvider;
  */
 final class CacheEventFactory
 {
-    /**
-     * @var array<string, mixed>
-     */
-    private static array $defaultConfig = [
-        'max_events' => 1000,
-    ];
+    public function __construct(private readonly CacheConfig $config)
+    {
+    }
 
     /**
      * Creates a complete, self-contained PSR-14 event system.
-     *
-     * @param array<string, mixed> $config
      */
-    public static function createCompleteEventSystem(array $config = []): EventSystem
+    public function createCompleteEventSystem(): EventSystem
     {
-        $mergedConfig = array_merge(self::$defaultConfig, $config);
+        $observabilityConfig = $this->config->getObservabilityConfig();
 
         $listenerProvider = new CacheListenerProvider();
         $eventDispatcher = new CacheEventDispatcher($listenerProvider);
-        $eventListener = self::createEventListener($mergedConfig);
+        $eventListener = $this->createEventListener();
 
         return new EventSystem(
             listenerProvider: $listenerProvider,
             eventDispatcher: $eventDispatcher,
             eventListener: $eventListener,
-            config: $mergedConfig
+            config: $observabilityConfig
         );
     }
 
     /**
      * Creates a legacy-style cache event listener.
-     *
-     * @param array<string, mixed> $config
      */
-    public static function createEventListener(array $config = []): CacheEventListener
+    public function createEventListener(): CacheEventListener
     {
-        $maxEventsValue = ($config['max_events'] ?? self::$defaultConfig['max_events']) * 1;
+        $maxEvents = $this->config->getObservabilityConfig()->maxEvents;
 
-        return new DefaultCacheEventListener($maxEventsValue);
+        return new DefaultCacheEventListener($maxEvents);
     }
 }

@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace KaririCode\Cache;
 
 use KaririCode\Cache\Config\CacheConfig;
+use KaririCode\Cache\Config\DTO\FeatureConfig;
+use KaririCode\Cache\Config\DTO\LayerConfig;
 use KaririCode\Cache\Config\DTO\StoreConfig;
 use KaririCode\Cache\Contract\CacheEventListener as CacheEventListenerContract;
 use KaririCode\Cache\Contract\CacheSerializer;
@@ -211,13 +213,12 @@ final class CacheBuilder
      */
     private function setupFromStoreConfig(StoreConfig $storeConfig): void
     {
-        // CORREÇÃO: Acessamos as propriedades do objeto em vez de chaves de array
         $driver = $storeConfig->driver;
         $config = $storeConfig->config;
 
         switch ($driver) {
             case 'layered':
-                $this->setupLayeredCache($storeConfig); // Passamos o objeto
+                $this->setupLayeredCache($storeConfig);
                 break;
             case 'redis':
             case 'memcached':
@@ -231,18 +232,25 @@ final class CacheBuilder
         }
     }
 
-    /**
-     * Setup layered cache from configuration.
-     */
     private function setupLayeredCache(StoreConfig $storeConfig): void
     {
-        foreach ($storeConfig->layers as $layerConfig) {
+        foreach ($storeConfig->layers as $layerData) {
+            $layerConfig = $this->createLayerConfig($layerData);
             $this->addCustomLayer(
-                $layerConfig['driver'],
-                $layerConfig['config'],
-                $layerConfig['priority']
+                $layerConfig->driver,
+                $layerConfig->config,
+                $layerConfig->priority
             );
         }
+    }
+
+    private function createLayerConfig(array $data): LayerConfig
+    {
+        return new LayerConfig(
+            driver: $data['driver'],
+            config: $data['config'],
+            priority: $data['priority']
+        );
     }
 
     /**
@@ -255,35 +263,60 @@ final class CacheBuilder
         $this->addCustomLayer($driver, $config, 50);
     }
 
-    /**
-     * Apply configuration defaults by creating appropriate instances.
-     */
     private function applyConfigurationDefaults(): void
     {
         if (!$this->serializer) {
             $this->serializer = $this->createSerializerFromConfig();
         }
 
-        if ($this->config->isStampedeProtectionEnabled() && !$this->stampedeProtector) {
+        $features = $this->config->getFeatureConfig();
+        $this->applyFeatureBasedDefaults($features);
+    }
+
+    private function applyFeatureBasedDefaults(FeatureConfig $features): void
+    {
+        if ($features->stampedeProtection && !$this->stampedeProtector) {
             $this->stampedeProtector = new StampedeProtector();
         }
 
-        if ($this->config->isMetricsEnabled() && !$this->metricsCollector) {
+        if ($features->metricsEnabled && !$this->metricsCollector) {
             $this->metricsCollector = new MetricsCollector();
         }
 
-        if ($this->config->isEventsEnabled() && !$this->eventListener) {
+        if ($features->eventsEnabled && !$this->eventListener) {
             $this->eventListener = new DefaultCacheEventListener($this->config->getMaxEvents());
         }
 
-        if ($this->config->isPsr14EventsEnabled() && !$this->eventDispatcher) {
-            $eventSystem = CacheEventFactory::createCompleteEventSystem();
+        if ($features->psr14EventsEnabled && !$this->eventDispatcher) {
+            $eventFactory = new CacheEventFactory($this->config);
+            $eventSystem = $eventFactory->createCompleteEventSystem();
             $this->eventDispatcher = $eventSystem->eventDispatcher;
         }
 
-        if ($this->config->isStrictValidationEnabled() && !$this->keyValidator) {
+        if ($features->strictValidation && !$this->keyValidator) {
             $this->keyValidator = new CacheKeyValidator();
         }
+    }
+
+    /**
+     * Build the effective configuration by merging defaults, features, and overrides.
+     *
+     * @return array<string, mixed>
+     */
+    private function buildEffectiveConfig(): array
+    {
+        $features = $this->config->getFeatureConfig();
+
+        $baseConfig = [
+            'default_ttl' => $this->config->getDefaultTtl(),
+            'key_prefix' => $this->config->getDefaultKeyPrefix(),
+            'namespace_separator' => $this->config->getNamespaceSeparator(),
+        ];
+
+        // Merge features as array
+        $baseConfig = array_merge($baseConfig, $features->toArray());
+
+        return array_merge($baseConfig, $this->overrides);
     }
 
     /**
@@ -351,28 +384,6 @@ final class CacheBuilder
         }
 
         return $layeredCache;
-    }
-
-    /**
-     * Build effective configuration combining config and overrides.
-     *
-     * @return array<string, mixed>
-     */
-    private function buildEffectiveConfig(): array
-    {
-        $baseConfig = [
-            'default_ttl' => $this->config->getDefaultTtl(),
-            'sliding_expiration' => $this->config->isSlidingExpirationEnabled(),
-            'stampede_protection' => $this->config->isStampedeProtectionEnabled(),
-            'metrics_enabled' => $this->config->isMetricsEnabled(),
-            'events_enabled' => $this->config->isEventsEnabled(),
-            'psr14_events_enabled' => $this->config->isPsr14EventsEnabled(),
-            'strict_validation' => $this->config->isStrictValidationEnabled(),
-            'key_prefix' => $this->config->getDefaultKeyPrefix(),
-            'namespace_separator' => $this->config->getNamespaceSeparator(),
-        ];
-
-        return array_merge($baseConfig, $this->overrides);
     }
 
     /**
