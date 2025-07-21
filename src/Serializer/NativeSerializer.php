@@ -6,6 +6,7 @@ namespace KaririCode\Cache\Serializer;
 
 use KaririCode\Cache\Contract\CacheSerializer;
 use KaririCode\Cache\Exception\CacheException;
+use KaririCode\Cache\Exception\SerializationException;
 use KaririCode\Contract\ImmutableValue;
 
 /**
@@ -48,7 +49,7 @@ final class NativeSerializer implements CacheSerializer, ImmutableValue
             // When unserialize() fails it returns false *and* raises a warning. However, the
             // serialized boolean false ("b:0;") also evaluates to false. We distinguish the two.
             if (false === $result && 'b:0;' !== $data) {
-                throw new \UnexpectedValueException('Failed to unserialize data');
+                throw SerializationException::deserializationFailed($data, new \UnexpectedValueException('Malformed serialized data'));
             }
 
             return $result;

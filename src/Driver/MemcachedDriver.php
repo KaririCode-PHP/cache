@@ -11,6 +11,7 @@ use KaririCode\Cache\Contract\CacheDriver;
 use KaririCode\Cache\Contract\DriverStats as DriverStatsContract;
 use KaririCode\Cache\Contract\TaggableCacheDriver;
 use KaririCode\Cache\Exception\CacheException;
+use KaririCode\Cache\Exception\ConfigurationException;
 use KaririCode\Cache\Exception\InvalidArgumentException;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
@@ -569,11 +570,12 @@ final class MemcachedDriver implements
     {
         try {
             if (empty($this->memcached->getServerList())) {
-                throw new \RuntimeException('No Memcached servers configured');
+                throw ConfigurationException::invalidConfiguration('memcached', 'No servers are configured.');
             }
             if (empty($this->memcached->getVersion())) {
-                throw new \RuntimeException('Cannot connect to Memcached servers');
+                throw CacheException::connectionFailed('memcached');
             }
+
             $this->connected = true;
         } catch (\Throwable $e) {
             $this->connected = false;

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace KaririCode\Cache\Event\Provider;
 
 use KaririCode\Cache\Event\DTO\ListenerDefinition;
+use KaririCode\Cache\Exception\InvalidArgumentException;
 use Psr\EventDispatcher\ListenerProviderInterface;
 
 /**
@@ -92,7 +93,7 @@ final class CacheListenerProvider implements ListenerProviderInterface
     public function addRegexListener(string $regex, callable $listener, int $priority = 0): void
     {
         if (false === @preg_match($regex, '')) {
-            throw new \InvalidArgumentException("Invalid regex pattern: {$regex}");
+            throw InvalidArgumentException::invalidValue("Invalid regex pattern: {$regex}");
         }
         $this->regexListeners[$regex][] = new ListenerDefinition($listener, $priority, [], null, $regex);
         $this->sortListeners($this->regexListeners[$regex]);

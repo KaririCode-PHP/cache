@@ -6,6 +6,7 @@ namespace KaririCode\Cache\Serializer;
 
 use KaririCode\Cache\Contract\CacheSerializer;
 use KaririCode\Cache\Exception\CacheException;
+use KaririCode\Cache\Exception\ConfigurationException;
 use KaririCode\Contract\ImmutableValue;
 
 /**
@@ -16,7 +17,7 @@ final class IgbinarySerializer implements CacheSerializer, ImmutableValue
     public function __construct()
     {
         if (!extension_loaded('igbinary')) {
-            throw new \RuntimeException('The igbinary PHP extension is not loaded.');
+            throw ConfigurationException::missingExtension('igbinary');
         }
     }
 

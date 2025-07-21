@@ -6,6 +6,8 @@ namespace KaririCode\Cache\Decorator;
 
 use KaririCode\Cache\Contract\Cache;
 use KaririCode\Cache\Exception\CacheException;
+use KaririCode\Cache\Exception\InvalidArgumentException;
+use KaririCode\Cache\Exception\SecurityException;
 use KaririCode\Cache\Metrics\CacheMetrics;
 
 /**
@@ -31,16 +33,15 @@ final class EncryptedCache implements Cache
         private readonly string $cipher = 'AES-256-GCM'
     ) {
         if (32 !== mb_strlen($this->encryptionKey, '8bit')) {
-            throw new \InvalidArgumentException('Encryption key must be 32 bytes long for AES-256-GCM.');
+            throw InvalidArgumentException::invalidValue('Encryption key must be 32 bytes long for AES-256-GCM.');
         }
 
         $ivLength = openssl_cipher_iv_length($this->cipher);
         if (false === $ivLength) {
-            throw new \InvalidArgumentException("Unsupported or invalid cipher: {$this->cipher}.");
+            throw InvalidArgumentException::invalidValue("Unsupported or invalid cipher: {$this->cipher}.");
         }
-        $this->ivLength = $ivLength;
 
-        // FIX: Initialize readonly property in constructor
+        $this->ivLength = $ivLength;
         $this->tagLength = 16;
     }
 
@@ -198,7 +199,6 @@ final class EncryptedCache implements Cache
         $encryptedItems = $this->cache->getByTags($tags);
         $decryptedItems = [];
         foreach ($encryptedItems as $key => $value) {
-            // FIX: Ensure value is a string before decrypting
             if (is_string($value) && !empty($value)) {
                 try {
                     $decryptedItems[$key] = $this->decrypt($value);
@@ -297,7 +297,7 @@ final class EncryptedCache implements Cache
         $encrypted = openssl_encrypt($serialized, $this->cipher, $this->encryptionKey, OPENSSL_RAW_DATA, $iv, $tag, '', $this->tagLength);
 
         if (false === $encrypted) {
-            throw new \Exception('Encryption failed.');
+            throw SecurityException::encryptionFailed('data');
         }
 
         return base64_encode($iv . $tag . $encrypted);
@@ -308,7 +308,7 @@ final class EncryptedCache implements Cache
         $data = base64_decode($encryptedValue, true);
 
         if (false === $data || mb_strlen($data, '8bit') < ($this->ivLength + $this->tagLength)) {
-            throw new \Exception('Invalid encrypted data format or length.');
+            throw SecurityException::decryptionFailed('data', new \RuntimeException('Invalid encrypted data format or length.'));
         }
 
         $iv = substr($data, 0, $this->ivLength);
@@ -318,7 +318,7 @@ final class EncryptedCache implements Cache
         $decrypted = openssl_decrypt($encrypted, $this->cipher, $this->encryptionKey, OPENSSL_RAW_DATA, $iv, $tag);
 
         if (false === $decrypted) {
-            throw new \Exception('Decryption failed. Data may be corrupt or the key is wrong.');
+            throw SecurityException::decryptionFailed('data', new \RuntimeException('Decryption failed. Data may be corrupt or the key is wrong.'));
         }
 
         return unserialize($decrypted);

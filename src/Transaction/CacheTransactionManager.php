@@ -7,6 +7,7 @@ namespace KaririCode\Cache\Transaction;
 use KaririCode\Cache\Contract\CacheDriver;
 use KaririCode\Cache\Contract\CacheTransactionManager as CacheTransactionManagerContract;
 use KaririCode\Cache\Exception\CacheException;
+use KaririCode\Cache\Exception\InvalidArgumentException;
 use KaririCode\Contract\ImmutableValue;
 
 /**
@@ -234,7 +235,7 @@ final class CacheTransactionManager implements CacheTransactionManagerContract
         }
 
         if (!is_string($key) || '' === $key) {
-            throw new \InvalidArgumentException('Cache key must be a non-empty string');
+            throw InvalidArgumentException::invalidKeyFormat($key);
         }
 
         // Store current state for rollback
@@ -263,7 +264,7 @@ final class CacheTransactionManager implements CacheTransactionManagerContract
         }
 
         if (!is_string($key) || '' === $key) {
-            throw new \InvalidArgumentException('Cache key must be a non-empty string');
+            throw InvalidArgumentException::invalidValue('Cache key must be a non-empty string');
         }
 
         // Store current state for rollback
@@ -290,7 +291,7 @@ final class CacheTransactionManager implements CacheTransactionManagerContract
         match ($type) {
             'set' => $this->executeSetOperation($operation),
             'delete' => $this->executeDeleteOperation($operation),
-            default => throw new \InvalidArgumentException('Unknown operation type: ' . $type)
+            default => throw InvalidArgumentException::invalidValue('Unknown operation type: ' . $type)
         };
     }
 
@@ -306,7 +307,7 @@ final class CacheTransactionManager implements CacheTransactionManagerContract
         $expiration = $operation['expiration'] ?? null;
 
         if (!is_string($key) || '' === $key) {
-            throw new \InvalidArgumentException('Operation key must be a non-empty string');
+            throw InvalidArgumentException::invalidKeyFormat($key);
         }
 
         // Ensure expiration is properly typed
@@ -327,7 +328,7 @@ final class CacheTransactionManager implements CacheTransactionManagerContract
         $key = $operation['key'] ?? '';
 
         if (!is_string($key) || '' === $key) {
-            throw new \InvalidArgumentException('Operation key must be a non-empty string');
+            throw InvalidArgumentException::invalidValue('Operation key must be a non-empty string');
         }
 
         $this->driver->delete($key);

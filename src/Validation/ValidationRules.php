@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Validation;
 
+use KaririCode\Cache\Exception\InvalidArgumentException;
 use KaririCode\Contract\ImmutableValue;
 
 /**
@@ -224,7 +225,7 @@ final class ValidationRules implements ImmutableValue
         $rules = json_decode($json, true, 512, JSON_THROW_ON_ERROR);
 
         if (!is_array($rules)) {
-            throw new \InvalidArgumentException('JSON must decode to an array');
+            throw InvalidArgumentException::invalidValue('JSON must decode to an array');
         }
 
         return new self($rules);
@@ -287,7 +288,7 @@ final class ValidationRules implements ImmutableValue
 
         foreach ($rules as $name => $value) {
             if (!is_string($name) || '' === $name) {
-                throw new \InvalidArgumentException('Rule names must be non-empty strings');
+                throw InvalidArgumentException::invalidConfiguration('ValidationRules', 'Rule names must be non-empty strings');
             }
 
             $normalized[$name] = $this->normalizeRuleValue($name, $value);
@@ -318,7 +319,7 @@ final class ValidationRules implements ImmutableValue
         $intValue = is_numeric($value) ? (int) $value : 250;
 
         if ($intValue <= 0 || $intValue > 1000) {
-            throw new \InvalidArgumentException('max_key_length must be between 1 and 1000');
+            throw InvalidArgumentException::invalidValue('max_key_length must be between 1 and 1000');
         }
 
         return $intValue;
@@ -332,7 +333,7 @@ final class ValidationRules implements ImmutableValue
         $pattern = is_string($value) ? $value : '/^[a-zA-Z0-9_.:-]+$/';
 
         if (false === @preg_match($pattern, 'test')) {
-            throw new \InvalidArgumentException('valid_pattern must be a valid regular expression');
+            throw InvalidArgumentException::invalidConfiguration('ValidationRules', 'valid_pattern must be a valid regular expression');
         }
 
         return $pattern;

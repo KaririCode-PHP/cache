@@ -8,6 +8,7 @@ use KaririCode\Cache\Contract\CacheDriver;
 use KaririCode\Cache\Contract\CacheDriverFactory;
 use KaririCode\Cache\Contract\DriverManager;
 use KaririCode\Cache\Driver\RedisDriver;
+use KaririCode\Cache\Exception\CacheException;
 use KaririCode\Cache\Exception\ConfigurationException;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
@@ -226,7 +227,7 @@ final class RedisDriverFactory implements CacheDriverFactory
             // Verify connection with ping
             $pingResult = $redis->ping();
             if ('+PONG' !== $pingResult && 'PONG' !== $pingResult) {
-                throw new \RedisException('Redis ping failed: ' . $pingResult);
+                throw CacheException::connectionFailed('redis', new \RuntimeException('Ping command failed.'));
             }
         } catch (\RedisException $e) {
             throw ConfigurationException::invalidConfiguration('redis', 'Failed to configure Redis: ' . $e->getMessage());
