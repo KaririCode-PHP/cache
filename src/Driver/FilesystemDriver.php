@@ -162,8 +162,8 @@ final class FilesystemDriver implements CacheDriver, Maintainable
 
         return new DriverStats(
             driverName: 'Filesystem',
-            memoryUsage: $stats['directory_size'] ?? null,
-            itemCount: $stats['file_count'] ?? null,
+            memoryUsage: $stats['directory_size'],
+            itemCount: $stats['file_count'],
             driverVersion: phpversion(),
             rawStats: $stats
         );

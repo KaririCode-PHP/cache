@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Config;
 
+use KaririCode\Cache\Config\DTO\StoreConfig;
 use KaririCode\Cache\Exception\ConfigurationException;
 use KaririCode\Configurator\Contract\Configurator\ConfigurationManager;
 use KaririCode\Contract\ImmutableValue;
@@ -20,6 +21,8 @@ final class CacheConfig implements ImmutableValue
 {
     private ConfigurationManager $configurator;
     private string $namespace;
+
+    /** @var array<string, mixed> */
     private array $processedConfig;
 
     /**
@@ -69,19 +72,33 @@ final class CacheConfig implements ImmutableValue
 
     /**
      * Get all cache stores configuration.
+     *
+     * @return array<string, StoreConfig> associative array of store names and their configurations
      */
     public function getStores(): array
     {
-        return $this->get('stores', []);
+        $storesData = $this->get('stores', []);
+        /** @phpstan-var array<string, array<string, mixed>> $storesData */
+        $stores = [];
+        foreach ($storesData as $name => $config) {
+            if (is_array($config)) {
+                $stores[$name] = new StoreConfig($config);
+            }
+        }
+
+        return $stores;
     }
 
     /**
      * Get specific store configuration.
+     *
+     * @param string $name the store name
+     *
+     * @return StoreConfig the store configuration
      */
-    public function getStore(string $name): array
+    public function getStore(string $name): StoreConfig
     {
         $stores = $this->getStores();
-
         if (!isset($stores[$name])) {
             throw ConfigurationException::missingDriver($name);
         }
@@ -94,11 +111,16 @@ final class CacheConfig implements ImmutableValue
      */
     public function getDefaultStore(): string
     {
-        return $this->get('default', 'array');
+        $defaultStore = $this->get('default', 'array');
+
+        /** @phpstan-var string $defaultStore */
+        return $defaultStore;
     }
 
     /**
      * Get all store names.
+     *
+     * @return list<string> list of store names
      */
     public function getStoreNames(): array
     {
@@ -107,17 +129,22 @@ final class CacheConfig implements ImmutableValue
 
     /**
      * Get layers configuration for layered cache.
+     * If no store name is provided, returns layers for the default store.
+     *
+     * @param string|null $storeName the store name (default: null for default store)
+     *
+     * @return list<array{driver: string, config: array<string, mixed>, priority: int}>
      */
     public function getLayers(?string $storeName = null): array
     {
         $storeName = $storeName ?? $this->getDefaultStore();
         $store = $this->getStore($storeName);
 
-        if ('layered' !== $store['driver']) {
+        if ('layered' !== $store->driver) {
             return [];
         }
 
-        return $store['layers'] ?? [];
+        return $store->layers;
     }
 
     /**
@@ -125,7 +152,10 @@ final class CacheConfig implements ImmutableValue
      */
     public function getSerializer(): string
     {
-        return $this->get('serializer', 'native');
+        $serializer = $this->get('serializer', 'native');
+
+        /** @phpstan-var string $serializer */
+        return $serializer;
     }
 
     /**
@@ -138,55 +168,42 @@ final class CacheConfig implements ImmutableValue
 
     /**
      * Get all features configuration.
+     *
+     * @return array<string, mixed> associative array of feature names and their configurations
      */
     public function getFeatures(): array
     {
-        return $this->get('features', []);
+        $features = $this->get('features', []);
+
+        /** @phpstan-var array<string, mixed> $features */
+        return $features;
     }
 
-    /**
-     * Check if stampede protection is enabled.
-     */
     public function isStampedeProtectionEnabled(): bool
     {
         return $this->isFeatureEnabled('stampede_protection');
     }
 
-    /**
-     * Check if metrics collection is enabled.
-     */
     public function isMetricsEnabled(): bool
     {
         return $this->isFeatureEnabled('metrics_enabled');
     }
 
-    /**
-     * Check if sliding expiration is enabled.
-     */
     public function isSlidingExpirationEnabled(): bool
     {
         return $this->isFeatureEnabled('sliding_expiration');
     }
 
-    /**
-     * Check if events are enabled.
-     */
     public function isEventsEnabled(): bool
     {
         return $this->isFeatureEnabled('events_enabled');
     }
 
-    /**
-     * Check if PSR-14 events are enabled.
-     */
     public function isPsr14EventsEnabled(): bool
     {
         return $this->isFeatureEnabled('psr14_events_enabled');
     }
 
-    /**
-     * Check if strict validation is enabled.
-     */
     public function isStrictValidationEnabled(): bool
     {
         return $this->isFeatureEnabled('strict_validation');
@@ -197,7 +214,10 @@ final class CacheConfig implements ImmutableValue
      */
     public function getDefaultTtl(): int
     {
-        return (int) $this->get('defaults.ttl', 3600);
+        $ttl = $this->get('defaults.ttl', 3600);
+
+        /** @phpstan-var int|string $ttl */
+        return (int) $ttl;
     }
 
     /**
@@ -205,7 +225,10 @@ final class CacheConfig implements ImmutableValue
      */
     public function getDefaultKeyPrefix(): string
     {
-        return (string) $this->get('defaults.key_prefix', '');
+        $prefix = $this->get('defaults.key_prefix', '');
+
+        /** @phpstan-var string $prefix */
+        return (string) $prefix;
     }
 
     /**
@@ -213,23 +236,36 @@ final class CacheConfig implements ImmutableValue
      */
     public function getNamespaceSeparator(): string
     {
-        return (string) $this->get('defaults.namespace_separator', ':');
+        $separator = $this->get('defaults.namespace_separator', ':');
+
+        /** @phpstan-var string $separator */
+        return (string) $separator;
     }
 
     /**
      * Get security configuration.
+     *
+     * @return array<string, mixed> associative array of security settings
      */
     public function getSecurity(): array
     {
-        return $this->get('security', []);
+        $security = $this->get('security', []);
+
+        /** @phpstan-var array<string, mixed> $security */
+        return $security;
     }
 
     /**
      * Get observability configuration.
+     *
+     * @return array<string, mixed> associative array of observability settings
      */
     public function getObservability(): array
     {
-        return $this->get('observability', []);
+        $observability = $this->get('observability', []);
+
+        /** @phpstan-var array<string, mixed> $observability */
+        return $observability;
     }
 
     /**
@@ -237,15 +273,23 @@ final class CacheConfig implements ImmutableValue
      */
     public function getRateLimit(): int
     {
-        return (int) $this->get('security.rate_limit', 1000);
+        $rateLimit = $this->get('security.rate_limit', 1000);
+
+        /** @phpstan-var int|string $rateLimit */
+        return (int) $rateLimit;
     }
 
     /**
      * Get whitelisted IPs.
+     *
+     * @return list<string> list of whitelisted IP addresses
      */
     public function getWhitelistedIps(): array
     {
-        return $this->get('security.whitelisted_ips', ['127.0.0.1', '::1']);
+        $ips = $this->get('security.whitelisted_ips', ['127.0.0.1', '::1']);
+
+        /** @phpstan-var list<string> $ips */
+        return $ips;
     }
 
     /**
@@ -253,7 +297,10 @@ final class CacheConfig implements ImmutableValue
      */
     public function getSlowThreshold(): float
     {
-        return (float) $this->get('observability.slow_threshold', 0.1);
+        $threshold = $this->get('observability.slow_threshold', 0.1);
+
+        /** @phpstan-var float|int|string $threshold */
+        return (float) $threshold;
     }
 
     /**
@@ -261,11 +308,16 @@ final class CacheConfig implements ImmutableValue
      */
     public function getMaxEvents(): int
     {
-        return (int) $this->get('observability.max_events', 1000);
+        $maxEvents = $this->get('observability.max_events', 1000);
+
+        /** @phpstan-var int|string $maxEvents */
+        return (int) $maxEvents;
     }
 
     /**
      * Export all configuration as array.
+     *
+     * @return array<string, mixed> associative array of all configuration values
      */
     public function toArray(): array
     {
@@ -274,12 +326,12 @@ final class CacheConfig implements ImmutableValue
 
     /**
      * Validate configuration integrity.
+     *
+     * @return list<string> list of validation error messages
      */
     public function validate(): array
     {
         $errors = [];
-
-        // Validate default store exists
         $defaultStore = $this->getDefaultStore();
         $stores = $this->getStores();
 
@@ -287,26 +339,18 @@ final class CacheConfig implements ImmutableValue
             $errors[] = "Default store '{$defaultStore}' is not configured";
         }
 
-        // Validate each store configuration
         foreach ($stores as $name => $config) {
-            if (!isset($config['driver'])) {
-                $errors[] = "Store '{$name}' missing driver configuration";
-            }
-
-            if ('layered' === $config['driver'] && empty($config['layers'])) {
+            if ('layered' === $config->driver && empty($config->layers)) {
                 $errors[] = "Layered store '{$name}' has no layers configured";
             }
         }
 
-        // Validate serializer
         $serializer = $this->getSerializer();
         $validSerializers = ['native', 'igbinary', 'json', 'compressed', 'compressed_igbinary'];
-
         if (!in_array($serializer, $validSerializers, true)) {
             $errors[] = "Invalid serializer '{$serializer}'. Valid options: " . implode(', ', $validSerializers);
         }
 
-        // Validate TTL
         $ttl = $this->getDefaultTtl();
         if ($ttl < 0) {
             $errors[] = "Default TTL must be positive, got {$ttl}";
@@ -315,32 +359,23 @@ final class CacheConfig implements ImmutableValue
         return $errors;
     }
 
-    /**
-     * Get configuration namespace.
-     */
     public function getNamespace(): string
     {
         return $this->namespace;
     }
 
-    /**
-     * Get the underlying configurator instance.
-     */
     public function getConfigurator(): ConfigurationManager
     {
         return $this->configurator;
     }
 
-    /**
-     * Create a new configuration instance with different namespace.
-     */
     public function withNamespace(string $namespace): self
     {
         return new self($this->configurator, $namespace);
     }
 
     /**
-     * Merge additional configuration.
+     * @param array<string, mixed> $config
      */
     public function merge(array $config): void
     {
@@ -348,14 +383,9 @@ final class CacheConfig implements ImmutableValue
             $namespacedKey = $this->getNamespacedKey($key);
             $this->configurator->set($namespacedKey, $value);
         }
-
-        // Refresh processed configuration
         $this->processedConfig = $this->processConfiguration();
     }
 
-    /**
-     * Build namespaced key.
-     */
     private function getNamespacedKey(string $key): string
     {
         if (empty($this->namespace)) {
@@ -366,7 +396,7 @@ final class CacheConfig implements ImmutableValue
     }
 
     /**
-     * Process and normalize configuration.
+     * @return array<string, mixed>
      */
     private function processConfiguration(): array
     {
@@ -374,50 +404,36 @@ final class CacheConfig implements ImmutableValue
             ? $this->configurator->get($this->namespace)
             : [];
 
-        // Ensure required keys exist with defaults
-        $config = array_merge([
-            'default' => 'array',
-            'stores' => [],
-            'serializer' => 'native',
-            'features' => [],
-            'defaults' => [],
-            'security' => [],
-            'observability' => [],
-        ], $config);
+        $config = is_array($config) ? $config : [];
 
-        // Normalize features
+        $defaults = [
+            'default' => 'array', 'stores' => [], 'serializer' => 'native',
+            'features' => [], 'defaults' => [], 'security' => [], 'observability' => [],
+        ];
+        $config = array_merge($defaults, $config);
+
+        $features = is_array($config['features']) ? $config['features'] : [];
         $config['features'] = array_merge([
-            'stampede_protection' => true,
-            'metrics_enabled' => true,
-            'sliding_expiration' => false,
-            'events_enabled' => true,
-            'psr14_events_enabled' => false,
-            'strict_validation' => true,
-        ], $config['features']);
+            'stampede_protection' => true, 'metrics_enabled' => true, 'sliding_expiration' => false,
+            'events_enabled' => true, 'psr14_events_enabled' => false, 'strict_validation' => true,
+        ], $features);
 
-        // Normalize defaults
+        $defaultsConfig = is_array($config['defaults']) ? $config['defaults'] : [];
         $config['defaults'] = array_merge([
-            'ttl' => 3600,
-            'key_prefix' => '',
-            'namespace_separator' => ':',
-        ], $config['defaults']);
+            'ttl' => 3600, 'key_prefix' => '', 'namespace_separator' => ':',
+        ], $defaultsConfig);
 
-        // Normalize security
+        $securityConfig = is_array($config['security']) ? $config['security'] : [];
         $config['security'] = array_merge([
-            'rate_limit' => 1000,
-            'whitelisted_ips' => ['127.0.0.1', '::1'],
-            'audit_salt' => 'cache_security_salt',
-            'enable_geo_location' => false,
-            'retention_days' => 30,
-        ], $config['security']);
+            'rate_limit' => 1000, 'whitelisted_ips' => ['127.0.0.1', '::1'],
+            'audit_salt' => 'cache_security_salt', 'enable_geo_location' => false, 'retention_days' => 30,
+        ], $securityConfig);
 
-        // Normalize observability
+        $observabilityConfig = is_array($config['observability']) ? $config['observability'] : [];
         $config['observability'] = array_merge([
-            'enable_performance_tracking' => true,
-            'enable_security_monitoring' => false,
-            'max_events' => 1000,
-            'slow_threshold' => 0.1,
-        ], $config['observability']);
+            'enable_performance_tracking' => true, 'enable_security_monitoring' => false,
+            'max_events' => 1000, 'slow_threshold' => 0.1,
+        ], $observabilityConfig);
 
         return $config;
     }

@@ -39,7 +39,7 @@ interface DriverManager
      *
      * @param string $driver the name of the driver
      *
-     * @return array an array of options for the specified driver
+     * @return array<string, mixed> an associative array of driver options
      */
     public function getDriverOptions(string $driver): array;
 }

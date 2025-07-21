@@ -30,14 +30,12 @@ final class FilesystemDriverFactory implements CacheDriverFactory
     {
         $this->validateOptions($options);
 
-        // Instancia todas as dependências necessárias para o FilesystemDriver
-        $logger = new NullLogger(); // Ou injete um logger real se disponível
-        $useLocking = $options['use_locking'] ?? true;
-        $useCompression = $options['use_compression'] ?? true;
+        $logger = new NullLogger();
+        $keyPrefix = $options['key_prefix'] ?? 'cache_';
 
-        $fileManager = new FileManager($useLocking, $logger);
-        $directoryManager = new DirectoryManager($options['directory'] ?? $this->getDefaultDirectory(), $logger, $options['key_prefix'] ?? 'cache_');
-        $serializer = new SerializationManager($useCompression, $logger);
+        $fileManager = new FileManager($logger, $options['use_locking'] ?? true);
+        $directoryManager = new DirectoryManager($options['directory'] ?? $this->getDefaultDirectory(), $logger, $keyPrefix);
+        $serializer = new SerializationManager($logger, $options['use_compression'] ?? true);
         $expirationManager = new ExpirationManager((float) ($options['cleanup_probability'] ?? 0.01));
         $statistics = new FileSystemStatistics($directoryManager, $fileManager, $logger);
         $validator = new FileSystemValidator();
@@ -48,8 +46,8 @@ final class FilesystemDriverFactory implements CacheDriverFactory
             $serializer,
             $expirationManager,
             $logger,
-            $options['key_prefix'] ?? 'cache_',
-            $options['directory_levels'] ?? 2
+            $keyPrefix,
+            (int) ($options['directory_levels'] ?? 2)
         );
 
         return new FilesystemDriver(
@@ -119,31 +117,6 @@ final class FilesystemDriverFactory implements CacheDriverFactory
         }
 
         return true;
-    }
-
-    private function prepareDirectory(string $directory): string
-    {
-        $directory = rtrim($directory, '/\\') . DIRECTORY_SEPARATOR;
-
-        // Create directory if it doesn't exist
-        if (!is_dir($directory)) {
-            if (!mkdir($directory, 0755, true)) {
-                throw ConfigurationException::directoryNotWritable($directory);
-            }
-        }
-
-        // Verify write permissions
-        if (!is_writable($directory)) {
-            throw ConfigurationException::directoryNotWritable($directory);
-        }
-
-        // Check available space
-        $freeSpace = disk_free_space($directory);
-        if (false === $freeSpace || $freeSpace < self::MIN_MAX_SIZE) {
-            throw ConfigurationException::invalidConfiguration('filesystem', "Insufficient disk space in {$directory}");
-        }
-
-        return $directory;
     }
 
     private function getDefaultDirectory(): string

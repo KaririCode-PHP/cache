@@ -61,7 +61,7 @@ interface CacheValidator
      *
      * @param string $key the cache key to check
      *
-     * @return array list of validation errors for the key
+     * @return array<string> an array of validation error messages
      */
     public function getValidationErrors(string $key): array;
 }

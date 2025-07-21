@@ -22,14 +22,31 @@ interface FileSystemStatistics
     /**
      * Gets cache statistics.
      *
-     * @return array an associative array of statistics
+     * @return array{
+     * directory_size: int,
+     * file_count: int,
+     * uptime: float,
+     * operation_counts: array<string, int>,
+     * average_operation_times: array<string, float>,
+     * disk_free_space?: int|float|false,
+     * disk_total_space?: int|float|false,
+     * error?: string
+     * }
      */
     public function getStats(): array;
 
     /**
      * Performs a health check.
      *
-     * @return array an associative array with health check results
+     * @return array{
+     * status: string,
+     * write_success?: bool,
+     * read_success?: bool,
+     * delete_success?: bool,
+     * latency_ms?: float,
+     * directory_writable?: bool,
+     * error?: string
+     * }
      */
     public function healthCheck(): array;
 

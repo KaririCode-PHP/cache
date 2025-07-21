@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace KaririCode\Cache;
 
 use KaririCode\Cache\Config\CacheConfig;
+use KaririCode\Cache\Config\DTO\StoreConfig;
 use KaririCode\Cache\Contract\CacheEventListener as CacheEventListenerContract;
 use KaririCode\Cache\Contract\CacheSerializer;
 use KaririCode\Cache\Contract\CacheValidator;
@@ -206,23 +207,17 @@ final class CacheBuilder
     /**
      * Setup builder from store configuration.
      *
-     * @param array<string, mixed> $storeConfig
+     * @param StoreConfig $storeConfig // CORREÇÃO: O tipo do parâmetro foi atualizado para o DTO
      */
-    private function setupFromStoreConfig(array $storeConfig): void
+    private function setupFromStoreConfig(StoreConfig $storeConfig): void
     {
-        $driver = $storeConfig['driver'] ?? null;
-        if (!is_string($driver) || empty($driver)) {
-            throw ConfigurationException::invalidConfiguration('store', 'Driver not specified or invalid.');
-        }
-
-        $config = $storeConfig['config'] ?? [];
-        if (!is_array($config)) {
-            throw ConfigurationException::invalidConfiguration($driver, 'Configuration for driver must be an array.');
-        }
+        // CORREÇÃO: Acessamos as propriedades do objeto em vez de chaves de array
+        $driver = $storeConfig->driver;
+        $config = $storeConfig->config;
 
         switch ($driver) {
             case 'layered':
-                $this->setupLayeredCache($storeConfig);
+                $this->setupLayeredCache($storeConfig); // Passamos o objeto
                 break;
             case 'redis':
             case 'memcached':
@@ -238,29 +233,14 @@ final class CacheBuilder
 
     /**
      * Setup layered cache from configuration.
-     *
-     * @param array<string, mixed> $storeConfig
      */
-    private function setupLayeredCache(array $storeConfig): void
+    private function setupLayeredCache(StoreConfig $storeConfig): void
     {
-        $layers = $storeConfig['layers'] ?? [];
-        if (!is_array($layers)) {
-            throw ConfigurationException::invalidConfiguration('layered', 'The "layers" key must contain an array of layer configurations.');
-        }
-
-        foreach ($layers as $layerConfig) {
-            if (!is_array($layerConfig)) {
-                throw ConfigurationException::invalidConfiguration('layered', 'Each layer configuration must be an array.');
-            }
-
-            if (!isset($layerConfig['driver']) || !is_string($layerConfig['driver'])) {
-                throw ConfigurationException::invalidConfiguration('layer', 'Driver not specified or invalid for layer.');
-            }
-
+        foreach ($storeConfig->layers as $layerConfig) {
             $this->addCustomLayer(
                 $layerConfig['driver'],
-                $layerConfig['config'] ?? [],
-                $layerConfig['priority'] ?? 100
+                $layerConfig['config'],
+                $layerConfig['priority']
             );
         }
     }
@@ -298,7 +278,7 @@ final class CacheBuilder
 
         if ($this->config->isPsr14EventsEnabled() && !$this->eventDispatcher) {
             $eventSystem = CacheEventFactory::createCompleteEventSystem();
-            $this->eventDispatcher = $eventSystem['eventDispatcher'];
+            $this->eventDispatcher = $eventSystem->eventDispatcher;
         }
 
         if ($this->config->isStrictValidationEnabled() && !$this->keyValidator) {

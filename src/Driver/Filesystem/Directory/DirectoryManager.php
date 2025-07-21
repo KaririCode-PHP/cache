@@ -131,6 +131,11 @@ final class DirectoryManager implements DirectoryManagerContract
         return $directory;
     }
 
+    public function getBaseDirectory(): string
+    {
+        return $this->baseDirectory;
+    }
+
     private function initializeBaseDirectory(): void
     {
         if (!$this->ensureExists($this->baseDirectory)) {

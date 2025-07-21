@@ -70,7 +70,12 @@ interface DirectoryManager
     /**
      * Gets a list of all cache files.
      *
-     * @return array an array of file paths
+     * @return array<string> an array of file paths
      */
     public function getCacheFiles(): array;
+
+    /**
+     * Gets the base cache directory path.
+     */
+    public function getBaseDirectory(): string;
 }

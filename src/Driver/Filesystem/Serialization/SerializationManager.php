@@ -4,23 +4,25 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Driver\Filesystem\Serialization;
 
-use KaririCode\Cache\Contract\Filesystem\SerializationManager as SerializationManagerContract;
+use KaririCode\Cache\Contract\CacheSerializer;
 use KaririCode\Cache\Exception\CacheException;
+use KaririCode\Cache\Serializer\SerializerConfiguration;
+use KaririCode\Contract\ImmutableValue;
 use Psr\Log\LoggerInterface;
 
 /**
  * Serialization manager with compression support.
  * Follows SRP - responsible ONLY for data serialization/deserialization.
  */
-final class SerializationManager implements SerializationManagerContract
+final class SerializationManager implements CacheSerializer
 {
     private const COMPRESSION_THRESHOLD = 1024; // 1KB
     private const COMPRESSION_LEVEL = 6;
     private const COMPRESSION_RATIO_THRESHOLD = 0.9;
 
     public function __construct(
-        private bool $useCompression = true,
-        private LoggerInterface $logger
+        private LoggerInterface $logger,
+        private bool $useCompression = true
     ) {
     }
 
@@ -68,6 +70,21 @@ final class SerializationManager implements SerializationManagerContract
         }
     }
 
+    public function getMimeType(): string
+    {
+        return 'application/vnd.php.serialized';
+    }
+
+    public function getConfiguration(): ImmutableValue
+    {
+        return new SerializerConfiguration([
+            'type' => 'native-filesystem',
+            'compression_enabled' => $this->useCompression,
+            'compression_level' => self::COMPRESSION_LEVEL,
+            'compression_threshold' => self::COMPRESSION_THRESHOLD,
+        ]);
+    }
+
     private function shouldCompress(string $serialized): bool
     {
         return $this->useCompression && strlen($serialized) > self::COMPRESSION_THRESHOLD;
@@ -83,7 +100,6 @@ final class SerializationManager implements SerializationManagerContract
             return 'raw:' . $serialized;
         }
 
-        // Only use compression if it provides significant benefit
         if (strlen($compressed) < strlen($serialized) * self::COMPRESSION_RATIO_THRESHOLD) {
             return 'gz:' . $compressed;
         }
@@ -97,7 +113,7 @@ final class SerializationManager implements SerializationManagerContract
         $decompressed = gzuncompress($compressed);
 
         if (false === $decompressed) {
-            throw new \RuntimeException('Decompression failed');
+            throw CacheException::deserializationFailed('compressed filesystem data');
         }
 
         return unserialize($decompressed);

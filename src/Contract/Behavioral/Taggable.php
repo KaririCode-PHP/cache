@@ -53,7 +53,7 @@ interface Taggable
     /**
      * Lists all tags currently in use.
      *
-     * @return array all active tags
+     * @return array<string> an array of tag names
      */
     public function getTags(): array;
 }

@@ -69,9 +69,9 @@ interface CacheDriver
     /**
      * Obtains multiple cache items by their unique keys.
      *
-     * @param array $keys the cache keys to retrieve
+     * @param string[] $keys
      *
-     * @return array associative array of key-value pairs
+     * @return array<string, mixed> associative array of key-value pairs
      */
     public function getMultiple(array $keys): array;
 
@@ -97,7 +97,7 @@ interface CacheDriver
     /**
      * Gets the supported capabilities of this driver.
      *
-     * @return array list of supported capabilities
+     * @return list<string> list of supported capabilities using CacheCapabilities constants
      */
     public function getCapabilities(): array;
 

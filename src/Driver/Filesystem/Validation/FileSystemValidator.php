@@ -72,7 +72,7 @@ final class FileSystemValidator implements FileSystemValidatorContract
     public function sanitizeKey(string $key): string
     {
         // Remove problematic characters for filesystem
-        $sanitized = preg_replace('/[\/\\\\:\*\?"<>\|\x00-\x1F\x7F]/', '_', $key);
+        $sanitized = (string) preg_replace('/[\/\\\\:\*\?"<>\|\x00-\x1F\x7F]/', '_', $key);
 
         // Ensure length limit
         return substr($sanitized, 0, self::MAX_KEY_LENGTH);

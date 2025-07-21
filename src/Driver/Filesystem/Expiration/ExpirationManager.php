@@ -19,13 +19,16 @@ final class ExpirationManager implements ExpirationManagerContract
 
     public function isExpired(array $metadata): bool
     {
-        if (!isset($metadata['expiration']) || null === $metadata['expiration']) {
-            return false; // No expiration set
+        if (!isset($metadata['expiration'])) {
+            return false;
         }
 
         return $metadata['expiration'] < time();
     }
 
+    /**
+     * @return array{value: mixed, expiration: int|null, created: int, accessed: int, size: int}
+     */
     public function createMetadata(mixed $value, ?\DateTimeInterface $expiration): array
     {
         return [
@@ -42,24 +45,18 @@ final class ExpirationManager implements ExpirationManagerContract
         return mt_rand() / mt_getrandmax() < $this->cleanupProbability;
     }
 
-    /**
-     * Update access time for cache item.
-     */
     public function updateAccessTime(array &$metadata): void
     {
         $metadata['accessed'] = time();
     }
 
-    /**
-     * Calculate remaining TTL in seconds.
-     */
     public function getRemainingTtl(array $metadata): ?int
     {
-        if (!isset($metadata['expiration']) || null === $metadata['expiration']) {
-            return null; // No expiration
+        if (!isset($metadata['expiration'])) {
+            return null;
         }
 
-        $remaining = $metadata['expiration'] - time();
+        $remaining = (int) $metadata['expiration'] - time();
 
         return max(0, $remaining);
     }

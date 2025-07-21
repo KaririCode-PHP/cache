@@ -70,7 +70,7 @@ interface CacheManager extends
     /**
      * Gets the names of all managed cache instances.
      *
-     * @return array list of cache instance names
+     * @return array<string> list of cache instance names
      */
     public function getCacheNames(): array;
 
@@ -87,7 +87,7 @@ interface CacheManager extends
     /**
      * Gets all supported driver types.
      *
-     * @return array list of supported driver types
+     * @return array<string> list of supported driver types
      */
     public function getSupportedDrivers(): array;
 

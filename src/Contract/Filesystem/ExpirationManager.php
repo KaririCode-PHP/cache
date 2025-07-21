@@ -34,7 +34,7 @@ interface ExpirationManager
      * @param mixed $value the value being cached
      * @param \DateTimeInterface|null $expiration the expiration timestamp
      *
-     * @return array the metadata array
+     * @return array{value: mixed, expiration: int|null, created: int, accessed: int, size: int}
      */
     public function createMetadata(mixed $value, ?\DateTimeInterface $expiration): array;
 

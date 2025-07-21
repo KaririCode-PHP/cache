@@ -50,7 +50,7 @@ interface TopicSubscribable
      *
      * @param string $key the unique cache key
      *
-     * @return array the subscribed topics
+     * @return array<string> an array of topics the cache item is subscribed to
      */
     public function getSubscribedTopics(string $key): array;
 
@@ -59,7 +59,7 @@ interface TopicSubscribable
      *
      * @param string $topic the topic to search for
      *
-     * @return array cache keys subscribed to the topic
+     * @return array<string> an array of cache keys subscribed to the topic
      */
     public function getSubscribersForTopic(string $topic): array;
 }

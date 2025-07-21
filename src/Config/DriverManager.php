@@ -20,7 +20,9 @@ final class DriverManager implements DriverManagerContract
     /** @var array<string, class-string<CacheDriverFactory>> */
     private array $factories = [];
 
+    /** @var array<string, array<string, mixed>> */
     private array $driverOptions = [];
+
     private ?CacheSerializer $serializer = null;
     private ?CacheTransactionManager $transactionManager = null;
 
@@ -88,6 +90,9 @@ final class DriverManager implements DriverManagerContract
         return $this->transactionManager;
     }
 
+    /**
+     * @return array<string>
+     */
     public function getRegisteredDrivers(): array
     {
         return array_keys($this->factories);

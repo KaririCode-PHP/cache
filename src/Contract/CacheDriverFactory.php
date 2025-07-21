@@ -32,7 +32,7 @@ interface CacheDriverFactory
     /**
      * Gets the supported configuration options for the driver.
      *
-     * @return array a list of supported option keys
+     * @return list<string> a list of supported option keys
      */
     public function getSupportedOptions(): array;
 

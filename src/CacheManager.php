@@ -31,9 +31,6 @@ final class CacheManager
     ) {
     }
 
-    /**
-     * Get cache instance by store name with lazy loading.
-     */
     public function get(?string $name = null): Cache
     {
         $storeName = $name ?? $this->config->getDefaultStore();
@@ -45,25 +42,16 @@ final class CacheManager
         return $this->caches[$storeName];
     }
 
-    /**
-     * Get cache instance with explicit store name.
-     */
     public function getStore(string $storeName): Cache
     {
         return $this->get($storeName);
     }
 
-    /**
-     * Get default cache instance.
-     */
     public function getDefault(): Cache
     {
         return $this->get();
     }
 
-    /**
-     * Create cache with injected builder.
-     */
     public function createWithBuilder(string $name, CacheBuilder $builder): Cache
     {
         $cache = $builder->build();
@@ -76,9 +64,6 @@ final class CacheManager
         return $cache;
     }
 
-    /**
-     * Get a pre-configured builder for a store.
-     */
     public function getBuilder(string $storeName): CacheBuilder
     {
         if (!isset($this->builders[$storeName])) {
@@ -88,9 +73,6 @@ final class CacheManager
         return clone $this->builders[$storeName];
     }
 
-    /**
-     * Create a new builder for a specific store.
-     */
     public function createBuilder(string $storeName): CacheBuilder
     {
         if (!$this->has($storeName)) {
@@ -103,9 +85,6 @@ final class CacheManager
         return $builder;
     }
 
-    /**
-     * Create cache instance directly without caching it.
-     */
     public function createCache(string $storeName): Cache
     {
         $builder = $this->createBuilder($storeName);
@@ -113,35 +92,25 @@ final class CacheManager
         return $builder->build();
     }
 
-    /**
-     * Check if store is configured.
-     */
     public function has(string $name): bool
     {
         return $this->config->has("stores.{$name}");
     }
 
-    /**
-     * Check if cache instance is loaded.
-     */
     public function isLoaded(string $name): bool
     {
         return isset($this->caches[$name]);
     }
 
     /**
-     * Get all configured store names.
-     *
-     * @return string[]
+     * @return list<string> list of store names
      */
     public function getStoreNames(): array
     {
-        return array_keys($this->config->getStores());
+        return $this->config->getStoreNames();
     }
 
     /**
-     * Get all loaded cache instances.
-     *
      * @return array<string, Cache>
      */
     public function getLoadedCaches(): array
@@ -149,9 +118,6 @@ final class CacheManager
         return $this->caches;
     }
 
-    /**
-     * Forget cache instance (remove from registry).
-     */
     public function forget(string $name): bool
     {
         if (isset($this->caches[$name])) {
@@ -167,9 +133,6 @@ final class CacheManager
         return false;
     }
 
-    /**
-     * Clear all loaded caches.
-     */
     public function clearAll(): bool
     {
         $success = true;
@@ -201,8 +164,6 @@ final class CacheManager
     }
 
     /**
-     * Warm up all loaded caches with data.
-     *
      * @param array<string, mixed> $data
      *
      * @return array<string, array{success: bool, error?: string}>
@@ -228,8 +189,6 @@ final class CacheManager
     }
 
     /**
-     * Get metrics from all loaded caches.
-     *
      * @return array<string, array<string, mixed>>
      */
     public function getAllMetrics(): array
@@ -252,8 +211,6 @@ final class CacheManager
     }
 
     /**
-     * Get consolidated statistics.
-     *
      * @return array<string, mixed>
      */
     public function getStats(): array
@@ -268,40 +225,28 @@ final class CacheManager
         ];
     }
 
-    /**
-     * Get configuration instance.
-     */
     public function getConfig(): CacheConfig
     {
         return $this->config;
     }
 
-    /**
-     * Get configurator instance.
-     */
     public function getConfigurator(): ConfigurationManager
     {
         return $this->configurator;
     }
 
-    /**
-     * Get logger instance.
-     */
     public function getLogger(): LoggerInterface
     {
         return $this->logger;
     }
 
     /**
-     * Validate all configurations.
-     *
-     * @return string[]
+     * @return list<string> list of validation errors
      */
     public function validateConfiguration(): array
     {
         $errors = $this->config->validate();
 
-        // Additional runtime validations
         foreach ($this->config->getStoreNames() as $storeName) {
             try {
                 $this->validateStoreConfiguration($storeName);
@@ -313,18 +258,12 @@ final class CacheManager
         return $errors;
     }
 
-    /**
-     * Reload configuration.
-     */
     public function reloadConfiguration(): void
     {
         $this->logger->info('Reloading cache configuration');
-
-        // Clear current instances and builders
         $this->caches = [];
         $this->builders = [];
 
-        // Validate reloaded configuration
         $errors = $this->validateConfiguration();
         if (!empty($errors)) {
             $this->logger->warning('Configuration validation errors after reload', [
@@ -335,9 +274,6 @@ final class CacheManager
         $this->logger->info('Cache configuration reloaded successfully');
     }
 
-    /**
-     * Build cache instance for a store using injected dependencies.
-     */
     private function buildCache(string $storeName): Cache
     {
         try {
@@ -364,38 +300,20 @@ final class CacheManager
         }
     }
 
-    /**
-     * Get store driver type.
-     */
     private function getStoreDriver(string $storeName): string
     {
         $store = $this->config->getStore($storeName);
 
-        return $store['driver'] ?? 'unknown';
+        return $store->driver;
     }
 
-    /**
-     * Validate individual store configuration.
-     */
     private function validateStoreConfiguration(string $storeName): void
     {
         $store = $this->config->getStore($storeName);
-        $driver = $store['driver'] ?? null;
 
-        if (!$driver) {
-            throw ConfigurationException::invalidConfiguration($storeName, 'Missing driver configuration');
-        }
-
-        if ('layered' === $driver) {
-            $layers = $store['layers'] ?? [];
-            if (empty($layers)) {
+        if ('layered' === $store->driver) {
+            if (empty($store->layers)) {
                 throw ConfigurationException::invalidConfiguration($storeName, 'Layered cache must have at least one layer');
-            }
-
-            foreach ($layers as $index => $layer) {
-                if (!isset($layer['driver'])) {
-                    throw ConfigurationException::invalidConfiguration($storeName, "Layer {$index} missing driver configuration");
-                }
             }
         }
     }

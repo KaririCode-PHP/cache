@@ -15,8 +15,12 @@ use Psr\Log\LoggerInterface;
  */
 final class FileSystemStatistics implements FileSystemStatisticsContract
 {
+    /** @var array<string, int> */
     private array $operationCounts = [];
+
+    /** @var array<string, list<float>> */
     private array $operationTimes = [];
+
     private float $startTime;
 
     public function __construct(
@@ -28,6 +32,18 @@ final class FileSystemStatistics implements FileSystemStatisticsContract
         $this->initializeCounters();
     }
 
+    /**
+     * @return array{
+     * directory_size: int,
+     * file_count: int,
+     * uptime: float,
+     * operation_counts: array<string, int>,
+     * average_operation_times: array<string, float>,
+     * disk_free_space?: int|float|false,
+     * disk_total_space?: int|float|false,
+     * error?: string
+     * }
+     */
     public function getStats(): array
     {
         try {
@@ -39,45 +55,49 @@ final class FileSystemStatistics implements FileSystemStatisticsContract
                 'average_operation_times' => $this->calculateAverageOperationTimes(),
             ];
 
-            if (function_exists('disk_free_space')) {
-                $baseStats['disk_free_space'] = disk_free_space(sys_get_temp_dir());
-                $baseStats['disk_total_space'] = disk_total_space(sys_get_temp_dir());
+            if (function_exists('disk_free_space') && function_exists('disk_total_space')) {
+                $baseStats['disk_free_space'] = disk_free_space($this->directoryManager->getBaseDirectory());
+                $baseStats['disk_total_space'] = disk_total_space($this->directoryManager->getBaseDirectory());
             }
 
             return $baseStats;
         } catch (\Throwable $e) {
-            $this->logger->error('Failed to collect statistics', [
-                'error' => $e->getMessage(),
-            ]);
+            $this->logger->error('Failed to collect statistics', ['error' => $e->getMessage()]);
 
+            // Correção: Retorna a mesma estrutura do `try`, com valores padrão em caso de erro.
             return [
-                'error' => $e->getMessage(),
+                'directory_size' => 0,
+                'file_count' => 0,
                 'uptime' => microtime(true) - $this->startTime,
+                'operation_counts' => $this->operationCounts,
+                'average_operation_times' => $this->calculateAverageOperationTimes(),
+                'error' => $e->getMessage(),
             ];
         }
     }
 
+    /**
+     * @return array{
+     * status: string,
+     * write_success?: bool,
+     * read_success?: bool,
+     * delete_success?: bool,
+     * latency_ms?: float,
+     * directory_writable?: bool,
+     * error?: string
+     * }
+     */
     public function healthCheck(): array
     {
         try {
-            $testKey = 'health_check_' . uniqid();
-            $testData = 'health_check_data';
-
-            // Create a temporary file for health check
+            $testKey = 'health_check_' . uniqid('', true);
             $tempFile = sys_get_temp_dir() . '/' . $testKey;
-
             $startTime = microtime(true);
 
-            // Test write
-            $writeSuccess = $this->fileManager->writeSecurely($tempFile, $testData);
-
-            // Test read
+            $writeSuccess = $this->fileManager->writeSecurely($tempFile, 'health_check_data');
             $readData = $this->fileManager->readSecurely($tempFile);
-            $readSuccess = $readData === $testData;
-
-            // Test delete
+            $readSuccess = 'health_check_data' === $readData;
             $deleteSuccess = $this->fileManager->deleteFile($tempFile);
-
             $latency = microtime(true) - $startTime;
 
             return [
@@ -99,14 +119,12 @@ final class FileSystemStatistics implements FileSystemStatisticsContract
     public function recordOperation(string $operation, float $duration): void
     {
         if (!isset($this->operationCounts[$operation])) {
-            $this->operationCounts[$operation] = 0;
-            $this->operationTimes[$operation] = [];
+            $this->initializeCountersForOperation($operation);
         }
 
         ++$this->operationCounts[$operation];
         $this->operationTimes[$operation][] = $duration;
 
-        // Keep only last 100 measurements for memory efficiency
         if (count($this->operationTimes[$operation]) > 100) {
             $this->operationTimes[$operation] = array_slice($this->operationTimes[$operation], -100);
         }
@@ -115,17 +133,23 @@ final class FileSystemStatistics implements FileSystemStatisticsContract
     private function initializeCounters(): void
     {
         $operations = ['get', 'set', 'has', 'delete', 'clear'];
-
         foreach ($operations as $operation) {
-            $this->operationCounts[$operation] = 0;
-            $this->operationTimes[$operation] = [];
+            $this->initializeCountersForOperation($operation);
         }
     }
 
+    private function initializeCountersForOperation(string $operation): void
+    {
+        $this->operationCounts[$operation] = 0;
+        $this->operationTimes[$operation] = [];
+    }
+
+    /**
+     * @return array<string, float>
+     */
     private function calculateAverageOperationTimes(): array
     {
         $averages = [];
-
         foreach ($this->operationTimes as $operation => $times) {
             if (!empty($times)) {
                 $averages[$operation] = array_sum($times) / count($times);
