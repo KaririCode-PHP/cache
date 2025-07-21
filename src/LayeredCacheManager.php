@@ -11,7 +11,6 @@ use KaririCode\Cache\Contract\Behavioral\TaggablePool;
 use KaririCode\Cache\Contract\CacheItem as CacheItemContract;
 use KaririCode\Cache\Contract\CacheItemPool;
 use KaririCode\Cache\Contract\LayeredCache;
-use KaririCode\Cache\Exception\CacheException;
 use KaririCode\Cache\Item\CacheItem;
 use Psr\Cache\CacheItemInterface;
 use Psr\Log\LoggerInterface;
@@ -51,26 +50,31 @@ final class LayeredCacheManager implements LayeredCache
 
     public function getItem(string $key): CacheItemInterface
     {
-        if (empty($this->layers)) {
-            throw CacheException::operationFailed('getItem', $key, new \RuntimeException('No cache layers are configured.'));
-        }
-
         foreach ($this->layers as $priority => $layer) {
             $item = $layer->getItem($key);
 
-            if ($item->isHit()) {
-                // If the item is found, propagate it to higher-priority (faster) layers.
+            if ($this->isItemHit($item)) {
                 $this->propagateToHigherLayers($key, $item, $priority);
 
-                if ($item instanceof CacheItemContract) {
-                    return $item;
-                }
-
-                return new CacheItem($key, $item->get(), true);
+                return $this->createCacheItemFromHit($key, $item);
             }
         }
 
         return new CacheItem($key);
+    }
+
+    private function isItemHit(CacheItemInterface $item): bool
+    {
+        return $item->isHit();
+    }
+
+    private function createCacheItemFromHit(string $key, CacheItemInterface $item): CacheItemInterface
+    {
+        if ($item instanceof CacheItemContract) {
+            return $item;
+        }
+
+        return new CacheItem($key, $item->get(), true);
     }
 
     /**
@@ -194,27 +198,66 @@ final class LayeredCacheManager implements LayeredCache
 
     public function increment(string $key, int $step = 1, int $initialValue = 0, mixed $ttl = null): int
     {
+        $atomicResult = $this->tryAtomicIncrement($key, $step, $initialValue, $ttl);
+        if (null !== $atomicResult) {
+            return $atomicResult;
+        }
+
+        return $this->performNonAtomicIncrement($key, $step, $initialValue, $ttl);
+    }
+
+    private function tryAtomicIncrement(string $key, int $step, int $initialValue, mixed $ttl): ?int
+    {
         foreach ($this->layers as $layer) {
             if ($layer instanceof AtomicOperable) {
                 try {
                     $newValue = $layer->increment($key, $step, $initialValue, $ttl);
-                    $this->save((new CacheItem($key))->set($newValue)->expiresAfter($ttl));
+                    $this->saveIncrementedValue($key, $newValue, $ttl);
 
                     return $newValue;
                 } catch (\Throwable $e) {
-                    $this->logger->warning('Atomic increment failed on layer, trying next.', ['layer' => get_class($layer), 'error' => $e->getMessage()]);
-                    continue;
+                    $this->logger->warning('Atomic increment failed on layer', [
+                        'layer' => get_class($layer),
+                        'error' => $e->getMessage(),
+                    ]);
                 }
             }
         }
 
-        $this->logger->warning('Executing non-atomic increment as a fallback.', ['key' => $key]);
-        $item = $this->getItem($key);
-        $current = $item->isHit() && is_numeric($item->get()) ? (int) $item->get() : $initialValue;
-        $newValue = $current + $step;
-        $this->save((new CacheItem($key))->set($newValue)->expiresAfter($ttl));
+        return null;
+    }
+
+    private function saveIncrementedValue(string $key, int $value, mixed $ttl): void
+    {
+        $item = new CacheItem($key);
+        $item->set($value);
+        if (null !== $ttl) {
+            $item->expiresAfter($ttl);
+        }
+        $this->save($item);
+    }
+
+    private function performNonAtomicIncrement(string $key, int $step, int $initialValue, mixed $ttl): int
+    {
+        $currentValue = $this->getCurrentNumericValue($key, $initialValue);
+        $newValue = $currentValue + $step;
+
+        $this->saveIncrementedValue($key, $newValue, $ttl);
 
         return $newValue;
+    }
+
+    private function getCurrentNumericValue(string $key, int $default): int
+    {
+        $item = $this->getItem($key);
+
+        if (!$item->isHit()) {
+            return $default;
+        }
+
+        $value = $item->get();
+
+        return is_numeric($value) ? (int) $value : $default;
     }
 
     public function decrement(string $key, int $step = 1, int $initialValue = 0, mixed $ttl = null): int

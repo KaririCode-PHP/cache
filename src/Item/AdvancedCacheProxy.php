@@ -36,13 +36,23 @@ final class AdvancedCacheProxy implements CacheItemPool
 
         $item = $this->layeredCache->getItem($key);
 
-        if ($item->isHit() && is_string($rawValue = $item->get())) {
-            $value = $this->serializer->unserialize($rawValue);
+        return $this->processRetrievedItem($key, $item);
+    }
 
-            return new CacheItem($key, $value, true);
+    private function processRetrievedItem(string $key, CacheItemInterface $item): CacheItemInterface
+    {
+        if (!$item->isHit()) {
+            return new CacheItem($key, null, false);
         }
 
-        return new CacheItem($key, null, false);
+        $rawValue = $item->get();
+        if (!is_string($rawValue)) {
+            return new CacheItem($key, null, false);
+        }
+
+        $value = $this->serializer->unserialize($rawValue);
+
+        return new CacheItem($key, $value, true);
     }
 
     /**

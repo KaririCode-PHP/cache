@@ -100,29 +100,20 @@ final class Cache implements CacheContract
     public function get(string $key, mixed $default = null): mixed
     {
         $startTime = microtime(true);
-
         $this->validateKey($key);
 
         try {
-            $item = $this->layeredCache->getItem($key);
+            $value = $this->getValueFromCache($key);
 
-            if (!$item->isHit()) {
+            if (null === $value) {
                 $this->metricsCollector = $this->metricsCollector->recordMiss($key);
                 $this->dispatchCacheMiss($key);
 
                 return $default;
             }
 
-            $rawValue = $item->get();
-            if (!is_string($rawValue)) {
-                throw CacheException::deserializationFailed($key, new \UnexpectedValueException('Cached value is not a string.'));
-            }
-
-            $value = $this->serializer->unserialize($rawValue);
             $duration = microtime(true) - $startTime;
-
             $this->metricsCollector = $this->metricsCollector->recordHit($key, $duration);
-            $this->handleSlidingExpiration($item);
             $this->dispatchCacheHit($key, $value, $duration);
 
             return $value;
@@ -130,11 +121,26 @@ final class Cache implements CacheContract
             $this->logger->error('Cache get operation failed', [
                 'key' => $key,
                 'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
             ]);
 
             return $default;
         }
+    }
+
+    private function getValueFromCache(string $key): mixed
+    {
+        $item = $this->layeredCache->getItem($key);
+
+        if (!$item->isHit()) {
+            return null;
+        }
+
+        $rawValue = $item->get();
+        if (!is_string($rawValue)) {
+            throw CacheException::deserializationFailed($key, new \UnexpectedValueException('Cached value is not a string.'));
+        }
+
+        return $this->serializer->unserialize($rawValue);
     }
 
     /**
