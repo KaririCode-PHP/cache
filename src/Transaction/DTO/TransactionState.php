@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace KaririCode\Cache\Transaction;
+namespace KaririCode\Cache\Transaction\DTO;
 
 use KaririCode\Cache\Contract\Transaction\Operation;
 use KaririCode\Contract\ImmutableValue;

@@ -7,7 +7,7 @@ namespace KaririCode\Cache\Driver;
 use KaririCode\Cache\Contract\AtomicCacheDriver;
 use KaririCode\Cache\Contract\CacheCapabilities;
 use KaririCode\Cache\Contract\CacheDriver;
-use KaririCode\Cache\Contract\DriverStats as DriverStatsContract;
+use KaririCode\Cache\Contract\DriverStats;
 use KaririCode\Cache\Contract\TaggableCacheDriver;
 use KaririCode\Cache\Contract\TopicAwareCacheDriver;
 
@@ -136,7 +136,7 @@ final class CapabilityAwareDriver implements
         return $this->driver->getCapabilities();
     }
 
-    public function getStats(): DriverStatsContract
+    public function getStats(): DriverStats
     {
         return $this->driver->getStats();
     }

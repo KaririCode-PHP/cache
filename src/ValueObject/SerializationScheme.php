@@ -2,14 +2,14 @@
 
 declare(strict_types=1);
 
-namespace KaririCode\Cache\Serializer;
+namespace KaririCode\Cache\ValueObject;
 
 use KaririCode\Contract\ImmutableValue;
 
 /**
  * An immutable value object for holding serializer configuration.
  */
-final class SerializerConfiguration implements ImmutableValue
+final class SerializationScheme implements ImmutableValue
 {
     /**
      * @param array<string, mixed> $configuration

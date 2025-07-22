@@ -6,11 +6,12 @@ namespace KaririCode\Cache\Driver;
 
 use KaririCode\Cache\Contract\Behavioral\Maintainable;
 use KaririCode\Cache\Contract\CacheDriver;
-use KaririCode\Cache\Contract\DriverStats as DriverStatsContract;
+use KaririCode\Cache\Contract\DriverStats;
 use KaririCode\Cache\Contract\Filesystem\DirectoryManager;
 use KaririCode\Cache\Contract\Filesystem\FileSystemStatistics;
 use KaririCode\Cache\Contract\Filesystem\FileSystemValidator;
 use KaririCode\Cache\Driver\Filesystem\Cache\FileSystemCacheOperations;
+use KaririCode\Cache\ValueObject\MetricsSnapshot;
 use Psr\Log\LoggerInterface;
 
 /**
@@ -156,11 +157,11 @@ final class FilesystemDriver implements CacheDriver, Maintainable
         return [];
     }
 
-    public function getStats(): DriverStatsContract
+    public function getStats(): DriverStats
     {
         $stats = $this->statistics->getStats();
 
-        return new DriverStats(
+        return new MetricsSnapshot(
             driverName: 'Filesystem',
             memoryUsage: $stats['directory_size'],
             itemCount: $stats['file_count'],

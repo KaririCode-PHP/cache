@@ -7,7 +7,7 @@ namespace KaririCode\Cache\Driver;
 use KaririCode\Cache\Contract\AtomicCacheDriver;
 use KaririCode\Cache\Contract\CacheCapabilities;
 use KaririCode\Cache\Contract\CacheDriver;
-use KaririCode\Cache\Contract\DriverStats as DriverStatsContract;
+use KaririCode\Cache\Contract\DriverStats;
 use KaririCode\Cache\Contract\TaggableCacheDriver;
 use KaririCode\Cache\Contract\TopicAwareCacheDriver;
 use KaririCode\Cache\Exception\CacheException;
@@ -18,6 +18,7 @@ use KaririCode\Cache\Validation\Trait\CacheValueValidationTrait;
 use KaririCode\Cache\Validation\Trait\ExpirationCalculatorTrait;
 use KaririCode\Cache\Validation\Trait\TagValidationTrait;
 use KaririCode\Cache\Validation\Trait\TopicValidationTrait;
+use KaririCode\Cache\ValueObject\MetricsSnapshot;
 use KaririCode\Cache\ValueObject\Tag;
 use KaririCode\Cache\ValueObject\Topic;
 
@@ -278,7 +279,7 @@ final class ArrayDriver implements
         return array_keys($this->tagIndex);
     }
 
-    public function getStats(): DriverStatsContract
+    public function getStats(): DriverStats
     {
         $stats = [
             'total_items' => count($this->data),
@@ -287,7 +288,7 @@ final class ArrayDriver implements
             'operations' => $this->operations,
         ];
 
-        return new DriverStats('Array', $stats['memory_usage'], $stats['total_items'], phpversion(), $stats);
+        return new MetricsSnapshot('Array', $stats['memory_usage'], $stats['total_items'], phpversion(), $stats);
     }
 
     private function isExpired(string $key): bool

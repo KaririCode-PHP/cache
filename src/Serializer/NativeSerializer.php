@@ -7,6 +7,7 @@ namespace KaririCode\Cache\Serializer;
 use KaririCode\Cache\Contract\CacheSerializer;
 use KaririCode\Cache\Exception\CacheException;
 use KaririCode\Cache\Exception\SerializationException;
+use KaririCode\Cache\ValueObject\SerializationScheme;
 use KaririCode\Contract\ImmutableValue;
 
 /**
@@ -76,7 +77,7 @@ final class NativeSerializer implements CacheSerializer, ImmutableValue
 
     public function getConfiguration(): ImmutableValue
     {
-        return new SerializerConfiguration([
+        return new SerializationScheme([
             'type' => 'native',
             'allowed_classes' => $this->allowedClasses,
             'options' => $this->options,

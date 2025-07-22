@@ -8,7 +8,7 @@ use KaririCode\Cache\Contract\AtomicCacheDriver;
 use KaririCode\Cache\Contract\Behavioral\CompareAndSwapAware;
 use KaririCode\Cache\Contract\CacheCapabilities;
 use KaririCode\Cache\Contract\CacheDriver;
-use KaririCode\Cache\Contract\DriverStats as DriverStatsContract;
+use KaririCode\Cache\Contract\DriverStats;
 use KaririCode\Cache\Contract\TaggableCacheDriver;
 use KaririCode\Cache\Exception\CacheException;
 use KaririCode\Cache\Exception\ConfigurationException;
@@ -18,6 +18,7 @@ use KaririCode\Cache\Validation\Trait\CacheKeyValidationTrait;
 use KaririCode\Cache\Validation\Trait\CacheValueValidationTrait;
 use KaririCode\Cache\Validation\Trait\TagValidationTrait;
 use KaririCode\Cache\Validation\Trait\TtlCalculatorTrait;
+use KaririCode\Cache\ValueObject\MetricsSnapshot;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
 
@@ -296,7 +297,7 @@ final class ApcuDriver implements
         return [CacheCapabilities::ATOMIC_OPERATIONS, CacheCapabilities::TAGGING];
     }
 
-    public function getStats(): DriverStatsContract
+    public function getStats(): DriverStats
     {
         $info = apcu_cache_info(true) ?: [];
         $smaInfo = apcu_sma_info() ?: [];
@@ -305,7 +306,7 @@ final class ApcuDriver implements
         $memSize = isset($info['mem_size']) && is_numeric($info['mem_size']) ? (int) $info['mem_size'] : null;
         $numEntries = isset($info['num_entries']) && is_numeric($info['num_entries']) ? (int) $info['num_entries'] : null;
 
-        return new DriverStats(
+        return new MetricsSnapshot(
             'Apcu',
             $memSize,
             $numEntries,

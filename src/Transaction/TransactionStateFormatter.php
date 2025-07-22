@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace KaririCode\Cache\Transaction;
 
 use KaririCode\Cache\Contract\Transaction\Operation;
+use KaririCode\Cache\Transaction\DTO\TransactionState;
 use KaririCode\Cache\Transaction\Operation\DeleteOperation;
 use KaririCode\Cache\Transaction\Operation\SetOperation;
 

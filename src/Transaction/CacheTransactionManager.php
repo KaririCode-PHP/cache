@@ -9,6 +9,7 @@ use KaririCode\Cache\Contract\CacheTransactionManager as CacheTransactionManager
 use KaririCode\Cache\Contract\Transaction\Operation;
 use KaririCode\Cache\Exception\CacheException;
 use KaririCode\Cache\Exception\InvalidArgumentException;
+use KaririCode\Cache\Transaction\DTO\TransactionState;
 use KaririCode\Cache\Transaction\Operation\DeleteOperation;
 use KaririCode\Cache\Transaction\Operation\SetOperation;
 use KaririCode\Contract\ImmutableValue;

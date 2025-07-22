@@ -6,7 +6,7 @@ namespace KaririCode\Cache\Driver\Filesystem\Serialization;
 
 use KaririCode\Cache\Contract\CacheSerializer;
 use KaririCode\Cache\Exception\CacheException;
-use KaririCode\Cache\Serializer\SerializerConfiguration;
+use KaririCode\Cache\ValueObject\SerializationScheme;
 use KaririCode\Contract\ImmutableValue;
 use Psr\Log\LoggerInterface;
 
@@ -77,7 +77,7 @@ final class SerializationManager implements CacheSerializer
 
     public function getConfiguration(): ImmutableValue
     {
-        return new SerializerConfiguration([
+        return new SerializationScheme([
             'type' => 'native-filesystem',
             'compression_enabled' => $this->useCompression,
             'compression_level' => self::COMPRESSION_LEVEL,

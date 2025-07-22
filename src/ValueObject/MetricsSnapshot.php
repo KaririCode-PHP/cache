@@ -2,14 +2,15 @@
 
 declare(strict_types=1);
 
-namespace KaririCode\Cache\Driver;
+namespace KaririCode\Cache\ValueObject;
 
-use KaririCode\Cache\Contract\DriverStats as DriverStatsContract;
+use KaririCode\Cache\Contract\DriverStats;
+use KaririCode\Contract\ImmutableValue;
 
 /**
  * An immutable Value Object representing standardized driver statistics.
  */
-final class DriverStats implements DriverStatsContract
+final class MetricsSnapshot implements DriverStats, ImmutableValue
 {
     public function __construct(
         private readonly string $driverName,

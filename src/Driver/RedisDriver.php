@@ -8,7 +8,7 @@ use KaririCode\Cache\Contract\AtomicCacheDriver;
 use KaririCode\Cache\Contract\Behavioral\CompareAndSwapAware;
 use KaririCode\Cache\Contract\CacheCapabilities;
 use KaririCode\Cache\Contract\CacheDriver;
-use KaririCode\Cache\Contract\DriverStats as DriverStatsContract;
+use KaririCode\Cache\Contract\DriverStats;
 use KaririCode\Cache\Contract\TaggableCacheDriver;
 use KaririCode\Cache\Contract\TopicAwareCacheDriver;
 use KaririCode\Cache\Exception\CacheException;
@@ -19,6 +19,7 @@ use KaririCode\Cache\Validation\Trait\ExpirationCalculatorTrait;
 use KaririCode\Cache\Validation\Trait\TagValidationTrait;
 use KaririCode\Cache\Validation\Trait\TopicValidationTrait;
 use KaririCode\Cache\Validation\Trait\TtlCalculatorTrait;
+use KaririCode\Cache\ValueObject\MetricsSnapshot;
 use KaririCode\Cache\ValueObject\Tag;
 use KaririCode\Cache\ValueObject\Topic;
 use Psr\Log\LoggerInterface;
@@ -459,13 +460,13 @@ final class RedisDriver implements
         }
     }
 
-    public function getStats(): DriverStatsContract
+    public function getStats(): DriverStats
     {
         try {
             $info = $this->redis->info();
             $dbsize = $this->redis->dbSize();
 
-            return new DriverStats(
+            return new MetricsSnapshot(
                 'Redis',
                 $info['used_memory'] ?? null,
                 is_int($dbsize) ? $dbsize : null,
@@ -473,7 +474,13 @@ final class RedisDriver implements
                 $info
             );
         } catch (\RedisException $e) {
-            return new DriverStats('Redis', null, null, null, ['error' => $e->getMessage()]);
+            return new MetricsSnapshot(
+                'Redis',
+                null,
+                null,
+                null,
+                ['error' => $e->getMessage()]
+            );
         }
     }
 

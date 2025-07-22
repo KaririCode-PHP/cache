@@ -8,11 +8,12 @@ use KaririCode\Cache\Contract\AtomicCacheDriver;
 use KaririCode\Cache\Contract\Behavioral\CompareAndSwapAware;
 use KaririCode\Cache\Contract\CacheCapabilities;
 use KaririCode\Cache\Contract\CacheDriver;
-use KaririCode\Cache\Contract\DriverStats as DriverStatsContract;
+use KaririCode\Cache\Contract\DriverStats;
 use KaririCode\Cache\Contract\TaggableCacheDriver;
 use KaririCode\Cache\Driver\Concern\DriverValidationTrait;
 use KaririCode\Cache\Exception\CacheException;
 use KaririCode\Cache\Exception\ConfigurationException;
+use KaririCode\Cache\ValueObject\MetricsSnapshot;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
 
@@ -424,7 +425,7 @@ final class MemcachedDriver implements
         ];
     }
 
-    public function getStats(): DriverStatsContract
+    public function getStats(): DriverStats
     {
         try {
             $stats = $this->memcached->getStats() ?: [];
@@ -432,15 +433,15 @@ final class MemcachedDriver implements
             $version = $this->memcached->getVersion();
             $aggregated = $this->aggregateServerStats($stats);
 
-            return new DriverStats(
+            return new MetricsSnapshot(
                 driverName: 'Memcached',
-                memoryUsage: $aggregated['total_bytes'], // O erro aqui será resolvido pelo PHPDoc abaixo
-                itemCount: $aggregated['total_items'],   // O erro aqui será resolvido pelo PHPDoc abaixo
+                memoryUsage: $aggregated['total_bytes'],
+                itemCount: $aggregated['total_items'],
                 driverVersion: is_array($version) ? (string) reset($version) : null,
                 rawStats: $stats
             );
         } catch (\Throwable $e) {
-            return new DriverStats('Memcached', null, null, null, ['error' => $e->getMessage()]);
+            return new MetricsSnapshot('Memcached', null, null, null, ['error' => $e->getMessage()]);
         }
     }
 

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace KaririCode\Cache\Validation;
 
 use KaririCode\Cache\Contract\CacheValidator;
+use KaririCode\Cache\ValueObject\ValidationPolicy;
 use KaririCode\Contract\ImmutableValue;
 
 /**
@@ -222,7 +223,7 @@ final class CacheKeyValidator implements CacheValidator, ImmutableValue
 
     public function getValidationRules(): ImmutableValue
     {
-        return new ValidationRules([
+        return new ValidationPolicy([
             'max_key_length' => $this->maxKeyLength,
             'valid_pattern' => $this->validPattern,
             'reserved_keys' => $this->reservedKeys,

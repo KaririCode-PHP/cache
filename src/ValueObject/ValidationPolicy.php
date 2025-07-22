@@ -2,13 +2,13 @@
 
 declare(strict_types=1);
 
-namespace KaririCode\Cache\Validation;
+namespace KaririCode\Cache\ValueObject;
 
 use KaririCode\Cache\Exception\InvalidArgumentException;
 use KaririCode\Contract\ImmutableValue;
 
 /**
- * Optimized ValidationRules with type safety and utility methods.
+ * Optimized ValidationPolicy with type safety and utility methods.
  *
  * This class provides a type-safe, immutable container for validation rules
  * with utility methods for rule manipulation and validation.
@@ -20,7 +20,7 @@ use KaririCode\Contract\ImmutableValue;
  *
  * @see       https://kariricode.org/
  */
-final class ValidationRules implements ImmutableValue
+final class ValidationPolicy implements ImmutableValue
 {
     /** @var array<string, mixed> */
     private readonly array $rules;
@@ -34,7 +34,7 @@ final class ValidationRules implements ImmutableValue
     }
 
     /**
-     * Create ValidationRules with default cache key validation rules.
+     * Create ValidationPolicy with default cache key validation rules.
      */
     public static function forCacheKeys(): self
     {
@@ -47,7 +47,7 @@ final class ValidationRules implements ImmutableValue
     }
 
     /**
-     * Create ValidationRules with relaxed validation for development.
+     * Create ValidationPolicy with relaxed validation for development.
      */
     public static function relaxed(): self
     {
@@ -60,7 +60,7 @@ final class ValidationRules implements ImmutableValue
     }
 
     /**
-     * Create ValidationRules with strict validation for production.
+     * Create ValidationPolicy with strict validation for production.
      */
     public static function strict(): self
     {
@@ -218,7 +218,7 @@ final class ValidationRules implements ImmutableValue
     }
 
     /**
-     * Create ValidationRules from JSON string.
+     * Create ValidationPolicy from JSON string.
      */
     public static function fromJson(string $json): self
     {
@@ -258,9 +258,9 @@ final class ValidationRules implements ImmutableValue
     }
 
     /**
-     * Merge with another ValidationRules instance.
+     * Merge with another ValidationPolicy instance.
      */
-    public function merge(ValidationRules $other): self
+    public function merge(ValidationPolicy $other): self
     {
         $mergedRules = array_merge($this->rules, $other->getAllRules());
 
@@ -270,7 +270,7 @@ final class ValidationRules implements ImmutableValue
     /**
      * Check if this instance has the same rules as another.
      */
-    public function equals(ValidationRules $other): bool
+    public function equals(ValidationPolicy $other): bool
     {
         return $this->rules === $other->getAllRules();
     }
