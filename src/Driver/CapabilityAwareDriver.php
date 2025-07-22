@@ -10,9 +10,12 @@ use KaririCode\Cache\Contract\CacheDriver;
 use KaririCode\Cache\Contract\DriverStats;
 use KaririCode\Cache\Contract\TaggableCacheDriver;
 use KaririCode\Cache\Contract\TopicAwareCacheDriver;
+use KaririCode\Cache\Validation\Trait\ExpirationCalculatorTrait;
 
 /**
- * A wrapper that provides safe fallbacks for drivers without specific capabilities.
+ * A decorator that provides safe fallbacks for drivers without specific capabilities.
+ * It wraps any CacheDriver and ensures that calls to advanced features (like tagging)
+ * do not cause errors if the underlying driver does not support them.
  */
 final class CapabilityAwareDriver implements
     CacheDriver,
@@ -20,14 +23,13 @@ final class CapabilityAwareDriver implements
     TaggableCacheDriver,
     TopicAwareCacheDriver
 {
-    private CacheDriver $driver;
+    use ExpirationCalculatorTrait;
 
     /** @var array<string, bool> */
     private array $capabilities = [];
 
-    public function __construct(CacheDriver $driver)
+    public function __construct(private CacheDriver $driver)
     {
-        $this->driver = $driver;
         $this->detectCapabilities();
     }
 
@@ -56,11 +58,6 @@ final class CapabilityAwareDriver implements
         return $this->driver->clear();
     }
 
-    /**
-     * @param string[] $keys
-     *
-     * @return array<string, mixed>
-     */
     public function getMultiple(array $keys): array
     {
         return $this->driver->getMultiple($keys);
@@ -76,33 +73,40 @@ final class CapabilityAwareDriver implements
         return $this->driver->deleteMultiple($keys);
     }
 
-    public function increment(string $key, int $step = 1, int $initialValue = 0, \DateInterval|int|\DateTimeInterface|null $ttl = null): int
+    public function increment(string $key, int $step = 1, int $initialValue = 0, \DateInterval|int|null $ttl = null): int
     {
         if ($this->hasCapability(CacheCapabilities::ATOMIC_OPERATIONS) && $this->driver instanceof AtomicCacheDriver) {
             return $this->driver->increment($key, $step, $initialValue, $ttl);
         }
 
-        // Non-atomic fallback
         $current = $this->driver->get($key);
         $currentValue = is_numeric($current) ? (int) $current : $initialValue;
         $newValue = $currentValue + $step;
-        $this->driver->set($key, $newValue);
+        $this->driver->set($key, $newValue, $this->calculateExpiration($ttl));
 
         return $newValue;
     }
 
-    public function add(string $key, mixed $value, \DateInterval|int|\DateTimeInterface|null $ttl = null): bool
+    public function add(string $key, mixed $value, \DateInterval|int|null $ttl = null): bool
     {
         if ($this->hasCapability(CacheCapabilities::ATOMIC_OPERATIONS) && $this->driver instanceof AtomicCacheDriver) {
             return $this->driver->add($key, $value, $ttl);
         }
 
-        // Non-atomic fallback
         if ($this->driver->has($key)) {
             return false;
         }
 
-        return $this->driver->set($key, $value);
+        return $this->driver->set($key, $value, $this->calculateExpiration($ttl));
+    }
+
+    public function setWithTags(string $key, mixed $value, array $tags, \DateInterval|int|null $ttl = null): bool
+    {
+        if ($this->hasCapability(CacheCapabilities::TAGGING) && $this->driver instanceof TaggableCacheDriver) {
+            return $this->driver->setWithTags($key, $value, $tags, $ttl);
+        }
+
+        return $this->driver->set($key, $value, $this->calculateExpiration($ttl));
     }
 
     public function invalidateTags(array $tags): bool
@@ -112,6 +116,30 @@ final class CapabilityAwareDriver implements
         }
 
         return true;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function getByTags(array $tags): array
+    {
+        if ($this->hasCapability(CacheCapabilities::TAGGING) && $this->driver instanceof TaggableCacheDriver) {
+            return $this->driver->getByTags($tags);
+        }
+
+        return [];
+    }
+
+    /**
+     * @return string[]
+     */
+    public function getTags(): array
+    {
+        if ($this->hasCapability(CacheCapabilities::TAGGING) && $this->driver instanceof TaggableCacheDriver) {
+            return $this->driver->getTags();
+        }
+
+        return [];
     }
 
     public function subscribeTo(string $key, array $topics): void
@@ -130,7 +158,6 @@ final class CapabilityAwareDriver implements
         return true;
     }
 
-    /** @return list<string> */
     public function getCapabilities(): array
     {
         return $this->driver->getCapabilities();
@@ -141,18 +168,10 @@ final class CapabilityAwareDriver implements
         return $this->driver->getStats();
     }
 
-    /** @return string[] */
-    public function getTags(): array
-    {
-        if ($this->hasCapability(CacheCapabilities::TAGGING) && $this->driver instanceof TaggableCacheDriver) {
-            return $this->driver->getTags();
-        }
-
-        return [];
-    }
-
     /**
      * Checks if the underlying driver supports a given capability.
+     *
+     * @param string $capability a constant from CacheCapabilities
      */
     public function hasCapability(string $capability): bool
     {

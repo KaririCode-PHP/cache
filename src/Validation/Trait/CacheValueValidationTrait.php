@@ -21,62 +21,51 @@ use KaririCode\Cache\Exception\InvalidArgumentException;
  */
 trait CacheValueValidationTrait
 {
-    private const MAX_VALUE_SIZE = 512 * 1024 * 1024; // 512MB
-    private const MAX_BATCH_SIZE = 1000;
-
     /**
-     * Validates a cache value.
+     * Validates a cache value for serializability and safety.
      *
-     * @param mixed $value The value to validate
-     *
-     * @throws InvalidArgumentException if value cannot be cached
+     * @throws InvalidArgumentException if the value cannot be cached
      */
     protected function validateValue(mixed $value): void
     {
-        try {
-            $serialized = serialize($value);
-        } catch (\Throwable) {
-            throw InvalidArgumentException::unserializableValue(get_debug_type($value));
+        // Check for resources which cannot be serialized
+        if (is_resource($value)) {
+            throw InvalidArgumentException::invalidValue('Cache value cannot be a resource');
         }
 
-        if (strlen($serialized) > self::MAX_VALUE_SIZE) {
-            throw InvalidArgumentException::invalidValue('Value too large: ' . strlen($serialized) . ' bytes (max: ' . self::MAX_VALUE_SIZE . ')');
+        // Check for closures which cannot be serialized with native serializer
+        if ($value instanceof \Closure) {
+            throw InvalidArgumentException::invalidValue('Cache value cannot be a Closure');
+        }
+
+        // Try to serialize to check if value is serializable
+        try {
+            serialize($value);
+        } catch (\Throwable $e) {
+            throw InvalidArgumentException::invalidValue(sprintf('Cache value is not serializable: %s', $e->getMessage()));
         }
     }
 
     /**
-     * Validates multiple key-value pairs.
+     * Validates multiple cache values.
      *
-     * @param array<string, mixed> $values Array of key-value pairs
+     * @param array<string, mixed> $values Associative array of key-value pairs
      *
      * @throws InvalidArgumentException if any value is invalid
      */
     protected function validateMultipleValues(array $values): void
     {
-        if (count($values) > self::MAX_BATCH_SIZE) {
-            throw InvalidArgumentException::invalidValue('Too many values in batch: ' . count($values) . ' (max: ' . self::MAX_BATCH_SIZE . ')');
-        }
-
         foreach ($values as $key => $value) {
             if (!is_string($key)) {
-                throw InvalidArgumentException::invalidKeyFormat('Key must be a string, ' . gettype($key) . ' given');
+                throw InvalidArgumentException::invalidKey(sprintf('Cache key must be string, %s given', get_debug_type($key)));
             }
-            $this->validateKey($key); // Assumes CacheKeyValidationTrait is also used
-            $this->validateValue($value);
-        }
-    }
 
-    /**
-     * Validates a step value for increment/decrement operations.
-     *
-     * @param int $step The step value to validate
-     *
-     * @throws InvalidArgumentException if step is invalid
-     */
-    protected function validateStep(int $step): void
-    {
-        if (0 === $step) {
-            throw InvalidArgumentException::invalidValue('Step cannot be zero');
+            try {
+                $this->validateKey($key);
+                $this->validateValue($value);
+            } catch (InvalidArgumentException $e) {
+                throw InvalidArgumentException::invalidValue(sprintf('Invalid value for key "%s": %s', $key, $e->getMessage()));
+            }
         }
     }
 }

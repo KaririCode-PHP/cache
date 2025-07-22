@@ -23,57 +23,82 @@ use KaririCode\Cache\Exception\InvalidArgumentException;
 trait CacheKeyValidationTrait
 {
     private const MAX_KEY_LENGTH = 250;
-    private const VALID_KEY_PATTERN = '/^[a-zA-Z0-9_.:-]+$/';
-    private const RESERVED_KEYS = ['', 'null', 'true', 'false'];
-    private const MAX_BATCH_SIZE = 1000;
+    private const RESERVED_KEYS = ['__metadata__', '__locks__', '__stats__'];
 
     /**
-     * Validates a cache key according to defined rules.
+     * Validates a single cache key with comprehensive checks.
      *
-     * Implements fail-fast principle by throwing exception immediately
-     * upon detecting invalid input.
-     *
-     * @param string $key The key to validate
-     *
-     * @throws InvalidArgumentException if key is invalid
+     * @throws InvalidArgumentException if the key is invalid
      */
     protected function validateKey(string $key): void
     {
-        if ('' === $key) {
-            throw InvalidArgumentException::emptyKey();
+        if (empty($key)) {
+            throw InvalidArgumentException::invalidKey('Cache key cannot be empty');
         }
 
         if (strlen($key) > self::MAX_KEY_LENGTH) {
-            throw InvalidArgumentException::keyTooLong($key, self::MAX_KEY_LENGTH);
-        }
-
-        if (!preg_match(self::VALID_KEY_PATTERN, $key)) {
-            throw InvalidArgumentException::invalidKeyFormat($key);
+            throw InvalidArgumentException::invalidKey(sprintf('Cache key exceeds maximum length of %d characters', self::MAX_KEY_LENGTH));
         }
 
         if (in_array($key, self::RESERVED_KEYS, true)) {
-            throw InvalidArgumentException::reservedKey($key);
+            throw InvalidArgumentException::invalidKey(sprintf('Cache key "%s" is reserved and cannot be used', $key));
+        }
+
+        // Check for invalid characters that could cause issues
+        if (preg_match('/[\x00-\x1F\x7F]/', $key)) {
+            throw InvalidArgumentException::invalidKey('Cache key contains invalid control characters');
+        }
+
+        // Check for characters that might cause issues in various backends
+        if (preg_match('/[<>:"\/\\|?*]/', $key)) {
+            throw InvalidArgumentException::invalidKey('Cache key contains characters that might cause issues in some cache backends');
         }
     }
 
     /**
-     * Validates an array of cache keys.
+     * Validates multiple cache keys at once.
      *
-     * @param array<string> $keys Array of keys to validate
+     * @param array<string> $keys Array of cache keys
      *
      * @throws InvalidArgumentException if any key is invalid
      */
     protected function validateKeys(array $keys): void
     {
-        if (count($keys) > self::MAX_BATCH_SIZE) {
-            throw InvalidArgumentException::invalidValue('Too many keys in batch: ' . count($keys) . ' (max: ' . self::MAX_BATCH_SIZE . ')');
+        if (empty($keys)) {
+            return;
         }
 
-        foreach ($keys as $key) {
+        foreach ($keys as $index => $key) {
             if (!is_string($key)) {
-                throw InvalidArgumentException::invalidKeyFormat('Key must be a string, ' . gettype($key) . ' given');
+                throw InvalidArgumentException::invalidKey(sprintf('Key at index %d must be a string, %s given', $index, get_debug_type($key)));
             }
-            $this->validateKey($key);
+
+            try {
+                $this->validateKey($key);
+            } catch (InvalidArgumentException $e) {
+                throw InvalidArgumentException::invalidKey(sprintf('Invalid key at index %d: %s', $index, $e->getMessage()));
+            }
         }
+    }
+
+    /**
+     * Sanitizes a cache key to make it safe for all backends.
+     */
+    protected function sanitizeKey(string $key): string
+    {
+        // Remove control characters and problematic chars
+        $sanitized = preg_replace('/[\x00-\x1F\x7F<>:"\/\\|?*]/', '_', $key);
+
+        // Ensure it's not empty after sanitization
+        if (empty($sanitized)) {
+            $sanitized = 'sanitized_key';
+        }
+
+        // Ensure length limit
+        if (strlen($sanitized) > self::MAX_KEY_LENGTH) {
+            $sanitized = substr($sanitized, 0, self::MAX_KEY_LENGTH - 8) . '_' . substr(md5($key), 0, 7);
+        }
+
+        return $sanitized;
     }
 }

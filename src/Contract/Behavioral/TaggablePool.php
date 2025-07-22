@@ -19,18 +19,27 @@ use KaririCode\Cache\ValueObject\Tag;
 interface TaggablePool
 {
     /**
-     * Invalidates all cache items associated with any of the specified tags.
+     * Invalidates all cache items associated with the specified tags.
      *
-     * @param Tag[] $tags an array of tags to invalidate
+     * @param Tag[] $tags the tags to invalidate
      *
-     * @return bool true if the invalidation was successful
+     * @return bool true on success, false on failure
      */
     public function invalidateTags(array $tags): bool;
 
     /**
-     * Gets all tags currently in use across all tag-aware layers.
+     * Retrieves cache items by their associated tags.
      *
-     * @return string[]
+     * @param array $tags the tags to search for
+     *
+     * @return array<string, mixed> array of cache items indexed by their keys
+     */
+    public function getByTags(array $tags): array;
+
+    /**
+     * Lists all tags currently in use.
+     *
+     * @return array<string> an array of tag names
      */
     public function getTags(): array;
 }

@@ -184,12 +184,28 @@ final class CachePoolManager implements
     public function invalidateTags(array $tags): bool
     {
         if ($this->driver instanceof TaggableCacheDriver) {
-            return $this->driver->invalidateTags($tags);
+            return $this->driver->invalidateTags(array_map('strval', $tags));
         }
 
+        // If the driver doesn't support tags, the operation is a success (no-op).
         return true;
     }
 
+    /**
+     * @return array<string, mixed>
+     */
+    public function getByTags(array $tags): array
+    {
+        if ($this->driver instanceof TaggableCacheDriver) {
+            return $this->driver->getByTags($tags);
+        }
+
+        return [];
+    }
+
+    /**
+     * @return string[]
+     */
     public function getTags(): array
     {
         if ($this->driver instanceof TaggableCacheDriver) {

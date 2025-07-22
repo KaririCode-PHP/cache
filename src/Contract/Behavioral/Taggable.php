@@ -20,7 +20,7 @@ use KaririCode\Cache\ValueObject\Tag;
  *
  * @see       https://kariricode.org/
  */
-interface Taggable
+interface Taggable extends TaggablePool
 {
     /**
      * Associates cache item with tags for grouped invalidation.
@@ -33,29 +33,4 @@ interface Taggable
      * @return bool true on success, false on failure
      */
     public function setWithTags(string $key, mixed $value, array $tags, \DateInterval|int|null $ttl = null): bool;
-
-    /**
-     * Invalidates all cache items associated with the specified tags.
-     *
-     * @param Tag[] $tags the tags to invalidate
-     *
-     * @return bool true on success, false on failure
-     */
-    public function invalidateTags(array $tags): bool;
-
-    /**
-     * Retrieves cache items by their associated tags.
-     *
-     * @param array $tags the tags to search for
-     *
-     * @return array<string, mixed> array of cache items indexed by their keys
-     */
-    public function getByTags(array $tags): array;
-
-    /**
-     * Lists all tags currently in use.
-     *
-     * @return array<string> an array of tag names
-     */
-    public function getTags(): array;
 }

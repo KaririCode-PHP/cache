@@ -4,14 +4,12 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Contract;
 
+use KaririCode\Cache\ValueObject\Tag;
+
 /**
- * Interface TaggableCacheDriver.
- *
- * Estende o CacheDriver básico para adicionar a capacidade de invalidação por tags.
- * Drivers que implementam esta interface sinalizam ao CacheManager que podem lidar
- * nativamente com a lógica de associação de chaves a tags. Isso permite que o componente
- * delegue a operação de invalidação diretamente ao backend (ex: usando Sets no Redis),
- * o que é muito mais eficiente do que gerenciar as tags na camada da aplicação.
+ * Extends the base CacheDriver to include support for tag-based operations.
+ * Drivers implementing this interface can natively handle the association of keys
+ * with tags, allowing for efficient invalidation and retrieval.
  *
  * @category  Cache
  *
@@ -23,17 +21,39 @@ namespace KaririCode\Cache\Contract;
 interface TaggableCacheDriver extends CacheDriver
 {
     /**
-     * Invalida todos os itens de cache associados a uma ou mais tags especificadas.
-     * Esta operação deve ser atômica quando possível no backend.
+     * Persists an item in the cache, associating it with one or more tags.
      *
-     * @param array $tags as tags a serem invalidadas
+     * @param string $key the cache item key
+     * @param mixed $value the value to store
+     * @param Tag[] $tags an array of Tag objects
+     * @param \DateInterval|int|null $ttl the Time To Live for the item
      *
-     * @return bool true em caso de sucesso, false em caso de falha
+     * @return bool true on success, false on failure
+     */
+    public function setWithTags(string $key, mixed $value, array $tags, \DateInterval|int|null $ttl = null): bool;
+
+    /**
+     * Retrieves all cache items associated with the given tags.
+     *
+     * @param array<string> $tags an array of tag strings
+     *
+     * @return array<string, mixed> an associative array of key => value pairs
+     */
+    public function getByTags(array $tags): array;
+
+    /**
+     * Invalidates all cache items associated with one or more specified tags.
+     *
+     * @param array<string> $tags the tags to invalidate
+     *
+     * @return bool true on success, false on failure
      */
     public function invalidateTags(array $tags): bool;
 
     /**
-     * @return string[]
+     * Gets all tags currently in use by the driver.
+     *
+     * @return string[] an array of tag names
      */
     public function getTags(): array;
 }

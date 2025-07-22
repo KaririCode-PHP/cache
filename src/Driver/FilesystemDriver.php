@@ -15,17 +15,18 @@ use KaririCode\Cache\ValueObject\MetricsSnapshot;
 use Psr\Log\LoggerInterface;
 
 /**
- * Filesystem cache driver following SOLID principles.
- * Responsible ONLY for coordinating operations between specialized components.
+ * A filesystem-based cache driver designed with SOLID principles.
+ * It coordinates operations between specialized components for file management,
+ * validation, statistics, and directory handling.
  */
 final class FilesystemDriver implements CacheDriver, Maintainable
 {
     public function __construct(
-        private DirectoryManager $directoryManager,
-        private FileSystemCacheOperations $cacheOperations,
-        private FileSystemStatistics $statistics,
-        private FileSystemValidator $validator,
-        private LoggerInterface $logger
+        private readonly DirectoryManager $directoryManager,
+        private readonly FileSystemCacheOperations $cacheOperations,
+        private readonly FileSystemStatistics $statistics,
+        private readonly FileSystemValidator $validator,
+        private readonly LoggerInterface $logger
     ) {
         $this->logger->info('FilesystemDriver initialized with SOLID architecture');
     }
@@ -109,11 +110,6 @@ final class FilesystemDriver implements CacheDriver, Maintainable
         }
     }
 
-    /**
-     * @param string[] $keys
-     *
-     * @return array<string, mixed>
-     */
     public function getMultiple(array $keys): array
     {
         $results = [];
@@ -128,7 +124,7 @@ final class FilesystemDriver implements CacheDriver, Maintainable
     {
         $success = true;
         foreach ($values as $key => $value) {
-            if (!$this->set($key, $value, $expiration)) {
+            if (!$this->set((string) $key, $value, $expiration)) {
                 $success = false;
             }
         }
@@ -148,12 +144,8 @@ final class FilesystemDriver implements CacheDriver, Maintainable
         return $success;
     }
 
-    /**
-     * @return list<string>
-     */
     public function getCapabilities(): array
     {
-        // Filesystem driver does not support advanced atomic operations or tagging natively.
         return [];
     }
 
@@ -162,31 +154,28 @@ final class FilesystemDriver implements CacheDriver, Maintainable
         $stats = $this->statistics->getStats();
 
         return new MetricsSnapshot(
-            driverName: 'Filesystem',
-            memoryUsage: $stats['directory_size'],
-            itemCount: $stats['file_count'],
-            driverVersion: phpversion(),
-            rawStats: $stats
+            'Filesystem',
+            $stats['directory_size'],
+            $stats['file_count'],
+            phpversion(),
+            $stats
         );
     }
 
     /**
-     * @return array<string, mixed>
+     * Performs maintenance tasks, such as cleaning up expired cache files.
+     *
+     * @param array<string, mixed> $options driver-specific maintenance options
+     *
+     * @return bool true on success, false on failure
      */
-    public function healthCheck(): array
-    {
-        return $this->statistics->healthCheck();
-    }
-
     public function maintenance(array $options = []): bool
     {
         $startTime = microtime(true);
         $this->logger->info('Starting filesystem cache maintenance.');
-
         try {
             $this->cacheOperations->performCleanup();
             $duration = microtime(true) - $startTime;
-
             $this->logger->info('Filesystem cache maintenance completed successfully.', [
                 'duration_ms' => round($duration * 1000, 2),
             ]);

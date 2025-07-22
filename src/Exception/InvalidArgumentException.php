@@ -71,6 +71,15 @@ final class InvalidArgumentException extends AbstractException
         );
     }
 
+    public static function invalidTagFormat(string $tag): static
+    {
+        return static::createException(
+            self::CODE_INVALID_TAG,
+            'INVALID_TAG_FORMAT',
+            "Invalid cache tag format: '{$tag}'. Only alphanumeric characters, underscores, dots, colons and hyphens are allowed"
+        );
+    }
+
     public static function invalidTopic(string $topic): static
     {
         return static::createException(
@@ -131,6 +140,15 @@ final class InvalidArgumentException extends AbstractException
             self::CODE_INVALID_CONFIGURATION,
             'INVALID_CONFIGURATION',
             $message
+        );
+    }
+
+    public static function invalidKey(string $reason): static
+    {
+        return static::createException(
+            self::CODE_INVALID_KEY_FORMAT,
+            'INVALID_CACHE_KEY',
+            $reason
         );
     }
 

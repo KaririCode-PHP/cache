@@ -13,10 +13,10 @@ use KaririCode\Configurator\Contract\Configurator\ConfigurationManager;
 use Psr\Log\LoggerInterface;
 
 /**
- * CacheManager with proper dependency injection following SOLID principles.
+ * Manages cache instances, acting as a factory and registry.
  *
- * This manager receives all dependencies injected and acts as a registry
- * for cache instances without creating its own dependencies.
+ * This class provides a central point of access for creating and retrieving
+ * named cache stores, ensuring that instances are lazy-loaded and reused.
  */
 final class CacheManager
 {
@@ -27,12 +27,21 @@ final class CacheManager
     private array $builders = [];
 
     public function __construct(
-        private CacheConfig $config,
-        private ConfigurationManager $configurator,
-        private LoggerInterface $logger
+        private readonly CacheConfig $config,
+        private readonly ConfigurationManager $configurator,
+        private readonly LoggerInterface $logger
     ) {
     }
 
+    /**
+     * Get a cache instance by name.
+     *
+     * If no name is provided, the default cache store will be returned.
+     *
+     * @param string|null $name the name of the cache store
+     *
+     * @throws ConfigurationException if the store configuration is missing or invalid
+     */
     public function get(?string $name = null): Cache
     {
         $storeName = $name ?? $this->config->getDefaultStore();
@@ -44,28 +53,49 @@ final class CacheManager
         return $this->caches[$storeName];
     }
 
+    /**
+     * Get a cache instance by name (alias for get()).
+     *
+     * @param string $storeName the name of the cache store
+     */
     public function getStore(string $storeName): Cache
     {
         return $this->get($storeName);
     }
 
+    /**
+     * Get the default cache instance.
+     */
     public function getDefault(): Cache
     {
         return $this->get();
     }
 
+    /**
+     * Create and register a custom cache instance using a pre-configured builder.
+     *
+     * @param string $name the name to register the cache instance under
+     * @param CacheBuilder $builder the configured CacheBuilder instance
+     *
+     * @return Cache the newly created cache instance
+     */
     public function createWithBuilder(string $name, CacheBuilder $builder): Cache
     {
         $cache = $builder->build();
         $this->caches[$name] = $cache;
 
-        $this->logger->info('Custom cache instance created', [
-            'store' => $name,
-        ]);
+        $this->logger->info('Custom cache instance created', ['store' => $name]);
 
         return $cache;
     }
 
+    /**
+     * Get a pre-configured CacheBuilder instance for a specific store.
+     *
+     * @param string $storeName the name of the store
+     *
+     * @return CacheBuilder a new, cloned builder instance
+     */
     public function getBuilder(string $storeName): CacheBuilder
     {
         if (!isset($this->builders[$storeName])) {
@@ -75,6 +105,13 @@ final class CacheManager
         return clone $this->builders[$storeName];
     }
 
+    /**
+     * Create a new CacheBuilder instance for a specific store.
+     *
+     * @param string $storeName the name of the store
+     *
+     * @throws ConfigurationException if the store is not configured
+     */
     public function createBuilder(string $storeName): CacheBuilder
     {
         if (!$this->has($storeName)) {
@@ -87,6 +124,11 @@ final class CacheManager
         return $builder;
     }
 
+    /**
+     * Create a new Cache instance for a specific store.
+     *
+     * @param string $storeName the name of the store
+     */
     public function createCache(string $storeName): Cache
     {
         $builder = $this->createBuilder($storeName);
@@ -94,18 +136,30 @@ final class CacheManager
         return $builder->build();
     }
 
+    /**
+     * Check if a cache store is configured.
+     *
+     * @param string $name the name of the store
+     */
     public function has(string $name): bool
     {
         return $this->config->has("stores.{$name}");
     }
 
+    /**
+     * Check if a cache instance has been loaded (instantiated).
+     *
+     * @param string $name the name of the store
+     */
     public function isLoaded(string $name): bool
     {
         return isset($this->caches[$name]);
     }
 
     /**
-     * @return list<string> list of store names
+     * Get the names of all configured cache stores.
+     *
+     * @return list<string> a list of store names
      */
     public function getStoreNames(): array
     {
@@ -113,6 +167,8 @@ final class CacheManager
     }
 
     /**
+     * Get all currently loaded cache instances.
+     *
      * @return array<string, Cache>
      */
     public function getLoadedCaches(): array
@@ -120,14 +176,18 @@ final class CacheManager
         return $this->caches;
     }
 
+    /**
+     * Remove a cache instance from the manager.
+     *
+     * @param string $name the name of the store to forget
+     *
+     * @return bool true if the instance was found and removed, false otherwise
+     */
     public function forget(string $name): bool
     {
         if (isset($this->caches[$name])) {
             unset($this->caches[$name], $this->builders[$name]);
-
-            $this->logger->info('Cache instance forgotten', [
-                'store' => $name,
-            ]);
+            $this->logger->info('Cache instance forgotten', ['store' => $name]);
 
             return true;
         }
@@ -135,54 +195,44 @@ final class CacheManager
         return false;
     }
 
+    /**
+     * Clear all loaded cache instances.
+     *
+     * @return bool true if all clear operations were successful, false otherwise
+     */
     public function clearAll(): bool
     {
         $success = true;
-        $results = [];
-
         foreach ($this->caches as $name => $cache) {
             try {
-                $result = $cache->clear();
-                $results[$name] = $result;
-                if (!$result) {
+                if (!$cache->clear()) {
                     $success = false;
                 }
             } catch (\Exception $e) {
-                $this->logger->error('Failed to clear cache', [
-                    'store' => $name,
-                    'error' => $e->getMessage(),
-                ]);
-                $results[$name] = false;
+                $this->logger->error('Failed to clear cache', ['store' => $name, 'error' => $e->getMessage()]);
                 $success = false;
             }
         }
-
-        $this->logger->info('Bulk cache clear completed', [
-            'success' => $success,
-            'results' => $results,
-        ]);
 
         return $success;
     }
 
     /**
+     * Pre-populates all loaded caches with the given data.
+     *
      * @param array<string, mixed> $data
      *
-     * @return array<string, array{success: bool, error?: string}>
+     * @return array<string, array{success: bool, error?: string}> an array of results for each cache
      */
     public function warmAll(array $data, \DateInterval|int|null $ttl = null): array
     {
         $results = [];
-
         foreach ($this->caches as $name => $cache) {
             try {
                 $cache->warm($data, $ttl);
                 $results[$name] = ['success' => true];
             } catch (\Exception $e) {
-                $this->logger->error('Cache warm failed', [
-                    'store' => $name,
-                    'error' => $e->getMessage(),
-                ]);
+                $this->logger->error('Cache warm failed', ['store' => $name, 'error' => $e->getMessage()]);
                 $results[$name] = ['success' => false, 'error' => $e->getMessage()];
             }
         }
@@ -191,20 +241,18 @@ final class CacheManager
     }
 
     /**
+     * Get performance metrics from all loaded cache instances.
+     *
      * @return array<string, array<string, mixed>>
      */
     public function getAllMetrics(): array
     {
         $metrics = [];
-
         foreach ($this->caches as $name => $cache) {
             try {
                 $metrics[$name] = $cache->getMetrics()->toArray();
             } catch (\Exception $e) {
-                $this->logger->warning('Failed to get metrics', [
-                    'store' => $name,
-                    'error' => $e->getMessage(),
-                ]);
+                $this->logger->warning('Failed to get metrics', ['store' => $name, 'error' => $e->getMessage()]);
                 $metrics[$name] = ['error' => $e->getMessage()];
             }
         }
@@ -213,6 +261,8 @@ final class CacheManager
     }
 
     /**
+     * Get statistics about the cache manager itself.
+     *
      * @return array<string, mixed>
      */
     public function getStats(): array
@@ -243,12 +293,13 @@ final class CacheManager
     }
 
     /**
-     * @return list<string> list of validation errors
+     * Validates the entire cache configuration.
+     *
+     * @return list<string> a list of validation error messages
      */
     public function validateConfiguration(): array
     {
         $errors = $this->config->validate();
-
         foreach ($this->config->getStoreNames() as $storeName) {
             try {
                 $this->validateStoreConfiguration($storeName);
@@ -260,6 +311,9 @@ final class CacheManager
         return $errors;
     }
 
+    /**
+     * Reloads the cache configuration and purges all existing instances.
+     */
     public function reloadConfiguration(): void
     {
         $this->logger->info('Reloading cache configuration');
@@ -268,9 +322,7 @@ final class CacheManager
 
         $errors = $this->validateConfiguration();
         if (!empty($errors)) {
-            $this->logger->warning('Configuration validation errors after reload', [
-                'errors' => $errors,
-            ]);
+            $this->logger->warning('Configuration validation errors after reload', ['errors' => $errors]);
         }
 
         $this->logger->info('Cache configuration reloaded successfully');
@@ -279,13 +331,8 @@ final class CacheManager
     private function buildCache(string $storeName): Cache
     {
         try {
-            if (!$this->has($storeName)) {
-                throw ConfigurationException::missingDriver($storeName);
-            }
-
             $builder = $this->createBuilder($storeName);
             $cache = $builder->build();
-
             $this->logger->info('Cache instance built', [
                 'store' => $storeName,
                 'driver' => $this->getStoreDriver($storeName),
@@ -293,11 +340,7 @@ final class CacheManager
 
             return $cache;
         } catch (\Exception $e) {
-            $this->logger->error('Failed to build cache', [
-                'store' => $storeName,
-                'error' => $e->getMessage(),
-            ]);
-
+            $this->logger->error('Failed to build cache', ['store' => $storeName, 'error' => $e->getMessage()]);
             throw ConfigurationException::invalidConfiguration($storeName, "Failed to build cache: {$e->getMessage()}");
         }
     }
@@ -312,19 +355,15 @@ final class CacheManager
         $store = $this->config->getStore($storeName);
         $features = $this->config->getFeatureConfig();
 
-        if ('layered' === $store->driver) {
-            if (empty($store->layers)) {
-                throw ConfigurationException::invalidConfiguration($storeName, 'Layered cache must have at least one layer');
-            }
+        if ('layered' === $store->driver && empty($store->layers)) {
+            throw ConfigurationException::invalidConfiguration($storeName, 'Layered cache must have at least one layer');
         }
 
-        // Validação baseada em features
         $this->validateFeatureDependencies($features);
 
         $this->logger->info('Store configuration validated', [
             'store' => $storeName,
             'driver' => $store->driver,
-            'features' => $features->toArray(),
             'monitoring_enabled' => $features->hasMonitoringEnabled(),
         ]);
     }
@@ -333,10 +372,6 @@ final class CacheManager
     {
         if ($features->psr14EventsEnabled && !$features->eventsEnabled) {
             throw ConfigurationException::invalidConfiguration('features', 'PSR-14 events require basic events to be enabled');
-        }
-
-        if ($features->slidingExpiration && !$features->metricsEnabled) {
-            $this->logger->warning('Sliding expiration works better with metrics enabled');
         }
     }
 
