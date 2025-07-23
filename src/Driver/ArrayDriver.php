@@ -11,9 +11,10 @@ use KaririCode\Cache\Contract\CacheDriver;
 use KaririCode\Cache\Contract\DriverStats;
 use KaririCode\Cache\Contract\TopicAwareCacheDriver;
 use KaririCode\Cache\Serializer\Trait\SerializationTrait;
+use KaririCode\Cache\Validation\Trait\AtomicOperationValidationTrait;
 use KaririCode\Cache\Validation\Trait\CacheKeyValidationTrait;
 use KaririCode\Cache\Validation\Trait\CacheValueValidationTrait;
-use KaririCode\Cache\Validation\Trait\ExpirationCalculatorTrait;
+use KaririCode\Cache\Validation\Trait\ExpirationManagementTrait;
 use KaririCode\Cache\Validation\Trait\TagValidationTrait;
 use KaririCode\Cache\Validation\Trait\TopicValidationTrait;
 use KaririCode\Cache\ValueObject\MetricsSnapshot;
@@ -32,7 +33,8 @@ final class ArrayDriver implements
     use CacheValueValidationTrait;
     use TagValidationTrait;
     use TopicValidationTrait;
-    use ExpirationCalculatorTrait;
+    use ExpirationManagementTrait;
+    use AtomicOperationValidationTrait;
     use SerializationTrait;
 
     /** @var array<string, mixed> */

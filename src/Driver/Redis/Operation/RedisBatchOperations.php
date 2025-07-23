@@ -15,8 +15,8 @@ use KaririCode\Cache\Validation\Trait\CacheKeyValidationTrait;
 use KaririCode\Cache\Validation\Trait\CacheValueValidationTrait;
 
 /**
- * Handles batch operations for Redis.
- * Single Responsibility: Multi-key operations (getMultiple, setMultiple, deleteMultiple).
+ * Handles batch operations for Redis (multi-key operations).
+ * SRP: This class is only responsible for multi-key operations like mget, mset, and del.
  */
 final class RedisBatchOperations
 {
@@ -32,6 +32,11 @@ final class RedisBatchOperations
     ) {
     }
 
+    /**
+     * @param array<string> $keys
+     *
+     * @return array<string, mixed>
+     */
     public function getMultiple(array $keys): array
     {
         $this->validateKeys($keys);
@@ -40,7 +45,7 @@ final class RedisBatchOperations
             return [];
         }
 
-        return $this->errorHandler->executeWithRetry(
+        return (array) $this->errorHandler->executeWithRetry(
             fn () => $this->performGetMultiple($keys),
             $this->connectionManager,
             'getMultiple',
@@ -48,6 +53,9 @@ final class RedisBatchOperations
         );
     }
 
+    /**
+     * @param array<string, mixed> $values
+     */
     public function setMultiple(array $values, ?\DateTimeInterface $expiration = null): bool
     {
         if (empty($values)) {
@@ -60,7 +68,7 @@ final class RedisBatchOperations
             throw InvalidArgumentException::invalidTtl('Expiration time is in the past');
         }
 
-        return $this->errorHandler->executeWithRetry(
+        return (bool) $this->errorHandler->executeWithRetry(
             fn () => $this->performSetMultiple($values, $expiration),
             $this->connectionManager,
             'setMultiple',
@@ -68,6 +76,9 @@ final class RedisBatchOperations
         );
     }
 
+    /**
+     * @param array<string> $keys
+     */
     public function deleteMultiple(array $keys): bool
     {
         $this->validateKeys($keys);
@@ -76,7 +87,7 @@ final class RedisBatchOperations
             return true;
         }
 
-        return $this->errorHandler->executeWithRetry(
+        return (bool) $this->errorHandler->executeWithRetry(
             fn () => $this->performDeleteMultiple($keys),
             $this->connectionManager,
             'deleteMultiple',
@@ -84,11 +95,17 @@ final class RedisBatchOperations
         );
     }
 
+    /**
+     * @param array<string> $keys
+     *
+     * @return array<string, mixed>
+     */
     private function performGetMultiple(array $keys): array
     {
         $prefixedKeys = array_map(fn ($k) => $this->config->keyPrefix . $k, $keys);
 
         try {
+            /** @var list<string|false>|false $rawValues */
             $rawValues = $this->redis->mget($prefixedKeys);
 
             if (!is_array($rawValues)) {
@@ -99,15 +116,14 @@ final class RedisBatchOperations
             foreach ($keys as $index => $key) {
                 $value = $rawValues[$index] ?? false;
 
-                if (false === $value || !is_string($value)) {
+                if (false === $value) {
                     $results[$key] = null;
                     continue;
                 }
 
                 try {
                     $results[$key] = $this->unserialize($value);
-                } catch (\Throwable $e) {
-                    // Log error but don't fail the entire operation
+                } catch (\Throwable) {
                     $results[$key] = null;
                 }
             }
@@ -118,9 +134,13 @@ final class RedisBatchOperations
         }
     }
 
+    /**
+     * @param array<string, mixed> $values
+     */
     private function performSetMultiple(array $values, ?\DateTimeInterface $expiration): bool
     {
         try {
+            // Use a pipeline for atomic and performant multi-set operations.
             $pipe = $this->redis->multi(\Redis::PIPELINE);
 
             foreach ($values as $key => $value) {
@@ -148,12 +168,15 @@ final class RedisBatchOperations
         }
     }
 
+    /**
+     * @param array<string> $keys
+     */
     private function performDeleteMultiple(array $keys): bool
     {
         $prefixedKeys = array_map(fn ($k) => $this->config->keyPrefix . $k, $keys);
 
         try {
-            $deleted = $this->redis->del($prefixedKeys);
+            $deleted = (int) $this->redis->del($prefixedKeys);
 
             return $deleted > 0;
         } catch (\RedisException $e) {
@@ -161,6 +184,9 @@ final class RedisBatchOperations
         }
     }
 
+    /**
+     * @param array<string, mixed> $values
+     */
     private function validateMultipleValues(array $values): void
     {
         foreach ($values as $key => $value) {
@@ -169,9 +195,9 @@ final class RedisBatchOperations
                 $this->validateValue($value);
             } catch (\Throwable $e) {
                 if ($e instanceof InvalidArgumentException) {
-                    throw $e; // Re-throw as is
+                    throw $e;
                 }
-                throw InvalidArgumentException::invalidValue($value, "Invalid value for key '{$key}': " . $e->getMessage());
+                throw InvalidArgumentException::invalidValue("Invalid value for key '{$key}': " . $e->getMessage(), $e);
             }
         }
     }

@@ -8,15 +8,10 @@ use KaririCode\Cache\Contract\DriverStats;
 use KaririCode\Cache\ValueObject\MetricsSnapshot;
 use Psr\Log\LoggerInterface;
 
-/**
- * Handles monitoring, statistics, and maintenance operations.
- * Single Responsibility: Monitoring, metrics, and maintenance.
- */
 final class RedisMonitoringService
 {
     public function __construct(
         private \Redis $redis,
-        private RedisErrorHandler $errorHandler,
         private LoggerInterface $logger
     ) {
     }
@@ -31,11 +26,14 @@ final class RedisMonitoringService
                 return new MetricsSnapshot('Redis', null, null, null, ['error' => 'Failed to retrieve Redis info']);
             }
 
+            $memoryUsage = isset($info['used_memory']) && is_numeric($info['used_memory']) ? (int) $info['used_memory'] : null;
+            $driverVersion = isset($info['redis_version']) && is_string($info['redis_version']) ? $info['redis_version'] : null;
+
             return new MetricsSnapshot(
                 'Redis',
-                $info['used_memory'] ?? null,
+                $memoryUsage,
                 is_int($dbsize) ? $dbsize : null,
-                $info['redis_version'] ?? null,
+                $driverVersion,
                 $info
             );
         } catch (\RedisException $e) {
@@ -87,14 +85,17 @@ final class RedisMonitoringService
     private function performCleanup(array $options): bool
     {
         try {
-            // Exemplo de operação de limpeza
-            $this->redis->eval('
+            $this->redis->eval(
+                '
                 local keys = redis.call("keys", ARGV[1])
                 if #keys > 0 then
                     return redis.call("del", unpack(keys))
                 end
                 return 0
-            ', [], ['*:expired:*']);
+                ',
+                ['*:expired:*'],
+                0
+            );
 
             return true;
         } catch (\RedisException $e) {

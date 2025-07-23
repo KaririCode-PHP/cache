@@ -8,7 +8,6 @@ use KaririCode\Cache\Driver\Redis\Component\RedisConnectionManager;
 use KaririCode\Cache\Driver\Redis\Component\RedisErrorHandler;
 use KaririCode\Cache\Driver\Redis\Config\RedisConfig;
 use KaririCode\Cache\Exception\CacheException;
-use KaririCode\Cache\Exception\InvalidArgumentException;
 use KaririCode\Cache\Exception\SerializationException;
 use KaririCode\Cache\Serializer\Trait\SerializationTrait;
 use KaririCode\Cache\Validation\Trait\CacheKeyValidationTrait;
@@ -16,7 +15,7 @@ use KaririCode\Cache\Validation\Trait\CacheValueValidationTrait;
 
 /**
  * Handles basic CRUD operations for Redis.
- * Single Responsibility: Basic cache operations (get, set, has, delete, clear).
+ * SRP: This class is only responsible for get, set, has, delete, and clear operations.
  */
 final class RedisCrudOperations
 {
@@ -49,7 +48,7 @@ final class RedisCrudOperations
         $this->validateKey($key);
         $this->validateValue($value);
 
-        return $this->errorHandler->executeWithRetry(
+        return (bool) $this->errorHandler->executeWithRetry(
             fn () => $this->performSet($key, $value, $expiration),
             $this->connectionManager,
             'set',
@@ -61,8 +60,8 @@ final class RedisCrudOperations
     {
         $this->validateKey($key);
 
-        return $this->errorHandler->executeWithRetry(
-            fn () => $this->redis->exists($this->config->keyPrefix . $key) > 0,
+        return (bool) $this->errorHandler->executeWithRetry(
+            fn () => (int) $this->redis->exists($this->config->keyPrefix . $key) > 0,
             $this->connectionManager,
             'has',
             $key
@@ -73,8 +72,8 @@ final class RedisCrudOperations
     {
         $this->validateKey($key);
 
-        return $this->errorHandler->executeWithRetry(
-            fn () => $this->redis->del($this->config->keyPrefix . $key) > 0,
+        return (bool) $this->errorHandler->executeWithRetry(
+            fn () => (int) $this->redis->del($this->config->keyPrefix . $key) > 0,
             $this->connectionManager,
             'delete',
             $key
@@ -83,7 +82,7 @@ final class RedisCrudOperations
 
     public function clear(): bool
     {
-        return $this->errorHandler->executeWithRetry(
+        return (bool) $this->errorHandler->executeWithRetry(
             fn () => $this->performClear(),
             $this->connectionManager,
             'clear',
@@ -106,7 +105,6 @@ final class RedisCrudOperations
         try {
             return $this->unserialize($value);
         } catch (\Throwable $e) {
-            // ✅ CORRIGIDO: Usando método estático da exceção
             throw SerializationException::deserializationFailed($value, $e);
         }
     }
@@ -116,7 +114,6 @@ final class RedisCrudOperations
         try {
             $serialized = $this->serialize($value);
         } catch (\Throwable $e) {
-            // ✅ CORRIGIDO: Usando método estático da exceção
             throw SerializationException::serializationFailed($value, $e);
         }
 
@@ -124,10 +121,6 @@ final class RedisCrudOperations
 
         if ($expiration) {
             $ttl = max(1, $expiration->getTimestamp() - time());
-            if ($ttl <= 0) {
-                // ✅ CORRIGIDO: Usando método estático da exceção
-                throw InvalidArgumentException::invalidTtl($ttl);
-            }
 
             return (bool) $this->redis->setex($fullKey, $ttl, $serialized);
         }
@@ -161,7 +154,7 @@ final class RedisCrudOperations
 
             while (($keys = $this->redis->scan($iterator, $pattern, $this->config->scanBatchSize)) !== false) {
                 if (is_array($keys) && !empty($keys)) {
-                    $deletedCount += $this->redis->del($keys);
+                    $deletedCount += (int) $this->redis->del($keys);
                 }
             }
         } catch (\RedisException $e) {

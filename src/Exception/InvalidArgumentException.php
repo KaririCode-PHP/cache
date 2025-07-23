@@ -152,12 +152,13 @@ final class InvalidArgumentException extends AbstractException
         );
     }
 
-    public static function invalidValue(string $reason): static
+    public static function invalidValue(string $reason, ?\Throwable $previous = null): static
     {
         return static::createException(
             self::CODE_INVALID_VALUE,
             'INVALID_VALUE',
-            $reason
+            $reason,
+            $previous
         );
     }
 

@@ -96,12 +96,12 @@ final class ConfigurationException extends AbstractException
         );
     }
 
-    public static function invalidPort(int $port): static
+    public static function invalidPort(int $port, int $min = 1, int $max = 65535): static
     {
         return static::createException(
             self::CODE_INVALID_PORT,
             'INVALID_PORT',
-            "Invalid cache server port: {$port}. Must be between 1 and 65535"
+            "Invalid cache server port: {$port}. Must be between {$min} and {$max}"
         );
     }
 

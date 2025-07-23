@@ -14,7 +14,7 @@ use KaririCode\Cache\Validation\Trait\TopicValidationTrait;
 use KaririCode\Cache\ValueObject\Topic;
 
 /**
- * Handles topic-based cache operations.
+ * Manages cache operations based on topics (pub/sub for invalidation).
  * Single Responsibility: Topic subscription and invalidation.
  */
 final class RedisTopicOperations
@@ -30,13 +30,19 @@ final class RedisTopicOperations
     ) {
     }
 
+    /**
+     * Subscribes a cache key to one or more topics.
+     *
+     * @param string $key the key to subscribe
+     * @param array<Topic> $topics the topics for subscription
+     */
     public function subscribeTo(string $key, array $topics): void
     {
         $this->validateKey($key);
         $this->validateTopics($topics);
 
         if (empty($topics)) {
-            throw InvalidArgumentException::invalidValue('Topics array cannot be empty');
+            throw InvalidArgumentException::invalidValue('The topics array cannot be empty.');
         }
 
         $topicStrings = array_map('strval', $topics);
@@ -49,23 +55,23 @@ final class RedisTopicOperations
         );
     }
 
+    /**
+     * Invalidates all cache keys subscribed to the provided topics.
+     *
+     * @param array<Topic> $topics the topics to invalidate
+     *
+     * @return bool true on success
+     */
     public function invalidateTopics(array $topics): bool
     {
         if (empty($topics)) {
             return true;
         }
 
-        // Validação dos tipos Topic
-        foreach ($topics as $topic) {
-            if (!$topic instanceof Topic) {
-                throw InvalidArgumentException::invalidValue('Expected Topic instance');
-            }
-        }
-
+        $this->validateTopics($topics);
         $topicStrings = array_map(fn (Topic $topic) => (string) $topic, $topics);
-        $this->validateTopicStrings($topicStrings);
 
-        return $this->errorHandler->executeWithRetry(
+        return (bool) $this->errorHandler->executeWithRetry(
             fn () => $this->performInvalidateTopics($topicStrings),
             $this->connectionManager,
             'invalidateTopics',
@@ -73,6 +79,12 @@ final class RedisTopicOperations
         );
     }
 
+    /**
+     * Internal logic for the subscription operation.
+     *
+     * @param string $key the key to subscribe
+     * @param array<string> $topicStrings the topic names
+     */
     private function performSubscribeTo(string $key, array $topicStrings): void
     {
         try {
@@ -86,35 +98,37 @@ final class RedisTopicOperations
             $results = $pipe->exec();
 
             if (!is_array($results)) {
-                throw CacheException::operationFailed('subscribeTo', $key, new \RuntimeException('Pipeline execution failed'));
+                throw CacheException::operationFailed('subscribeTo', $key, new \RuntimeException('Pipeline execution failed.'));
             }
         } catch (\RedisException $e) {
             throw CacheException::operationFailed('subscribeTo', $key, $e);
         }
     }
 
+    /**
+     * Internal logic for topic invalidation operation.
+     *
+     * @param array<string> $topicStrings the topic names
+     *
+     * @return bool true if the operation was successful
+     */
     private function performInvalidateTopics(array $topicStrings): bool
     {
         try {
             $topicKeys = array_map(fn (string $topic) => $this->config->topicPrefix . $topic, $topicStrings);
 
-            if (empty($topicKeys)) {
-                return true;
-            }
-
             $keysToDelete = $this->redis->sUnion(...$topicKeys);
 
             if (!is_array($keysToDelete) || empty($keysToDelete)) {
-                if (!empty($topicKeys)) {
-                    $this->redis->del($topicKeys);
-                }
+                // Only remove topic index keys if there are no data keys to delete.
+                $this->redis->del($topicKeys);
 
                 return true;
             }
 
             $pipe = $this->redis->multi(\Redis::PIPELINE);
-            $pipe->del($keysToDelete);
-            $pipe->del($topicKeys);
+            $pipe->del($keysToDelete); // Deletes data keys.
+            $pipe->del($topicKeys);    // Deletes topic index keys.
             $results = $pipe->exec();
 
             return is_array($results) && !empty($results);

@@ -4,12 +4,12 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Driver\Redis\Component;
 
-/**
- * Manages Lua scripts for Redis operations.
- * Single Responsibility: Lua script management and execution.
- */
+use KaririCode\Cache\Driver\Redis\Validation\Trait\RedisResultValidatorTrait;
+
 final class RedisLuaScriptManager
 {
+    use RedisResultValidatorTrait;
+
     private array $scriptHashes = [];
 
     public function __construct(private \Redis $redis)
@@ -19,20 +19,26 @@ final class RedisLuaScriptManager
 
     public function executeIncrementWithTtl(string $key, int $step, int $initialValue, int $ttl): int
     {
-        return $this->redis->evalSha(
+        $args = [$step, $initialValue, $ttl];
+        $result = $this->redis->evalSha(
             $this->scriptHashes['incrementWithTtl'],
-            [$key],
-            [$step, $initialValue, $ttl]
+            array_merge([$key], $args),
+            1
         );
+
+        return $this->ensureNumericResult($result, 'evalSha:incrementWithTtl', $key);
     }
 
     public function executeCompareAndSwap(string $key, string $expected, string $value, int $ttl): int
     {
-        return $this->redis->evalSha(
+        $args = [$expected, $value, $ttl];
+        $result = $this->redis->evalSha(
             $this->scriptHashes['compareAndSwap'],
-            [$key],
-            [$expected, $value, $ttl]
+            array_merge([$key], $args),
+            1
         );
+
+        return $this->ensureNumericResult($result, 'evalSha:compareAndSwap', $key);
     }
 
     private function loadScripts(): void

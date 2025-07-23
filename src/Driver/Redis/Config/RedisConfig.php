@@ -61,17 +61,17 @@ final class RedisConfig
             tagPrefix: $config['tag_prefix'] ?? 'tag:',
             topicPrefix: $config['topic_prefix'] ?? 'topic:',
             host: $config['host'] ?? '127.0.0.1',
-            port: $config['port'] ?? 6379,
-            timeout: $config['timeout'] ?? 2.0,
-            retryAttempts: $config['retry_attempts'] ?? 3,
-            retryDelay: $config['retry_delay'] ?? 0.1,
-            persistent: $config['persistent'] ?? false,
+            port: (int) ($config['port'] ?? 6379),
+            timeout: (float) ($config['timeout'] ?? 2.0),
+            retryAttempts: (int) ($config['retry_attempts'] ?? 3),
+            retryDelay: (float) ($config['retry_delay'] ?? 0.1),
+            persistent: (bool) ($config['persistent'] ?? false),
             persistentId: $config['persistent_id'] ?? null,
-            retryInterval: $config['retry_interval'] ?? 0,
-            readTimeout: $config['read_timeout'] ?? 0.0,
-            scanBatchSize: $config['scan_batch_size'] ?? 500,
+            retryInterval: (int) ($config['retry_interval'] ?? 0),
+            readTimeout: (float) ($config['read_timeout'] ?? 0.0),
+            scanBatchSize: (int) ($config['scan_batch_size'] ?? 500),
             password: $config['password'] ?? null,
-            database: $config['database'] ?? 0
+            database: (int) ($config['database'] ?? 0)
         );
     }
 

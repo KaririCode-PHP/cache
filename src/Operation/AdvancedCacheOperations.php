@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Operation;
 
-use KaririCode\Cache\Contract\Behavioral\CompareAndSwapAware;
 use KaririCode\Cache\Contract\Behavioral\Maintainable;
 use KaririCode\Cache\Contract\CacheItem;
 use KaririCode\Cache\Contract\CacheSerializer;
@@ -187,16 +186,14 @@ final class AdvancedCacheOperations
             $serializedExpected = $this->serialize($expected);
             $serializedValue = $this->serialize($value);
 
-            if ($this->layeredCache instanceof CompareAndSwapAware) {
-                $result = $this->layeredCache->compareAndSwap($key, $serializedExpected, $serializedValue, $ttl);
-                if ($result) {
-                    $this->metricsCollector = $this->metricsCollector->recordGeneration($key, microtime(true) - $startTime);
-                }
+            $result = $this->layeredCache->compareAndSwap($key, $serializedExpected, $serializedValue, $ttl);
 
-                return $result;
+            if ($result) {
+                $this->metricsCollector = $this->metricsCollector
+                    ->recordGeneration($key, microtime(true) - $startTime);
             }
 
-            return false;
+            return $result;
         } catch (\Throwable $e) {
             $this->logger->error('Cache compareAndSwap operation failed', [
                 'key' => $key,

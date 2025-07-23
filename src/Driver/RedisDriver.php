@@ -11,118 +11,39 @@ use KaririCode\Cache\Contract\DriverStats;
 use KaririCode\Cache\Contract\TaggableCacheDriver;
 use KaririCode\Cache\Contract\TopicAwareCacheDriver;
 use KaririCode\Cache\Driver\Redis\Component\RedisConnectionManager;
-use KaririCode\Cache\Driver\Redis\Component\RedisErrorHandler;
 use KaririCode\Cache\Driver\Redis\Component\RedisMonitoringService;
-use KaririCode\Cache\Driver\Redis\Config\RedisConfig;
 use KaririCode\Cache\Driver\Redis\Operation\RedisAtomicOperations;
 use KaririCode\Cache\Driver\Redis\Operation\RedisBatchOperations;
 use KaririCode\Cache\Driver\Redis\Operation\RedisCrudOperations;
 use KaririCode\Cache\Driver\Redis\Operation\RedisTagOperations;
 use KaririCode\Cache\Driver\Redis\Operation\RedisTopicOperations;
-use Psr\Log\LoggerInterface;
-use Psr\Log\NullLogger;
 
+/**
+ * Acts as a Facade for all Redis operations.
+ * Its single responsibility is to delegate cache operations to the specialized
+ * handler classes it is composed of, following SRP and Dependency Injection.
+ */
 final class RedisDriver implements
     AtomicCacheDriver,
     TopicAwareCacheDriver,
     TaggableCacheDriver,
     CompareAndSwapAware
 {
-    private RedisConnectionManager $connectionManager;
-    private RedisCrudOperations $crudOperations;
-    private RedisBatchOperations $batchOperations;
-    private RedisAtomicOperations $atomicOperations;
-    private RedisTagOperations $tagOperations;
-    private RedisTopicOperations $topicOperations;
-    private RedisMonitoringService $monitoringService;
-    private RedisErrorHandler $errorHandler;
-
+    /**
+     * Receives pre-configured components to delegate operations to.
+     */
     public function __construct(
-        \Redis $redis,
-        string $keyPrefix = 'cache:',
-        string $tagPrefix = 'tag:',
-        string $topicPrefix = 'topic:',
-        ?LoggerInterface $logger = null,
-        array $connectionConfig = []
+        private readonly RedisCrudOperations $crudOperations,
+        private readonly RedisBatchOperations $batchOperations,
+        private readonly RedisAtomicOperations $atomicOperations,
+        private readonly RedisTagOperations $tagOperations,
+        private readonly RedisTopicOperations $topicOperations,
+        private readonly RedisMonitoringService $monitoringService,
+        private readonly RedisConnectionManager $connectionManager
     ) {
-        $logger = $logger ?? new NullLogger();
-
-        // Create configuration object
-        $config = new RedisConfig(
-            keyPrefix: $keyPrefix,
-            tagPrefix: $tagPrefix,
-            topicPrefix: $topicPrefix,
-            host: $connectionConfig['host'] ?? '127.0.0.1',
-            port: $connectionConfig['port'] ?? 6379,
-            timeout: $connectionConfig['timeout'] ?? 2.0,
-            retryAttempts: $connectionConfig['retry_attempts'] ?? 3,
-            retryDelay: $connectionConfig['retry_delay'] ?? 0.1,
-            persistent: $connectionConfig['persistent'] ?? false,
-            persistentId: $connectionConfig['persistent_id'] ?? null,
-            retryInterval: $connectionConfig['retry_interval'] ?? 0,
-            readTimeout: $connectionConfig['read_timeout'] ?? 0.0,
-            scanBatchSize: $connectionConfig['scan_batch_size'] ?? 500,
-            password: $connectionConfig['password'] ?? null,
-            database: $connectionConfig['database'] ?? 0
-        );
-
-        // Initialize error handler first as other components depend on it
-        $this->errorHandler = new RedisErrorHandler($logger, $config);
-
-        // Initialize connection manager
-        $this->connectionManager = new RedisConnectionManager(
-            $redis,
-            $config,
-            $this->errorHandler,
-            $logger
-        );
-
-        // Initialize operation components
-        $this->crudOperations = new RedisCrudOperations(
-            $redis,
-            $config,
-            $this->errorHandler,
-            $this->connectionManager
-        );
-
-        $this->batchOperations = new RedisBatchOperations(
-            $redis,
-            $config,
-            $this->errorHandler,
-            $this->connectionManager
-        );
-
-        $this->atomicOperations = new RedisAtomicOperations(
-            $redis,
-            $config,
-            $this->errorHandler,
-            $this->connectionManager
-        );
-
-        $this->tagOperations = new RedisTagOperations(
-            $redis,
-            $config,
-            $this->errorHandler,
-            $this->connectionManager
-        );
-
-        $this->topicOperations = new RedisTopicOperations(
-            $redis,
-            $config,
-            $this->errorHandler,
-            $this->connectionManager
-        );
-
-        $this->monitoringService = new RedisMonitoringService(
-            $redis,
-            $this->errorHandler,
-            $logger
-        );
     }
 
-    // ========================================================================
-    // Basic CRUD Operations - Delegate to CrudOperations
-    // ========================================================================
+    // --- Basic CRUD Operations ---
 
     public function get(string $key): mixed
     {
@@ -149,9 +70,7 @@ final class RedisDriver implements
         return $this->crudOperations->clear();
     }
 
-    // ========================================================================
-    // Batch Operations - Delegate to BatchOperations
-    // ========================================================================
+    // --- Batch Operations ---
 
     public function getMultiple(array $keys): array
     {
@@ -168,9 +87,7 @@ final class RedisDriver implements
         return $this->batchOperations->deleteMultiple($keys);
     }
 
-    // ========================================================================
-    // Atomic Operations - Delegate to AtomicOperations
-    // ========================================================================
+    // --- Atomic Operations ---
 
     public function increment(string $key, int $step = 1, int $initialValue = 0, \DateInterval|int|null $ttl = null): int
     {
@@ -187,13 +104,13 @@ final class RedisDriver implements
         return $this->atomicOperations->compareAndSwap($key, $expected, $value, $ttl);
     }
 
-    // ========================================================================
-    // Tagging Operations - Delegate to TagOperations
-    // ========================================================================
+    // --- Tagging Operations ---
 
     public function setWithTags(string $key, mixed $value, array $tags, \DateInterval|int|null $ttl = null): bool
     {
-        return $this->tagOperations->setWithTags($key, $value, $tags, $ttl);
+        $tagStrings = array_map('strval', $tags);
+
+        return $this->tagOperations->setWithTags($key, $value, $tagStrings, $ttl);
     }
 
     public function invalidateTags(array $tags): bool
@@ -211,9 +128,7 @@ final class RedisDriver implements
         return $this->tagOperations->getTags();
     }
 
-    // ========================================================================
-    // Topic Operations - Delegate to TopicOperations
-    // ========================================================================
+    // --- Topic Operations ---
 
     public function subscribeTo(string $key, array $topics): void
     {
@@ -225,9 +140,7 @@ final class RedisDriver implements
         return $this->topicOperations->invalidateTopics($topics);
     }
 
-    // ========================================================================
-    // Monitoring & Statistics - Delegate to MonitoringService
-    // ========================================================================
+    // --- Monitoring & Management ---
 
     public function getCapabilities(): array
     {

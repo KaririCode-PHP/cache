@@ -13,10 +13,11 @@ use KaririCode\Cache\Contract\DriverStats;
 use KaririCode\Cache\Exception\CacheException;
 use KaririCode\Cache\Exception\ConfigurationException;
 use KaririCode\Cache\Serializer\Trait\SerializationTrait;
+use KaririCode\Cache\Validation\Trait\AtomicOperationValidationTrait;
 use KaririCode\Cache\Validation\Trait\CacheKeyValidationTrait;
 use KaririCode\Cache\Validation\Trait\CacheValueValidationTrait;
+use KaririCode\Cache\Validation\Trait\ExpirationManagementTrait;
 use KaririCode\Cache\Validation\Trait\TagValidationTrait;
-use KaririCode\Cache\Validation\Trait\TtlCalculatorTrait;
 use KaririCode\Cache\ValueObject\MetricsSnapshot;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
@@ -35,7 +36,8 @@ final class ApcuDriver implements
     use CacheValueValidationTrait;
     use TagValidationTrait;
     use SerializationTrait;
-    use TtlCalculatorTrait;
+    use ExpirationManagementTrait;
+    use AtomicOperationValidationTrait;
 
     private const TAG_INDEX_PREFIX = 'tag_index::';
     private const LOCK_PREFIX = 'lock::';
@@ -66,7 +68,7 @@ final class ApcuDriver implements
         $this->validateValue($value);
         $fullKey = $this->keyPrefix . $key;
         $serializedValue = $this->serialize($value);
-        $ttl = $this->calculateTtlFromExpiration($expiration);
+        $ttl = $this->calculateTtlInSeconds($expiration);
 
         return apcu_store($fullKey, $serializedValue, $ttl);
     }
@@ -145,7 +147,7 @@ final class ApcuDriver implements
         $this->validateKey($key);
         $this->validateStep($step);
         $fullKey = $this->keyPrefix . $key;
-        $ttlValue = $this->calculateTtl($ttl);
+        $ttlValue = $this->calculateTtlInSeconds($ttl);
 
         $newValue = apcu_inc($fullKey, $step, $success);
         if ($success) {
@@ -170,7 +172,7 @@ final class ApcuDriver implements
         $this->validateValue($value);
         $fullKey = $this->keyPrefix . $key;
         $serializedValue = $this->serialize($value);
-        $ttlValue = $this->calculateTtl($ttl);
+        $ttlValue = $this->calculateTtlInSeconds($ttl);
 
         return apcu_add($fullKey, $serializedValue, $ttlValue);
     }
@@ -182,7 +184,7 @@ final class ApcuDriver implements
 
         $currentValue = apcu_fetch($fullKey);
         if ($currentValue === $this->serialize($expected)) {
-            return apcu_store($fullKey, $this->serialize($value), $this->calculateTtl($ttl));
+            return apcu_store($fullKey, $this->serialize($value), $this->calculateTtlInSeconds($ttl));
         }
 
         return false;
@@ -289,16 +291,6 @@ final class ApcuDriver implements
         if (PHP_SAPI === 'cli' && !ini_get('apc.enable_cli')) {
             throw ConfigurationException::invalidConfiguration('apcu', 'APCu is not enabled for CLI (apc.enable_cli=1)');
         }
-    }
-
-    private function calculateTtlFromExpiration(?\DateTimeInterface $expiration): int
-    {
-        if (null === $expiration) {
-            return 0;
-        }
-        $ttl = $expiration->getTimestamp() - time();
-
-        return $ttl > 0 ? $ttl : 0;
     }
 
     private function removeFromAllTags(string $fullKey): void

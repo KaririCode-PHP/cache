@@ -20,7 +20,6 @@ final class RedisConnectionManager
     public function __construct(
         private \Redis $redis,
         private RedisConfig $config,
-        private RedisErrorHandler $errorHandler,
         private LoggerInterface $logger
     ) {
         $this->initialize();

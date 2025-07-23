@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Item;
 
-use KaririCode\Cache\Contract\Behavioral\CompareAndSwapAware;
 use KaririCode\Cache\Contract\CacheItem as CacheItemContact;
 use KaririCode\Cache\Contract\CacheItemPool;
 use KaririCode\Cache\Contract\CacheSerializer;
@@ -155,13 +154,9 @@ final class AdvancedCacheProxy implements CacheItemPool
 
     public function compareAndSwap(string $key, mixed $expected, mixed $value, \DateInterval|int|null $ttl = null): bool
     {
-        if ($this->layeredCache instanceof CompareAndSwapAware) {
-            $serializedExpected = $this->serializer->serialize($expected);
-            $serializedValue = $this->serializer->serialize($value);
+        $serializedExpected = $this->serializer->serialize($expected);
+        $serializedValue = $this->serializer->serialize($value);
 
-            return $this->layeredCache->compareAndSwap($key, $serializedExpected, $serializedValue, $ttl);
-        }
-
-        return false;
+        return $this->layeredCache->compareAndSwap($key, $serializedExpected, $serializedValue, $ttl);
     }
 }
