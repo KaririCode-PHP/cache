@@ -23,12 +23,12 @@ trait ConfigurationValidationTrait
      */
     protected function validateConfiguration(array $config = []): void
     {
-        $this->validateName($config);
-        $this->validateTtl($config);
-        $this->validateTags($config);
-        $this->validateTopics($config);
-        $this->validatePrefix($config);
-        $this->validateNamespaceSeparator($config);
+        $this->validateNameConfig($config);
+        $this->validateTtlConfig($config);
+        $this->validateTagsConfig($config);
+        $this->validateTopicsConfig($config);
+        $this->validatePrefixConfig($config);
+        $this->validateNamespaceSeparatorConfig($config);
     }
 
     /**
@@ -36,7 +36,7 @@ trait ConfigurationValidationTrait
      *
      * @param array<string, mixed> $config
      */
-    private function validateName(array $config): void
+    private function validateNameConfig(array $config): void
     {
         if (isset($config['name']) && !is_string($config['name'])) {
             throw InvalidArgumentException::invalidConfiguration('Configuration "name" must be a string, ' . gettype($config['name']) . ' given');
@@ -48,7 +48,7 @@ trait ConfigurationValidationTrait
      *
      * @param array<string, mixed> $config
      */
-    private function validateTtl(array $config): void
+    private function validateTtlConfig(array $config): void
     {
         if (!array_key_exists('ttl', $config)) {
             return;
@@ -69,7 +69,7 @@ trait ConfigurationValidationTrait
      *
      * @param array<string, mixed> $config
      */
-    private function validateTags(array $config): void
+    private function validateTagsConfig(array $config): void
     {
         if (!isset($config['tags'])) {
             return;
@@ -78,7 +78,7 @@ trait ConfigurationValidationTrait
         if (!is_array($config['tags'])) {
             throw InvalidArgumentException::invalidConfiguration('Configuration "tags" must be an array');
         }
-        $this->validateTagStrings($config['tags']);
+        $this->validateTagsConfig($config['tags']);
     }
 
     /**
@@ -86,7 +86,7 @@ trait ConfigurationValidationTrait
      *
      * @param array<string, mixed> $config
      */
-    private function validateTopics(array $config): void
+    private function validateTopicsConfig(array $config): void
     {
         if (!isset($config['topics'])) {
             return;
@@ -95,7 +95,7 @@ trait ConfigurationValidationTrait
         if (!is_array($config['topics'])) {
             throw InvalidArgumentException::invalidConfiguration('Configuration "topics" must be an array');
         }
-        $this->validateTopicStrings($config['topics']);
+        $this->validateTopicsConfig($config['topics']);
     }
 
     /**
@@ -103,7 +103,7 @@ trait ConfigurationValidationTrait
      *
      * @param array<string, mixed> $config
      */
-    private function validatePrefix(array $config): void
+    private function validatePrefixConfig(array $config): void
     {
         if (isset($config['prefix']) && !is_string($config['prefix'])) {
             throw InvalidArgumentException::invalidConfiguration('Configuration "prefix" must be a string');
@@ -115,7 +115,7 @@ trait ConfigurationValidationTrait
      *
      * @param array<string, mixed> $config
      */
-    private function validateNamespaceSeparator(array $config): void
+    private function validateNamespaceSeparatorConfig(array $config): void
     {
         if (isset($config['namespace_separator']) && !is_string($config['namespace_separator'])) {
             throw InvalidArgumentException::invalidConfiguration('Configuration "namespace_separator" must be a string');

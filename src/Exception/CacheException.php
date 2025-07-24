@@ -150,4 +150,17 @@ class CacheException extends AbstractException
             "Cache directory '{$directory}' is not writable"
         );
     }
+
+    public static function sizeLimitExceeded(
+        string $operation,
+        string $key,
+        int $size,
+        int $maxSize
+    ): static {
+        return static::createException(
+            self::CODE_STORAGE_ERROR,
+            'SIZE_LIMIT_EXCEEDED',
+            "Size limit exceeded for operation '{$operation}' on key '{$key}': {$size} bytes (limit: {$maxSize} bytes)"
+        );
+    }
 }

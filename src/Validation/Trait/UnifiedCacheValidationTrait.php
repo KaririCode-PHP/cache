@@ -29,6 +29,7 @@ trait UnifiedCacheValidationTrait
     use TopicValidationTrait;
     use ConfigurationValidationTrait;
     use AtomicOperationValidationTrait;
+    use TtlValidationTrait;
 
     /**
      * Comprehensive validation for cache operations.
