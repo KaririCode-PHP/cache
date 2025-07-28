@@ -211,9 +211,6 @@ final class EncryptedCache implements Cache
         return $decryptedItems;
     }
 
-    /**
-     * @return string[]
-     */
     public function getTags(): array
     {
         return $this->cache->getTags();
@@ -234,17 +231,11 @@ final class EncryptedCache implements Cache
         return $this->cache->invalidateTopics($topics);
     }
 
-    /**
-     * @return string[]
-     */
     public function getSubscribedTopics(string $key): array
     {
         return $this->cache->getSubscribedTopics($key);
     }
 
-    /**
-     * @return string[]
-     */
     public function getSubscribersForTopic(string $topic): array
     {
         return $this->cache->getSubscribersForTopic($topic);
@@ -293,8 +284,16 @@ final class EncryptedCache implements Cache
         $iv = openssl_random_pseudo_bytes($this->ivLength);
 
         $tag = '';
-        // FIX: Added missing AAD parameter (empty string) before tag_length
-        $encrypted = openssl_encrypt($serialized, $this->cipher, $this->encryptionKey, OPENSSL_RAW_DATA, $iv, $tag, '', $this->tagLength);
+        $encrypted = openssl_encrypt(
+            $serialized,
+            $this->cipher,
+            $this->encryptionKey,
+            OPENSSL_RAW_DATA,
+            $iv,
+            $tag,
+            '',
+            $this->tagLength
+        );
 
         if (false === $encrypted) {
             throw SecurityException::encryptionFailed('data');

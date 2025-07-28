@@ -9,6 +9,7 @@ use KaririCode\Cache\Driver\Memcached\Component\MemcachedErrorHandler;
 use KaririCode\Cache\Driver\Memcached\Config\MemcachedConfig;
 use KaririCode\Cache\Validation\Trait\CacheKeyValidationTrait;
 use KaririCode\Cache\Validation\Trait\TagValidationTrait;
+use KaririCode\Cache\ValueObject\Tag;
 
 /**
  * Handles tag-based cache operations for Memcached.
@@ -36,81 +37,96 @@ final class MemcachedTagOperations
     }
 
     /**
-     * @param array<string> $tags
+     * Sets a cache item with associated tags.
+     *
+     * @param array<string|Tag> $tags MUDANÇA: era array<string>, agora híbrido
      */
-    public function setWithTags(string $key, mixed $value, array $tags, ?\DateTimeInterface $expiration = null): bool
-    {
+    public function setWithTags(
+        string $key,
+        mixed $value,
+        array $tags,
+        ?\DateTimeInterface $expiration = null
+    ): bool {
+        $this->validateKey($key);
+
+        $normalizedTags = $this->validateAndNormalizeTags($tags);
+
         if (!$this->crudOperations->set($key, $value, $expiration)) {
             return false;
         }
 
-        $this->tagItem($key, $tags);
+        $this->tagItem($key, $normalizedTags);
 
         return true;
     }
 
     /**
-     * @param array<string> $tags
+     * @param array<string|Tag> $tags
      */
     public function invalidateTags(array $tags): bool
     {
-        $this->validateTagStrings($tags);
-        if (empty($tags)) {
-            return true;
-        }
+        $normalizedTags = $this->validateAndNormalizeTags($tags);
 
         return (bool) $this->errorHandler->executeWithRetry(
-            fn () => $this->performInvalidateTags($tags),
+            fn () => $this->performInvalidateTags($normalizedTags),
             $this->connectionManager,
             'invalidateTags'
         );
     }
 
     /**
-     * @param array<string> $tags
+     * @param array<string|Tag> $tags
      *
      * @return array<string, mixed>
      */
     public function getByTags(array $tags): array
     {
-        $this->validateTagStrings($tags);
-        if (empty($tags)) {
-            return [];
-        }
+        $normalizedTags = $this->validateAndNormalizeTags($tags);
 
-        $keys = $this->getKeysForTags($tags);
+        $keys = $this->getKeysForTags($normalizedTags);
         if (empty($keys)) {
             return [];
         }
 
-        // Fetch the items for the intersected keys.
         return $this->batchOperations->getMultiple($keys);
     }
 
     /**
-     * @return array<string>
+     * @return array<Tag>
      */
     public function getTags(): array
     {
-        // WARNING: This is a very inefficient operation on Memcached and should be used with caution in production.
         $allKeys = $this->memcached->getAllKeys();
         if (false === $allKeys) {
             return [];
         }
 
         $prefix = $this->config->keyPrefix;
-        $tagKeys = preg_grep('/^' . preg_quote($prefix, '/') . '(?!' . self::TAG_INDEX_PREFIX . ').*/', $allKeys);
+        $tagKeys = array_filter($allKeys, fn ($key) => str_starts_with($key, $prefix . self::TAG_INDEX_PREFIX));
 
-        return $tagKeys ? array_values(array_map(fn ($key) => str_replace($prefix, '', $key), $tagKeys)) : [];
+        $tags = [];
+        foreach ($tagKeys as $tagKey) {
+            $tagName = substr($tagKey, strlen($prefix . self::TAG_INDEX_PREFIX));
+            if (false !== $this->memcached->get($tagKey)) {
+                try {
+                    $tags[] = new Tag($tagName);
+                } catch (\Throwable) {
+                    // Skip invalid tags
+                    continue;
+                }
+            }
+        }
+
+        return $tags;
     }
 
     /**
-     * @param array<string> $tags
+     * @param array<Tag> $tags MUDANÇA: Agora sempre Tag objects
      */
     private function tagItem(string $key, array $tags): void
     {
         $this->validateKey($key);
-        $this->validateTagStrings($tags);
+        $this->validateTags($tags);
 
         $this->errorHandler->executeWithRetry(
             fn () => $this->performTagItem($key, $tags),
@@ -121,16 +137,16 @@ final class MemcachedTagOperations
     }
 
     /**
-     * @param array<string> $tags
+     * @param string $key the cache key
+     * @param Tag[] $tags an array of tag strings
      */
     private function performTagItem(string $key, array $tags): void
     {
         $tagIndexKey = $this->getTagIndexKey($key);
-        // Store an index of which tags this key belongs to. Expires with the item itself (logic managed by higher layers).
         $this->memcached->set($tagIndexKey, $tags, 0);
 
         foreach ($tags as $tag) {
-            $tagKey = $this->config->keyPrefix . $tag;
+            $tagKey = $this->config->keyPrefix . (string) $tag;
 
             $result = $this->memcached->get($tagKey, null, \Memcached::GET_EXTENDED);
 
@@ -157,25 +173,25 @@ final class MemcachedTagOperations
         }
     }
 
-    /**
-     * @param array<string> $tags
-     */
     private function performInvalidateTags(array $tags): bool
     {
-        $tagKeys = array_map(fn (string $tag) => $this->config->keyPrefix . $tag, $tags);
+        $tagKeys = array_map(
+            fn (Tag $tag): string => $this->config->keyPrefix . (string) $tag,
+            $tags
+        );
+
         $this->memcached->deleteMulti($tagKeys);
 
         return true;
     }
 
-    /**
-     * @param array<string> $tags
-     *
-     * @return array<string>
-     */
     private function getKeysForTags(array $tags): array
     {
-        $tagKeys = array_map(fn (string $tag) => $this->config->keyPrefix . $tag, $tags);
+        $tagKeys = array_map(
+            fn (Tag $tag): string => $this->config->keyPrefix . (string) $tag,
+            $tags
+        );
+
         $itemsByTag = $this->memcached->getMulti($tagKeys);
 
         if (empty($itemsByTag)) {

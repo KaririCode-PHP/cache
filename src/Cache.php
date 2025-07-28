@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache;
 
+use KaririCode\Cache\Config\CacheConfig;
 use KaririCode\Cache\Contract\Cache as CacheContract;
 use KaririCode\Cache\Contract\CacheSerializer;
 use KaririCode\Cache\Contract\LayeredCache as LayeredCacheContract;
@@ -33,24 +34,23 @@ final class Cache implements CacheContract
     private readonly TaggedCacheOperations $taggedOperations;
     private readonly TopicCacheOperations $topicOperations;
     private readonly AdvancedCacheOperations $advancedOperations;
-    private readonly string $name;
 
     /**
      * @param LayeredCacheContract $layeredCache the underlying layered cache pool
+     * @param CacheConfig $config the cache configuration
      * @param CacheSerializer|null $serializer the serializer for cache values
      * @param LoggerInterface|null $logger a PSR-3 logger
      * @param EventDispatcherInterface|null $eventDispatcher a PSR-14 event dispatcher
-     * @param array<string, mixed> $config the cache configuration array
      */
     public function __construct(
         LayeredCacheContract $layeredCache,
+        CacheConfig $config,
         ?CacheSerializer $serializer = null,
         ?LoggerInterface $logger = null,
         ?EventDispatcherInterface $eventDispatcher = null,
-        array $config = []
+        private readonly string $name = 'default'
     ) {
         $logger = $logger ?? new NullLogger();
-        $this->name = (string) ($config['name'] ?? 'default');
 
         $this->basicOperations = new BasicCacheOperations(
             $layeredCache,
@@ -151,6 +151,11 @@ final class Cache implements CacheContract
         return $this->taggedOperations->setWithTags($key, $value, $tags, $ttl);
     }
 
+    /**
+     * @param Tag[] $tags an array of Tag objects
+     *
+     * @return bool true if the tags were successfully invalidated, false otherwise
+     */
     public function invalidateTags(array $tags): bool
     {
         $this->validateTags($tags);
@@ -158,10 +163,12 @@ final class Cache implements CacheContract
         return $this->taggedOperations->invalidateTags($tags);
     }
 
+    /**
+     * @param Tag[] $tags
+     */
     public function getByTags(array $tags): array
     {
-        $tagObjects = array_map(fn ($tag) => new Tag($tag), $tags);
-        $this->validateTags($tagObjects);
+        $this->validateTags($tags);
 
         return $this->taggedOperations->getByTags($tags);
     }

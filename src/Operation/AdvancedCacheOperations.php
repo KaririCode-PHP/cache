@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Operation;
 
+use KaririCode\Cache\Config\CacheConfig;
 use KaririCode\Cache\Contract\Behavioral\Maintainable;
 use KaririCode\Cache\Contract\CacheItem;
 use KaririCode\Cache\Contract\CacheSerializer;
@@ -37,27 +38,24 @@ final class AdvancedCacheOperations
      * @param CacheSerializer|null $serializer the serializer for cache values
      * @param LoggerInterface $logger a PSR-3 logger instance
      * @param EventDispatcherInterface|null $eventDispatcher a PSR-14 event dispatcher
-     * @param array<string, mixed> $config the cache configuration array
+     * @param CacheConfig $config the cache configuration
      */
     public function __construct(
         private readonly LayeredCacheContract $layeredCache,
         ?CacheSerializer $serializer,
         private readonly LoggerInterface $logger,
         private readonly ?EventDispatcherInterface $eventDispatcher,
-        array $config = []
+        CacheConfig $config
     ) {
         $this->serializer = $serializer ?? new NativeSerializer();
         $this->metricsCollector = new MetricsCollector();
 
-        $stampedeConfig = $config['stampede_protection'] ?? [];
-        if (!is_array($stampedeConfig)) {
-            $stampedeConfig = [];
-        }
+        $features = $config->getFeatureConfig();
 
         $this->stampedeProtector = new StampedeProtector(
-            (bool) ($stampedeConfig['enabled'] ?? true),
-            (int) ($stampedeConfig['lock_timeout'] ?? 10),
-            (int) ($stampedeConfig['lock_retry_delay'] ?? 100)
+            $features->stampedeProtection,
+            $config->get('stampede_lock_timeout', 10),
+            $config->get('stampede_lock_retry_delay', 100)
         );
     }
 

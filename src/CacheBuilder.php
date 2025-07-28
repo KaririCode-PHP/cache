@@ -7,6 +7,7 @@ namespace KaririCode\Cache;
 use KaririCode\Cache\Config\CacheConfig;
 use KaririCode\Cache\Config\DTO\FeatureConfig;
 use KaririCode\Cache\Config\DTO\StoreConfig;
+use KaririCode\Cache\Contract\Cache as CacheContract;
 use KaririCode\Cache\Contract\CacheSerializer;
 use KaririCode\Cache\Contract\LayeredCache;
 use KaririCode\Cache\Contract\MetricsCollector as MetricsCollectorContract;
@@ -35,6 +36,7 @@ final class CacheBuilder
     /** @var array<int, array{driver: string, config: array<string, mixed>, priority: int}> */
     private array $layers = [];
 
+    private string $storeName = 'default';
     private CacheSerializer $serializer;
     private LoggerInterface $logger;
     private ?StampedeProtectorContract $stampedeProtector = null;
@@ -64,6 +66,7 @@ final class CacheBuilder
      */
     public function configureFromStore(string $storeName): self
     {
+        $this->storeName = $storeName;
         $storeConfig = $this->config->getStore($storeName);
         $this->setupFromStoreConfig($storeConfig);
 
@@ -198,17 +201,18 @@ final class CacheBuilder
      *
      * @throws ConfigurationException if the configuration is invalid or a layer fails to build
      */
-    public function build(): Cache
+    public function build(): CacheContract
     {
         $this->validateConfiguration();
         $layeredCache = $this->buildLayeredCache();
 
         return new Cache(
             $layeredCache,
+            $this->config,
             $this->serializer,
             $this->logger,
             $this->eventDispatcher,
-            $this->buildEffectiveConfig()
+            $this->storeName
         );
     }
 
@@ -241,8 +245,12 @@ final class CacheBuilder
             $this->serializer = $this->createSerializerFromConfig();
         }
 
-        $features = $this->config->getFeatureConfig();
-        $this->applyFeatureBasedDefaults($features);
+        $baseFeatures = $this->config->getFeatureConfig()->toArray();
+
+        $effectiveFeaturesArray = array_merge($baseFeatures, $this->featureOverrides);
+
+        $effectiveFeatures = FeatureConfig::fromArray($effectiveFeaturesArray);
+        $this->applyFeatureBasedDefaults($effectiveFeatures);
     }
 
     private function applyFeatureBasedDefaults(FeatureConfig $features): void
@@ -275,25 +283,6 @@ final class CacheBuilder
             ),
             default => new NativeSerializer(),
         };
-    }
-
-    /**
-     * @return array<string, mixed>
-     */
-    private function buildEffectiveConfig(): array
-    {
-        $features = $this->config->getFeatureConfig()->toArray();
-        $mergedFeatures = array_merge($features, $this->featureOverrides);
-
-        return [
-            'name' => $this->config->getDefaultStore(),
-            'features' => $mergedFeatures,
-            'stampede_protection' => [
-                'enabled' => $mergedFeatures['stampede_protection'],
-                'lock_timeout' => $this->config->get('stampede_lock_timeout', 10),
-                'lock_retry_delay' => $this->config->get('stampede_lock_retry_delay', 100),
-            ],
-        ];
     }
 
     private function buildLayeredCache(): LayeredCache

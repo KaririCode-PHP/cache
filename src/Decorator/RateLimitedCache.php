@@ -195,9 +195,6 @@ final class RateLimitedCache implements Cache
         return $this->cache->getByTags($tags);
     }
 
-    /**
-     * @return string[]
-     */
     public function getTags(): array
     {
         if (!$this->isAllowed()) {

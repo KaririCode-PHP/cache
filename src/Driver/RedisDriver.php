@@ -17,6 +17,7 @@ use KaririCode\Cache\Driver\Redis\Operation\RedisBatchOperations;
 use KaririCode\Cache\Driver\Redis\Operation\RedisCrudOperations;
 use KaririCode\Cache\Driver\Redis\Operation\RedisTagOperations;
 use KaririCode\Cache\Driver\Redis\Operation\RedisTopicOperations;
+use KaririCode\Cache\ValueObject\Tag;
 
 /**
  * Acts as a Facade for all Redis operations.
@@ -106,18 +107,38 @@ final class RedisDriver implements
 
     // --- Tagging Operations ---
 
+    /**
+     * Sets a cache item with associated tags.
+     *
+     * @param string $key the cache item key
+     * @param mixed $value the value to store in the cache
+     * @param Tag[] $tags the tags to associate with the cache item
+     * @param \DateInterval|int|null $ttl the time-to-live for the cache item, or null for no expiration
+     *
+     * @return bool true on success, false on failure
+     */
     public function setWithTags(string $key, mixed $value, array $tags, \DateInterval|int|null $ttl = null): bool
     {
-        $tagStrings = array_map('strval', $tags);
-
-        return $this->tagOperations->setWithTags($key, $value, $tagStrings, $ttl);
+        return $this->tagOperations->setWithTags($key, $value, $tags, $ttl);
     }
 
+    /**
+     * Invalidates all cache items associated with one or more specified tags.
+     *
+     * @param Tag[] $tags the tags to invalidate
+     *
+     * @return bool true on success, false on failure
+     */
     public function invalidateTags(array $tags): bool
     {
         return $this->tagOperations->invalidateTags($tags);
     }
 
+    /**
+     * @param Tag[] $tags an array of Tag objects
+     *
+     * @return array <string, mixed> an array of cache items indexed by their keys
+     */
     public function getByTags(array $tags): array
     {
         return $this->tagOperations->getByTags($tags);

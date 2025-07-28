@@ -15,8 +15,8 @@ use KaririCode\Cache\Driver\Memcached\Operation\MemcachedAtomicOperations;
 use KaririCode\Cache\Driver\Memcached\Operation\MemcachedBatchOperations;
 use KaririCode\Cache\Driver\Memcached\Operation\MemcachedCrudOperations;
 use KaririCode\Cache\Driver\Memcached\Operation\MemcachedTagOperations;
-// FIX: Import the trait to use it.
 use KaririCode\Cache\Validation\Trait\ExpirationManagementTrait;
+use KaririCode\Cache\ValueObject\Tag;
 
 /**
  * Acts as a Facade for all Memcached operations, delegating to specialized handlers.
@@ -74,7 +74,6 @@ final class MemcachedDriver implements
 
     public function setMultiple(array $values, ?\DateTimeInterface $expiration = null): bool
     {
-        // NOTE: This signature is also correct.
         return $this->batchOperations->setMultiple($values, $expiration);
     }
 
@@ -100,21 +99,36 @@ final class MemcachedDriver implements
     }
 
     // --- Tagging Operations (Implementing TaggableCacheDriver) ---
+    /**
+     * @param string $key the cache key
+     * @param mixed $value the value to cache
+     * @param Tag[] $tags an array of Tag objects*
+     * @param \DateInterval|int|null $ttl the time-to-live for the cache item, can be an int (seconds), DateInterval, or null
+     *
+     * @return bool true if the item was successfully cached, false otherwise
+     */
     public function setWithTags(string $key, mixed $value, array $tags, \DateInterval|int|null $ttl = null): bool
     {
-        // FIX 1: Convert Tag objects to strings.
-        $tagStrings = array_map('strval', $tags);
-        // FIX 2: Convert TTL to a DateTimeInterface object.
         $expiration = $this->calculateExpiration($ttl);
 
-        return $this->tagOperations->setWithTags($key, $value, $tagStrings, $expiration);
+        return $this->tagOperations->setWithTags($key, $value, $tags, $expiration);
     }
 
+    /**
+     * @param Tag[] $tags an array of Tag objects
+     *
+     * @return bool true if the tags were successfully invalidated, false otherwise
+     */
     public function invalidateTags(array $tags): bool
     {
         return $this->tagOperations->invalidateTags($tags);
     }
 
+    /**
+     * @param Tag[] $tags an array of Tag objects
+     *
+     * @return array <string, mixed> an array of cache items indexed by their keys
+     */
     public function getByTags(array $tags): array
     {
         return $this->tagOperations->getByTags($tags);

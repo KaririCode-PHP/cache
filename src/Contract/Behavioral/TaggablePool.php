@@ -7,7 +7,7 @@ namespace KaririCode\Cache\Contract\Behavioral;
 use KaririCode\Cache\ValueObject\Tag;
 
 /**
- * Defines the contract for a cache pool that supports tag-based operations.
+ * Contract for a cache pool supporting tag-based operations.
  *
  * @category  Cache
  *
@@ -19,27 +19,27 @@ use KaririCode\Cache\ValueObject\Tag;
 interface TaggablePool
 {
     /**
-     * Invalidates all cache items associated with the specified tags.
+     * Invalidates all cache items associated with the given tags.
      *
-     * @param Tag[] $tags the tags to invalidate
+     * @param array<string|Tag> $tags Tags to invalidate (can be strings or Tag objects)
      *
-     * @return bool true on success, false on failure
+     * @return bool True on success, false on failure
      */
     public function invalidateTags(array $tags): bool;
 
     /**
-     * Retrieves cache items by their associated tags.
+     * Retrieves cache items associated with the given tags.
      *
-     * @param array $tags the tags to search for
+     * @param array<string|Tag> $tags Tags to search for (can be strings or Tag objects)
      *
-     * @return array<string, mixed> array of cache items indexed by their keys
+     * @return array<string, mixed> Cache items indexed by their keys
      */
     public function getByTags(array $tags): array;
 
     /**
-     * Lists all tags currently in use.
+     * Returns all tags currently in use in the cache pool.
      *
-     * @return array<string> an array of tag names
+     * @return array<Tag> Array of Tag objects
      */
     public function getTags(): array;
 }

@@ -10,7 +10,7 @@ use KaririCode\Cache\Contract\CacheDriver;
 use KaririCode\Cache\Contract\DriverStats;
 use KaririCode\Cache\Contract\TaggableCacheDriver;
 use KaririCode\Cache\Contract\TopicAwareCacheDriver;
-use KaririCode\Cache\Validation\Trait\ExpirationCalculatorTrait;
+use KaririCode\Cache\Validation\Trait\ExpirationManagementTrait;
 
 /**
  * A decorator that provides safe fallbacks for drivers without specific capabilities.
@@ -23,7 +23,7 @@ final class CapabilityAwareDriver implements
     TaggableCacheDriver,
     TopicAwareCacheDriver
 {
-    use ExpirationCalculatorTrait;
+    use ExpirationManagementTrait;
 
     /** @var array<string, bool> */
     private array $capabilities = [];
@@ -118,9 +118,6 @@ final class CapabilityAwareDriver implements
         return true;
     }
 
-    /**
-     * @return array<string, mixed>
-     */
     public function getByTags(array $tags): array
     {
         if ($this->hasCapability(CacheCapabilities::TAGGING) && $this->driver instanceof TaggableCacheDriver) {
@@ -130,9 +127,6 @@ final class CapabilityAwareDriver implements
         return [];
     }
 
-    /**
-     * @return string[]
-     */
     public function getTags(): array
     {
         if ($this->hasCapability(CacheCapabilities::TAGGING) && $this->driver instanceof TaggableCacheDriver) {

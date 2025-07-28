@@ -25,7 +25,7 @@ interface TaggableCacheDriver extends CacheDriver
      *
      * @param string $key the cache item key
      * @param mixed $value the value to store
-     * @param Tag[] $tags an array of Tag objects
+     * @param list<string|Tag> $tags an array of Tag objects to invalidate
      * @param \DateInterval|int|null $ttl the Time To Live for the item
      *
      * @return bool true on success, false on failure
@@ -35,25 +35,20 @@ interface TaggableCacheDriver extends CacheDriver
     /**
      * Retrieves all cache items associated with the given tags.
      *
-     * @param array<string> $tags an array of tag strings
+     * @param list<string|Tag> $tags an array of Tag objects to invalidate
      *
-     * @return array<string, mixed> an associative array of key => value pairs
+     * @return array <string, mixed> an array of cache items indexed by their keys
      */
     public function getByTags(array $tags): array;
 
     /**
      * Invalidates all cache items associated with one or more specified tags.
      *
-     * @param array<string> $tags the tags to invalidate
+     * @param list<string|Tag> $tags an array of Tag objects to invalidate
      *
      * @return bool true on success, false on failure
      */
     public function invalidateTags(array $tags): bool;
 
-    /**
-     * Gets all tags currently in use by the driver.
-     *
-     * @return string[] an array of tag names
-     */
     public function getTags(): array;
 }

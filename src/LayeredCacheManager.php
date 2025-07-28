@@ -12,6 +12,7 @@ use KaririCode\Cache\Contract\CacheItem as CacheItemContract;
 use KaririCode\Cache\Contract\CacheItemPool;
 use KaririCode\Cache\Contract\LayeredCache;
 use KaririCode\Cache\Item\CacheItem;
+use KaririCode\Cache\ValueObject\Tag;
 use Psr\Cache\CacheItemInterface;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
@@ -245,6 +246,11 @@ final class LayeredCacheManager implements LayeredCache
         return false;
     }
 
+    /**
+     * @param Tag[] $tags an array of Tag objects
+     *
+     * @return bool true if the tags were successfully invalidated, false otherwise
+     */
     public function invalidateTags(array $tags): bool
     {
         $success = true;
@@ -257,6 +263,11 @@ final class LayeredCacheManager implements LayeredCache
         return $success;
     }
 
+    /**
+     * @param Tag[] $tags an array of Tag objects
+     *
+     * @return array <string, mixed> an array of cache items indexed by their keys
+     */
     public function getByTags(array $tags): array
     {
         // Get from the highest-priority taggable layer

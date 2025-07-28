@@ -25,12 +25,17 @@ interface Taggable extends TaggablePool
     /**
      * Associates cache item with tags for grouped invalidation.
      *
-     * @param string $key the unique cache key
-     * @param mixed $value the value to cache
-     * @param Tag[] $tags the tags to associate with this item
-     * @param \DateInterval|int|null $ttl the time-to-live for the item
+     * @param string $key The unique cache key
+     * @param mixed $value The value to cache
+     * @param array<string|Tag> $tags Tags to associate (HÍBRIDO)
+     * @param \DateInterval|int|null $ttl The time-to-live for the item
      *
      * @return bool true on success, false on failure
      */
-    public function setWithTags(string $key, mixed $value, array $tags, \DateInterval|int|null $ttl = null): bool;
+    public function setWithTags(
+        string $key,
+        mixed $value,
+        array $tags,
+        \DateInterval|int|null $ttl = null
+    ): bool;
 }

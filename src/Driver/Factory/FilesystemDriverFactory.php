@@ -11,6 +11,7 @@ use KaririCode\Cache\Driver\Filesystem\Cache\FileSystemCacheOperations;
 use KaririCode\Cache\Driver\Filesystem\Directory\DirectoryManager;
 use KaririCode\Cache\Driver\Filesystem\Expiration\ExpirationManager;
 use KaririCode\Cache\Driver\Filesystem\File\FileManager;
+use KaririCode\Cache\Driver\Filesystem\Operation\FilesystemTagOperations;
 use KaririCode\Cache\Driver\Filesystem\Serialization\SerializationManager;
 use KaririCode\Cache\Driver\Filesystem\Statistics\FileSystemStatistics;
 use KaririCode\Cache\Driver\Filesystem\Validation\FileSystemValidator;
@@ -50,9 +51,18 @@ final class FilesystemDriverFactory implements CacheDriverFactory
             (int) ($options['directory_levels'] ?? 2)
         );
 
+        $tagOperations = new FilesystemTagOperations(
+            $fileManager,
+            $directoryManager,
+            $serializer,
+            $logger,
+            $keyPrefix
+        );
+
         return new FilesystemDriver(
             $directoryManager,
             $cacheOperations,
+            $tagOperations,
             $statistics,
             $validator,
             $logger

@@ -5,31 +5,61 @@ declare(strict_types=1);
 namespace KaririCode\Cache\Driver;
 
 use KaririCode\Cache\Contract\Behavioral\Maintainable;
+use KaririCode\Cache\Contract\CacheCapabilities;
 use KaririCode\Cache\Contract\CacheDriver;
 use KaririCode\Cache\Contract\DriverStats;
 use KaririCode\Cache\Contract\Filesystem\DirectoryManager;
 use KaririCode\Cache\Contract\Filesystem\FileSystemStatistics;
 use KaririCode\Cache\Contract\Filesystem\FileSystemValidator;
+use KaririCode\Cache\Contract\TaggableCacheDriver;
 use KaririCode\Cache\Driver\Filesystem\Cache\FileSystemCacheOperations;
+use KaririCode\Cache\Driver\Filesystem\Operation\FilesystemTagOperations;
 use KaririCode\Cache\ValueObject\MetricsSnapshot;
+use KaririCode\Cache\ValueObject\Tag;
 use Psr\Log\LoggerInterface;
 
 /**
- * A filesystem-based cache driver designed with SOLID principles.
- * It coordinates operations between specialized components for file management,
- * validation, statistics, and directory handling.
+ * Enhanced filesystem-based cache driver with tag support.
+ *
+ * This driver has been extended to support tag-based cache operations
+ * while maintaining the existing filesystem architecture. It demonstrates
+ * how the filesystem driver can be enhanced to match the capabilities
+ * of other drivers in the system.
+ *
+ * Key enhancements:
+ * - Implements TaggableCacheDriver interface
+ * - Delegates tag operations to FilesystemTagOperations
+ * - Maintains architectural consistency with other drivers
+ * - Preserves existing filesystem optimizations
+ *
+ * @category  Cache
+ *
+ * @author    Walmir Silva <walmir.silva@kariricode.org>
+ * @license   MIT
+ *
+ * @see      https://kariricode.org/
+ * @see       FilesystemTagOperations for tag-specific operations
+ * @see       FileSystemCacheOperations for basic cache operations
  */
-final class FilesystemDriver implements CacheDriver, Maintainable
+final class FilesystemDriver implements
+    CacheDriver,
+    Maintainable,
+    TaggableCacheDriver
 {
     public function __construct(
         private readonly DirectoryManager $directoryManager,
         private readonly FileSystemCacheOperations $cacheOperations,
+        private readonly FilesystemTagOperations $tagOperations,
         private readonly FileSystemStatistics $statistics,
         private readonly FileSystemValidator $validator,
         private readonly LoggerInterface $logger
     ) {
-        $this->logger->info('FilesystemDriver initialized with SOLID architecture');
+        $this->logger->info('Enhanced FilesystemDriver initialized with tag support');
     }
+
+    // ========================================================================
+    // Basic Cache Operations (Existing Implementation)
+    // ========================================================================
 
     public function get(string $key): mixed
     {
@@ -41,7 +71,10 @@ final class FilesystemDriver implements CacheDriver, Maintainable
 
             return $result;
         } catch (\Throwable $e) {
-            $this->logger->error('Failed to get cache item', ['key' => $key, 'error' => $e->getMessage()]);
+            $this->logger->error('Failed to get cache item', [
+                'key' => $key,
+                'error' => $e->getMessage(),
+            ]);
             throw $e;
         }
     }
@@ -57,23 +90,25 @@ final class FilesystemDriver implements CacheDriver, Maintainable
 
             return $result;
         } catch (\Throwable $e) {
-            $this->logger->error('Failed to set cache item', ['key' => $key, 'error' => $e->getMessage()]);
-
-            return false;
+            $this->logger->error('Failed to set cache item', [
+                'key' => $key,
+                'error' => $e->getMessage(),
+            ]);
+            throw $e;
         }
     }
 
     public function has(string $key): bool
     {
-        $startTime = microtime(true);
         try {
             $this->validator->validateKey($key);
-            $result = $this->cacheOperations->has($key);
-            $this->statistics->recordOperation('has', microtime(true) - $startTime);
 
-            return $result;
+            return $this->cacheOperations->has($key);
         } catch (\Throwable $e) {
-            $this->logger->error('Failed to check cache item', ['key' => $key, 'error' => $e->getMessage()]);
+            $this->logger->error('Failed to check cache item existence', [
+                'key' => $key,
+                'error' => $e->getMessage(),
+            ]);
 
             return false;
         }
@@ -81,15 +116,15 @@ final class FilesystemDriver implements CacheDriver, Maintainable
 
     public function delete(string $key): bool
     {
-        $startTime = microtime(true);
         try {
             $this->validator->validateKey($key);
-            $result = $this->cacheOperations->delete($key);
-            $this->statistics->recordOperation('delete', microtime(true) - $startTime);
 
-            return $result;
+            return $this->cacheOperations->delete($key);
         } catch (\Throwable $e) {
-            $this->logger->error('Failed to delete cache item', ['key' => $key, 'error' => $e->getMessage()]);
+            $this->logger->error('Failed to delete cache item', [
+                'key' => $key,
+                'error' => $e->getMessage(),
+            ]);
 
             return false;
         }
@@ -97,18 +132,20 @@ final class FilesystemDriver implements CacheDriver, Maintainable
 
     public function clear(): bool
     {
-        $startTime = microtime(true);
         try {
-            $result = $this->directoryManager->clear();
-            $this->statistics->recordOperation('clear', microtime(true) - $startTime);
-
-            return $result;
+            return $this->directoryManager->clear();
         } catch (\Throwable $e) {
-            $this->logger->error('Failed to clear cache', ['error' => $e->getMessage()]);
+            $this->logger->error('Failed to clear cache', [
+                'error' => $e->getMessage(),
+            ]);
 
             return false;
         }
     }
+
+    // ========================================================================
+    // Batch Operations (Existing Implementation)
+    // ========================================================================
 
     public function getMultiple(array $keys): array
     {
@@ -144,45 +181,104 @@ final class FilesystemDriver implements CacheDriver, Maintainable
         return $success;
     }
 
+    // ========================================================================
+    // Tag Operations (NEW - Delegated to FilesystemTagOperations)
+    // ========================================================================
+
+    /**
+     * Sets a cache item with associated tags.
+     *
+     * @param string $key The cache key
+     * @param mixed $value The value to store
+     * @param array<string|Tag> $tags Array of tags (strings or Tag objects)
+     * @param \DateInterval|int|null $ttl Time to live
+     *
+     * @return bool True on success, false on failure
+     */
+    public function setWithTags(string $key, mixed $value, array $tags, \DateInterval|int|null $ttl = null): bool
+    {
+        return $this->tagOperations->setWithTags($key, $value, $tags, $ttl);
+    }
+
+    /**
+     * Invalidates all cache items associated with the given tags.
+     *
+     * @param array<Tag> $tags Array of Tag objects to invalidate
+     *
+     * @return bool True if tags were successfully invalidated, false otherwise
+     */
+    public function invalidateTags(array $tags): bool
+    {
+        return $this->tagOperations->invalidateTags($tags);
+    }
+
+    /**
+     * Retrieves all cache items associated with the given tags.
+     *
+     * @param array<Tag> $tags Array of Tag objects
+     *
+     * @return array<string, mixed> Array of cache items indexed by their keys
+     */
+    public function getByTags(array $tags): array
+    {
+        return $this->tagOperations->getByTags($tags);
+    }
+
+    /**
+     * Gets all tags currently in use.
+     *
+     * @return array<string> Array of tag names
+     */
+    public function getTags(): array
+    {
+        return $this->tagOperations->getTags();
+    }
+
+    // ========================================================================
+    // Driver Information and Maintenance
+    // ========================================================================
+
     public function getCapabilities(): array
     {
-        return [];
+        return [
+            CacheCapabilities::TAGGING,
+        ];
     }
 
     public function getStats(): DriverStats
     {
-        $stats = $this->statistics->getStats();
+        $statsArray = $this->statistics->getStats();
 
         return new MetricsSnapshot(
             'Filesystem',
-            $stats['directory_size'],
-            $stats['file_count'],
-            phpversion(),
-            $stats
+            $statsArray['directory_size'],
+            $statsArray['file_count'],
+            null, // Filesystem driver does not have a specific version
+            $statsArray
         );
     }
 
-    /**
-     * Performs maintenance tasks, such as cleaning up expired cache files.
-     *
-     * @param array<string, mixed> $options driver-specific maintenance options
-     *
-     * @return bool true on success, false on failure
-     */
+    public function isHealthy(): bool
+    {
+        return $this->directoryManager->isWritable(
+            $this->directoryManager->getBaseDirectory()
+        );
+    }
+
     public function maintenance(array $options = []): bool
     {
-        $startTime = microtime(true);
-        $this->logger->info('Starting filesystem cache maintenance.');
         try {
+            // Perform basic cache cleanup
             $this->cacheOperations->performCleanup();
-            $duration = microtime(true) - $startTime;
-            $this->logger->info('Filesystem cache maintenance completed successfully.', [
-                'duration_ms' => round($duration * 1000, 2),
-            ]);
+
+            // Perform tag-specific cleanup
+            $this->tagOperations->performCleanup();
 
             return true;
         } catch (\Throwable $e) {
-            $this->logger->error('Filesystem cache maintenance failed.', ['error' => $e->getMessage()]);
+            $this->logger->error('Cache maintenance failed', [
+                'error' => $e->getMessage(),
+            ]);
 
             return false;
         }

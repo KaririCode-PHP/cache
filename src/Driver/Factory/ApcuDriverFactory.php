@@ -7,13 +7,21 @@ namespace KaririCode\Cache\Driver\Factory;
 use KaririCode\Cache\Contract\CacheDriver;
 use KaririCode\Cache\Contract\CacheDriverFactory;
 use KaririCode\Cache\Contract\DriverManager;
+use KaririCode\Cache\Driver\Apcu\Component\ApcuConnectionManager;
+use KaririCode\Cache\Driver\Apcu\Component\ApcuErrorHandler;
+use KaririCode\Cache\Driver\Apcu\Component\ApcuMaintenanceService;
+use KaririCode\Cache\Driver\Apcu\Component\ApcuMonitoringService;
+use KaririCode\Cache\Driver\Apcu\Config\ApcuConfig;
+use KaririCode\Cache\Driver\Apcu\Operation\ApcuAtomicOperations;
+use KaririCode\Cache\Driver\Apcu\Operation\ApcuBatchOperations;
+use KaririCode\Cache\Driver\Apcu\Operation\ApcuCrudOperations;
+use KaririCode\Cache\Driver\Apcu\Operation\ApcuTagOperations;
+use KaririCode\Cache\Driver\Apcu\Operation\ApcuTopicOperations;
 use KaririCode\Cache\Driver\ApcuDriver;
 use KaririCode\Cache\Exception\ConfigurationException;
+use Psr\Log\LoggerInterface;
+use Psr\Log\NullLogger;
 
-/**
- * Factory for creating ApcuDriver instances.
- * Validates that the APCu extension is available and configured.
- */
 final class ApcuDriverFactory implements CacheDriverFactory
 {
     private const REQUIRED_EXTENSION = 'apcu';
@@ -24,8 +32,35 @@ final class ApcuDriverFactory implements CacheDriverFactory
         $this->validateRuntime();
         $this->validateOptions($options);
 
+        $logger = $this->resolveLogger($options, $manager);
+        $config = ApcuConfig::fromArray($options);
+
+        // Build Core Components
+        $connectionManager = new ApcuConnectionManager($logger);
+        $connectionManager->ensureConnection();
+
+        $errorHandler = new ApcuErrorHandler($logger, $config->retryAttempts, $config->retryDelay);
+
+        // CORREÇÃO: Instanciar os dois serviços separadamente
+        $monitoringService = new ApcuMonitoringService($config->enableStatistics);
+        $maintenanceService = new ApcuMaintenanceService($logger);
+
+        // Build Operation Handlers
+        $crudOperations = new ApcuCrudOperations($config, $errorHandler, $monitoringService);
+        $batchOperations = new ApcuBatchOperations($config, $errorHandler, $monitoringService);
+        $atomicOperations = new ApcuAtomicOperations($config, $errorHandler, $monitoringService);
+        $tagOperations = new ApcuTagOperations($config, $errorHandler, $crudOperations);
+        $topicOperations = new ApcuTopicOperations($config, $errorHandler);
+
+        // CORREÇÃO: Passar o novo serviço de manutenção para o driver
         return new ApcuDriver(
-            $options['key_prefix'] ?? 'cache:'
+            $crudOperations,
+            $batchOperations,
+            $atomicOperations,
+            $tagOperations,
+            $topicOperations,
+            $monitoringService,
+            $maintenanceService // Adicionado
         );
     }
 
@@ -34,14 +69,23 @@ final class ApcuDriverFactory implements CacheDriverFactory
      */
     public function getSupportedOptions(): array
     {
-        return ['key_prefix'];
+        return [
+            'key_prefix',
+            'tag_prefix',
+            'topic_prefix',
+            'lock_timeout',
+            'enable_statistics',
+            'cleanup_probability',
+            'retry_attempts',
+            'retry_delay',
+            'logger',
+        ];
     }
 
     public function validateOptions(array $options): bool
     {
-        if (isset($options['key_prefix']) && !is_string($options['key_prefix'])) {
-            throw ConfigurationException::invalidConfiguration('apcu', 'key_prefix must be a string');
-        }
+        $config = ApcuConfig::fromArray($options);
+        $config->validate(); // The DTO now handles its own validation.
 
         return true;
     }
@@ -57,7 +101,7 @@ final class ApcuDriverFactory implements CacheDriverFactory
     }
 
     /**
-     * Validates runtime APCu configuration (php.ini settings).
+     * Validates runtime APCu configuration.
      */
     private function validateRuntime(): void
     {
@@ -68,5 +112,14 @@ final class ApcuDriverFactory implements CacheDriverFactory
         if (PHP_SAPI === 'cli' && !ini_get('apc.enable_cli')) {
             throw ConfigurationException::invalidConfiguration('apcu', 'APCu is not enabled for CLI (apc.enable_cli=0)');
         }
+    }
+
+    private function resolveLogger(array $options, DriverManager $manager): LoggerInterface
+    {
+        if (isset($options['logger']) && $options['logger'] instanceof LoggerInterface) {
+            return $options['logger'];
+        }
+
+        return new NullLogger();
     }
 }

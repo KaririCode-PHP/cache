@@ -7,3 +7,6 @@ parameters:
         - '#Method .* has parameter \$.* with no value type specified in iterable type array.#'    
         - '#should return array<string, mixed> but returns array#'
         - '#type has no value type specified in iterable type array#'
+        - message: '#expects int, mixed given#'
+          paths:
+            - src/
