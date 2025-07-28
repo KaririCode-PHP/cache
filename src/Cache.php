@@ -8,13 +8,11 @@ use KaririCode\Cache\Config\CacheConfig;
 use KaririCode\Cache\Contract\Cache as CacheContract;
 use KaririCode\Cache\Contract\CacheSerializer;
 use KaririCode\Cache\Contract\LayeredCache as LayeredCacheContract;
-use KaririCode\Cache\Exception\InvalidArgumentException;
 use KaririCode\Cache\Metrics\CacheMetrics;
 use KaririCode\Cache\Operation\AdvancedCacheOperations;
 use KaririCode\Cache\Operation\BasicCacheOperations;
 use KaririCode\Cache\Operation\TaggedCacheOperations;
 use KaririCode\Cache\Operation\TopicCacheOperations;
-use KaririCode\Cache\Validation\Trait\UnifiedCacheValidationTrait;
 use KaririCode\Cache\ValueObject\Tag;
 use Psr\EventDispatcher\EventDispatcherInterface;
 use Psr\Log\LoggerInterface;
@@ -28,12 +26,10 @@ use Psr\Log\NullLogger;
  */
 final class Cache implements CacheContract
 {
-    use UnifiedCacheValidationTrait;
-
-    private readonly BasicCacheOperations $basicOperations;
-    private readonly TaggedCacheOperations $taggedOperations;
-    private readonly TopicCacheOperations $topicOperations;
-    private readonly AdvancedCacheOperations $advancedOperations;
+    private readonly BasicCacheOperations $basic;
+    private readonly TaggedCacheOperations $tagged;
+    private readonly TopicCacheOperations $topic;
+    private readonly AdvancedCacheOperations $advanced;
 
     /**
      * @param LayeredCacheContract $layeredCache the underlying layered cache pool
@@ -52,26 +48,26 @@ final class Cache implements CacheContract
     ) {
         $logger = $logger ?? new NullLogger();
 
-        $this->basicOperations = new BasicCacheOperations(
+        $this->basic = new BasicCacheOperations(
             $layeredCache,
             $serializer,
             $logger,
             $eventDispatcher
         );
 
-        $this->taggedOperations = new TaggedCacheOperations(
+        $this->tagged = new TaggedCacheOperations(
             $layeredCache,
             $logger,
             $eventDispatcher
         );
 
-        $this->topicOperations = new TopicCacheOperations(
+        $this->topic = new TopicCacheOperations(
             $layeredCache,
             $logger,
             $eventDispatcher
         );
 
-        $this->advancedOperations = new AdvancedCacheOperations(
+        $this->advanced = new AdvancedCacheOperations(
             $layeredCache,
             $serializer,
             $logger,
@@ -84,71 +80,49 @@ final class Cache implements CacheContract
 
     public function get(string $key, mixed $default = null): mixed
     {
-        $this->validateKey($key);
-
-        return $this->basicOperations->get($key, $default);
+        return $this->basic->get($key, $default);
     }
 
     public function set(string $key, mixed $value, \DateInterval|int|null $ttl = null): bool
     {
-        $this->validateKey($key);
-        $this->validateTtl($ttl);
-
-        return $this->basicOperations->set($key, $value, $ttl);
+        return $this->basic->set($key, $value, $ttl);
     }
 
     public function delete(string $key): bool
     {
-        $this->validateKey($key);
-
-        return $this->basicOperations->delete($key);
+        return $this->basic->delete($key);
     }
 
     public function clear(): bool
     {
-        return $this->basicOperations->clear();
+        return $this->basic->clear();
     }
 
     public function has(string $key): bool
     {
-        $this->validateKey($key);
-
-        return $this->basicOperations->has($key);
+        return $this->basic->has($key);
     }
 
     public function getMultiple(iterable $keys, mixed $default = null): iterable
     {
-        $keysArray = is_array($keys) ? $keys : iterator_to_array($keys);
-        $this->validateKeys($keysArray);
-
-        return $this->basicOperations->getMultiple($keysArray, $default);
+        return $this->basic->getMultiple($keys, $default);
     }
 
     public function setMultiple(iterable $values, \DateInterval|int|null $ttl = null): bool
     {
-        $this->validateKeyValuePairs($values);
-        $this->validateTtl($ttl);
-
-        return $this->basicOperations->setMultiple($values, $ttl);
+        return $this->basic->setMultiple($values, $ttl);
     }
 
     public function deleteMultiple(iterable $keys): bool
     {
-        $keysArray = is_array($keys) ? $keys : iterator_to_array($keys);
-        $this->validateKeys($keysArray);
-
-        return $this->basicOperations->deleteMultiple($keysArray);
+        return $this->basic->deleteMultiple($keys);
     }
 
     // Tagged Cache Operations
 
     public function setWithTags(string $key, mixed $value, array $tags, \DateInterval|int|null $ttl = null): bool
     {
-        $this->validateKey($key);
-        $this->validateTags($tags);
-        $this->validateTtl($ttl);
-
-        return $this->taggedOperations->setWithTags($key, $value, $tags, $ttl);
+        return $this->tagged->setWithTags($key, $value, $tags, $ttl);
     }
 
     /**
@@ -158,9 +132,7 @@ final class Cache implements CacheContract
      */
     public function invalidateTags(array $tags): bool
     {
-        $this->validateTags($tags);
-
-        return $this->taggedOperations->invalidateTags($tags);
+        return $this->tagged->invalidateTags($tags);
     }
 
     /**
@@ -168,49 +140,39 @@ final class Cache implements CacheContract
      */
     public function getByTags(array $tags): array
     {
-        $this->validateTags($tags);
-
-        return $this->taggedOperations->getByTags($tags);
+        return $this->tagged->getByTags($tags);
     }
 
     public function getTags(): array
     {
-        return $this->taggedOperations->getAllTags();
+        return $this->tagged->getAllTags();
     }
 
     // Topic Cache Operations
 
     public function subscribeTo(string $key, array $topics): void
     {
-        $this->validateKey($key);
-        $this->validateTopics($topics);
-        $this->topicOperations->subscribeTo($key, $topics);
+        $this->topic->subscribeTo($key, $topics);
     }
 
     public function invalidateTopics(array $topics): bool
     {
-        $this->validateTopics($topics);
-
-        return $this->topicOperations->invalidateTopics($topics);
+        return $this->topic->invalidateTopics($topics);
     }
 
     public function unsubscribeFrom(string $key, array $topics): void
     {
-        $this->validateKey($key);
-        $this->validateTopics($topics);
-        $this->topicOperations->unsubscribeFrom($key, $topics);
+        $this->topic->unsubscribeFrom($key, $topics);
     }
 
     public function getSubscribedTopics(string $key): array
     {
-        $this->validateKey($key);
-
-        return $this->topicOperations->getSubscribedTopics($key);
+        return $this->topic->getSubscribedTopics($key);
     }
 
     public function getSubscribersForTopic(string $topic): array
     {
-        return $this->topicOperations->getSubscribersForTopic($topic);
+        return $this->topic->getSubscribersForTopic($topic);
     }
 
     // Advanced Cache Operations
@@ -218,70 +180,50 @@ final class Cache implements CacheContract
     public function getWithCallback(string $key, ?callable $callback = null, \DateInterval|int|null $ttl = null, array $tags = []): mixed
     {
         if (null === $callback) {
-            return $this->get($key);
+            return $this->basic->get($key);
         }
 
-        $this->validateKey($key);
-        $this->validateTtl($ttl);
-        if (!empty($tags)) {
-            $this->validateTags($tags);
-        }
-
-        return $this->advancedOperations->getWithCallback($key, $callback, $ttl, $tags);
+        return $this->advanced->getWithCallback($key, $callback, $ttl, $tags);
     }
 
     public function increment(string $key, int $step = 1, int $initialValue = 0, \DateInterval|int|null $ttl = null): int
     {
-        $this->validateKey($key);
-        $this->validateTtl($ttl);
-
-        return $this->advancedOperations->increment($key, $step, $initialValue, $ttl);
+        return $this->advanced->increment($key, $step, $initialValue, $ttl);
     }
 
     public function decrement(string $key, int $step = 1, int $initialValue = 0, \DateInterval|int|null $ttl = null): int
     {
-        $this->validateKey($key);
-        $this->validateTtl($ttl);
-
-        return $this->advancedOperations->decrement($key, $step, $initialValue, $ttl);
+        return $this->advanced->decrement($key, $step, $initialValue, $ttl);
     }
 
     public function add(string $key, mixed $value, \DateInterval|int|null $ttl = null): bool
     {
-        $this->validateKey($key);
-        $this->validateTtl($ttl);
-
-        return $this->advancedOperations->add($key, $value, $ttl);
+        return $this->advanced->add($key, $value, $ttl);
     }
 
     public function compareAndSwap(string $key, mixed $expected, mixed $value, \DateInterval|int|null $ttl = null): bool
     {
-        $this->validateKey($key);
-        $this->validateTtl($ttl);
-
-        return $this->advancedOperations->compareAndSwap($key, $expected, $value, $ttl);
+        return $this->advanced->compareAndSwap($key, $expected, $value, $ttl);
     }
 
     public function warm(array $data, \DateInterval|int|null $ttl = null): void
     {
-        $this->validateKeyValuePairs($data);
-        $this->validateTtl($ttl);
-        $this->advancedOperations->warmup($data, $ttl);
+        $this->advanced->warmup($data, $ttl);
     }
 
     public function maintenance(array $options = []): bool
     {
-        return $this->advancedOperations->maintenance($options);
+        return $this->advanced->maintenance($options);
     }
 
     public function getMetrics(): CacheMetrics
     {
-        return $this->advancedOperations->getMetrics();
+        return $this->advanced->getMetrics();
     }
 
     public function isHealthy(): bool
     {
-        $healthCheck = $this->advancedOperations->getHealthCheck();
+        $healthCheck = $this->advanced->getHealthCheck();
 
         return ($healthCheck['status'] ?? 'unhealthy') === 'healthy';
     }
@@ -289,29 +231,5 @@ final class Cache implements CacheContract
     public function getName(): string
     {
         return $this->name;
-    }
-
-    private function validateTtl(\DateInterval|int|null $ttl): void
-    {
-        if (null === $ttl) {
-            return;
-        }
-
-        if (is_int($ttl) && $ttl < 0) {
-            throw InvalidArgumentException::invalidTtl($ttl);
-        }
-    }
-
-    /**
-     * @param iterable<string, mixed> $values
-     */
-    private function validateKeyValuePairs(iterable $values): void
-    {
-        foreach ($values as $key => $value) {
-            if (!is_string($key)) {
-                throw InvalidArgumentException::invalidKeyFormat((string) $key);
-            }
-            $this->validateKey($key);
-        }
     }
 }

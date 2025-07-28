@@ -29,7 +29,6 @@ return [
     // =============================================================================
 
     'stores' => [
-
         // High-performance layered cache for production
         'layered' => [
             'driver' => 'layered',
@@ -340,6 +339,45 @@ return [
             'prefix' => 'compiled:',
             'default_ttl' => 86400, // 24 hours
         ],
+    ],
+
+
+    // =============================================================================
+    // SERIALIZATION CONFIGURATION
+    // =============================================================================
+
+    /**
+     * Define a lista de serializadores disponíveis e como construí-los.
+     * Isso permite adicionar novos serializadores sem alterar o código do CacheBuilder.
+     */
+    'serializers' => [
+        'native' => \KaririCode\Cache\Serializer\NativeSerializer::class,
+        'igbinary' => \KaririCode\Cache\Serializer\IgbinarySerializer::class,
+        'json' => \KaririCode\Cache\Serializer\JsonSerializer::class,
+        // Exemplo de um serializador decorado (Decorator Pattern)
+        'compressed' => [
+            'class' => \KaririCode\Cache\Serializer\CompressingSerializer::class,
+            'inner' => 'native', // O serializador que será comprimido
+        ],
+    ],
+
+    /**
+     * Define o serializador padrão a ser usado.
+     * O valor deve corresponder a uma das chaves no array 'serializers' acima.
+     */
+    'serializer' => env('CACHE_SERIALIZER', 'native'),
+
+    // =============================================================================
+    // FEATURE TOGGLES
+    // =============================================================================
+
+    'features' => [
+        'stampede_protection' => env('CACHE_STAMPEDE_PROTECTION', true),
+        'metrics_enabled' => env('CACHE_METRICS_ENABLED', true),
+        'sliding_expiration' => env('CACHE_SLIDING_EXPIRATION', false),
+        'events_enabled' => env('CACHE_EVENTS_ENABLED', true),
+        'psr14_events_enabled' => env('CACHE_PSR14_EVENTS_ENABLED', false),
+        'strict_validation' => env('CACHE_STRICT_VALIDATION', true),
     ],
 
     // =============================================================================

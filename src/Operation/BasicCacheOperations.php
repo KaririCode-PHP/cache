@@ -14,6 +14,9 @@ use KaririCode\Cache\Event\CacheSetEvent;
 use KaririCode\Cache\Exception\CacheException;
 use KaririCode\Cache\Metrics\MetricsCollector;
 use KaririCode\Cache\Serializer\NativeSerializer;
+use KaririCode\Cache\Validation\Trait\CacheKeyValidationTrait;
+use KaririCode\Cache\Validation\Trait\CacheValueValidationTrait;
+use KaririCode\Cache\Validation\Trait\TtlValidationTrait;
 use Psr\EventDispatcher\EventDispatcherInterface;
 use Psr\Log\LoggerInterface;
 
@@ -23,6 +26,10 @@ use Psr\Log\LoggerInterface;
  */
 final class BasicCacheOperations
 {
+    use CacheKeyValidationTrait;
+    use CacheValueValidationTrait;
+    use TtlValidationTrait;
+
     private readonly CacheSerializer $serializer;
     private MetricsCollector $metricsCollector;
 
@@ -54,6 +61,8 @@ final class BasicCacheOperations
      */
     public function get(string $key, mixed $default = null): mixed
     {
+        $this->validateKey($key);
+
         $startTime = microtime(true);
 
         try {
@@ -92,6 +101,10 @@ final class BasicCacheOperations
      */
     public function set(string $key, mixed $value, \DateInterval|int|null $ttl = null): bool
     {
+        $this->validateKey($key);
+        $this->validateValue($value);
+        $this->validateTtl($ttl);
+
         $startTime = microtime(true);
 
         try {
@@ -129,6 +142,8 @@ final class BasicCacheOperations
      */
     public function delete(string $key): bool
     {
+        $this->validateKey($key);
+
         $startTime = microtime(true);
 
         try {
@@ -194,13 +209,16 @@ final class BasicCacheOperations
     /**
      * Obtains multiple cache items by their unique keys.
      *
-     * @param string[] $keys a list of keys that can be obtained in a single operation
+     * @param iterable<string> $keys the list of keys to retrieve
      * @param mixed|null $default default value to return for keys that are not found
      *
      * @return array<string, mixed> a map of key => value pairs
      */
-    public function getMultiple(array $keys, mixed $default = null): iterable
+    public function getMultiple(iterable $keys, mixed $default = null): iterable
     {
+        $keysArray = is_array($keys) ? $keys : iterator_to_array($keys);
+        $this->validateKeys($keysArray);
+
         $results = [];
         foreach ($keys as $key) {
             $results[$key] = $this->get($key, $default);
@@ -219,6 +237,9 @@ final class BasicCacheOperations
      */
     public function setMultiple(iterable $values, \DateInterval|int|null $ttl = null): bool
     {
+        $this->validateMultipleValues(is_array($values) ? $values : iterator_to_array($values));
+        $this->validateTtl($ttl);
+
         $success = true;
         foreach ($values as $key => $value) {
             if (!$this->set((string) $key, $value, $ttl)) {
@@ -232,14 +253,15 @@ final class BasicCacheOperations
     /**
      * Deletes multiple cache items in a single operation.
      *
-     * @param string[] $keys the list of string-based keys to be deleted
+     * @param iterable<string> $keys the list of keys to delete
      *
      * @return bool True if all items were successfully removed. False if there was an error.
      */
-    public function deleteMultiple(array $keys): bool
+    public function deleteMultiple(iterable $keys): bool
     {
+        $keysArray = is_array($keys) ? $keys : iterator_to_array($keys);
         $success = true;
-        foreach ($keys as $key) {
+        foreach ($keysArray as $key) {
             if (!$this->delete($key)) {
                 $success = false;
             }

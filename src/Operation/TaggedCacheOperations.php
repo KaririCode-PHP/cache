@@ -10,7 +10,10 @@ use KaririCode\Cache\Event\CacheSetEvent;
 use KaririCode\Cache\Event\TagInvalidationEvent;
 use KaririCode\Cache\Exception\CacheException;
 use KaririCode\Cache\Operation\Factory\TagNormalizer;
+use KaririCode\Cache\Validation\Trait\CacheKeyValidationTrait;
+use KaririCode\Cache\Validation\Trait\CacheValueValidationTrait;
 use KaririCode\Cache\Validation\Trait\TagValidationTrait;
+use KaririCode\Cache\Validation\Trait\TtlValidationTrait;
 use KaririCode\Cache\ValueObject\Tag;
 use Psr\EventDispatcher\EventDispatcherInterface;
 use Psr\Log\LoggerInterface;
@@ -41,7 +44,10 @@ use Psr\Log\LoggerInterface;
  */
 final class TaggedCacheOperations
 {
+    use CacheKeyValidationTrait;
+    use CacheValueValidationTrait;
     use TagValidationTrait;
+    use TtlValidationTrait;
 
     /**
      * @param LayeredCacheContract $layeredCache The underlying cache pool for operations
@@ -83,6 +89,11 @@ final class TaggedCacheOperations
         array $tags,
         \DateInterval|int|null $ttl = null
     ): bool {
+        $this->validateKey($key);
+        $this->validateValue($value);
+        $this->validateMixedTags($tags);
+        $this->validateTtl($ttl);
+
         $startTime = microtime(true);
 
         try {
@@ -150,6 +161,7 @@ final class TaggedCacheOperations
      */
     public function invalidateTags(array $tags): bool
     {
+        $this->validateTags($tags);
         try {
             // Validate and normalize tags
             $normalizedTags = $this->validateAndNormalizeTags($tags);
