@@ -7,11 +7,44 @@ services:
       context: .
       dockerfile: .docker/php/Dockerfile
       args:
-        PHP_VERSION: ${KARIRI_PHP_VERSION}
+        PHP_VERSION: ${PHP_VERSION}
     environment:
       XDEBUG_MODE: coverage
     volumes:
       - .:/app
     working_dir: /app
     ports:
-      - "${KARIRI_PHP_PORT}:9003"
+      - "${PHP_PORT}:9003"
+    depends_on:
+      - redis
+      - memcached
+
+  redis:
+    container_name: kariricode-redis
+    image: redis:alpine
+    volumes:
+      - redis-data:/data
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --requirepass
+      - "${REDIS_PASSWORD}"
+
+  memcached:
+    container_name: kariricode-memcached
+    image: bitnami/memcached:latest
+    environment:
+      MEMCACHED_USERNAME: ${MEMCACHED_USERNAME}
+      MEMCACHED_PASSWORD: ${MEMCACHED_PASSWORD}
+    volumes:
+      - memcached-data:/bitnami/memcached
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  redis-data:
+  memcached-data:

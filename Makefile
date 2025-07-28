@@ -117,7 +117,7 @@ test-file: check-environment check-container-running
 ## coverage: Run test coverage with visual formatting
 coverage: check-environment check-container-running
 	@echo "${GREEN}${INFO} Analyzing test coverage...${NC}"
-	XDEBUG_MODE=coverage $(EXEC_PHP) ./vendor/bin/phpunit --coverage-text --colors=always tests | ccze -A
+	XDEBUG_MODE=coverage $(EXEC_PHP) ./vendor/bin/phpunit --coverage-text --colors=always tests
 
 ## coverage-html: Run test coverage and generate HTML report
 coverage-html: check-environment check-container-running
@@ -148,6 +148,29 @@ security-check: check-environment check-container-running
 	@echo "${GREEN}${INFO} Checking for security vulnerabilities with Security Checker...${NC}"
 	$(EXEC_PHP) ./vendor/bin/security-checker security:check
 	@echo "${GREEN}${CHECK_MARK} Security check completed!${NC}"
+
+
+## stan-src: Run PHPStan static analysis on src/
+stan-src: check-environment check-container-running
+	@echo "${GREEN}${INFO} Running PHPStan on src/...${NC}"
+	$(EXEC_PHP) ./vendor/bin/phpstan analyse src --memory-limit=1G --ansi
+	@echo "${GREEN}${CHECK_MARK} PHPStan (src/) analysis completed!${NC}"
+
+## stan-tests: Run PHPStan static analysis on tests/
+stan-tests: check-environment check-container-running
+	@echo "${GREEN}${INFO} Running PHPStan on tests/...${NC}"
+	$(EXEC_PHP) ./vendor/bin/phpstan analyse tests --memory-limit=1G --ansi
+	@echo "${GREEN}${CHECK_MARK} PHPStan (tests/) analysis completed!${NC}"
+
+## stan-file: Run PHPStan analysis on a specific file. Usage: make stan-file FILE=path/to/file.php
+stan-file: check-environment check-container-running
+	@if [ -z "$(FILE)" ]; then \
+		echo "${RED}${WARNING}  You must specify a file. Usage: make stan-file FILE=path/to/file.php${NC}"; \
+	else \
+		echo "${GREEN}${INFO} Running PHPStan on file: $(FILE)...${NC}"; \
+		$(EXEC_PHP) ./vendor/bin/phpstan analyse $(FILE) --memory-limit=1G --ansi; \
+		echo "${GREEN}${CHECK_MARK} PHPStan analysis completed for $(FILE)!${NC}"; \
+	fi
 
 ## quality: Run all quality commands
 quality: check-environment check-container-running cs-check test security-check 
