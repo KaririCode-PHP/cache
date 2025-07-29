@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Item;
 
-use KaririCode\Cache\Contract\AtomicCacheDriver;
+use KaririCode\Cache\Contract\Behavioral\AtomicOperable;
 use KaririCode\Cache\Contract\Behavioral\CompareAndSwapAware;
 use KaririCode\Cache\Contract\Behavioral\Maintainable;
 use KaririCode\Cache\Contract\Behavioral\TaggablePool;
@@ -23,6 +23,7 @@ final class CachePoolManager implements
     CacheItemPool,
     Maintainable,
     TaggablePool,
+    AtomicOperable,
     CompareAndSwapAware
 {
     /** @var array<string, CacheItemInterface> */
@@ -138,7 +139,7 @@ final class CachePoolManager implements
 
     public function increment(string $key, int $step = 1, int $initialValue = 0, mixed $ttl = null): int
     {
-        if ($this->driver instanceof AtomicCacheDriver) {
+        if ($this->driver instanceof AtomicOperable) {
             return $this->driver->increment($key, $step, $initialValue, $ttl);
         }
 
@@ -159,7 +160,7 @@ final class CachePoolManager implements
 
     public function add(string $key, mixed $value, mixed $ttl = null): bool
     {
-        if ($this->driver instanceof AtomicCacheDriver) {
+        if ($this->driver instanceof AtomicOperable) {
             return $this->driver->add($key, $value, $ttl);
         }
 

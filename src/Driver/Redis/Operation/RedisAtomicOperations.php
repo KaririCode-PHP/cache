@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Driver\Redis\Operation;
 
+use KaririCode\Cache\Contract\Behavioral\AtomicOperable;
 use KaririCode\Cache\Driver\Redis\Component\RedisConnectionManager;
 use KaririCode\Cache\Driver\Redis\Component\RedisErrorHandler;
 use KaririCode\Cache\Driver\Redis\Component\RedisLuaScriptManager;
@@ -19,7 +20,7 @@ use KaririCode\Cache\Validation\Trait\ExpirationManagementTrait;
  * Manages atomic operations for Redis.
  * SRP: This class is only responsible for operations like increment, add, and compareAndSwap.
  */
-final class RedisAtomicOperations
+final class RedisAtomicOperations implements AtomicOperable
 {
     use SerializationTrait;
     use CacheKeyValidationTrait;
@@ -131,5 +132,37 @@ final class RedisAtomicOperations
         );
 
         return $this->ensureNumericResult($result, 'compareAndSwap', $key);
+    }
+
+    public function decrement(string $key, int $step = 1, int $initialValue = 0, \DateInterval|int|null $ttl = null): int
+    {
+        $this->validateKey($key);
+        $this->validateStep($step);
+
+        $result = $this->errorHandler->executeWithRetry(
+            fn () => $this->performDecrement($key, $step, $initialValue, $ttl),
+            $this->connectionManager,
+            'decrement',
+            $key
+        );
+
+        return $this->ensureNumericResult($result, 'decrement', $key);
+    }
+
+    private function performDecrement(string $key, int $step, int $initialValue, \DateInterval|int|null $ttl): int
+    {
+        $fullKey = $this->config->keyPrefix . $key;
+        $ttlInSeconds = $this->calculateTtlInSeconds($ttl);
+
+        // To ensure atomicity for both the decrement and the TTL setting, a LUA script is used.
+        if ($ttlInSeconds > 0) {
+            return $this->scriptManager->executeIncrementWithTtl($fullKey, -$step, $initialValue, $ttlInSeconds);
+        }
+
+        if (!$this->redis->exists($fullKey)) {
+            $this->redis->set($fullKey, (string) $initialValue);
+        }
+
+        return $this->redis->decrBy($fullKey, $step);
     }
 }

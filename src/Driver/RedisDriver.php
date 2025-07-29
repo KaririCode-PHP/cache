@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Driver;
 
-use KaririCode\Cache\Contract\AtomicCacheDriver;
+use KaririCode\Cache\Contract\Behavioral\AtomicOperable;
 use KaririCode\Cache\Contract\Behavioral\CompareAndSwapAware;
 use KaririCode\Cache\Contract\CacheCapabilities;
 use KaririCode\Cache\Contract\DriverStats;
@@ -25,7 +25,7 @@ use KaririCode\Cache\ValueObject\Tag;
  * handler classes it is composed of, following SRP and Dependency Injection.
  */
 final class RedisDriver implements
-    AtomicCacheDriver,
+    AtomicOperable,
     TopicAwareCacheDriver,
     TaggableCacheDriver,
     CompareAndSwapAware
@@ -93,6 +93,11 @@ final class RedisDriver implements
     public function increment(string $key, int $step = 1, int $initialValue = 0, \DateInterval|int|null $ttl = null): int
     {
         return $this->atomicOperations->increment($key, $step, $initialValue, $ttl);
+    }
+
+    public function decrement(string $key, int $step = 1, int $initialValue = 0, \DateInterval|int|null $ttl = null): int
+    {
+        return $this->atomicOperations->decrement($key, $step, $initialValue, $ttl);
     }
 
     public function add(string $key, mixed $value, \DateInterval|int|null $ttl = null): bool

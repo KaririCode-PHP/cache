@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Driver;
 
-use KaririCode\Cache\Contract\AtomicCacheDriver;
+use KaririCode\Cache\Contract\Behavioral\AtomicOperable;
 use KaririCode\Cache\Contract\Behavioral\CompareAndSwapAware;
 use KaririCode\Cache\Contract\Behavioral\Maintainable;
 use KaririCode\Cache\Contract\CacheCapabilities;
@@ -26,7 +26,7 @@ use KaririCode\Cache\Validation\Trait\ExpirationManagementTrait;
  * handler classes it is composed of, following SRP and Dependency Injection.
  */
 final class ApcuDriver implements
-    AtomicCacheDriver,
+    AtomicOperable,
     TaggableCacheDriver,
     TopicAwareCacheDriver,
     CompareAndSwapAware,
@@ -96,6 +96,13 @@ final class ApcuDriver implements
         // APCu's native increment does not support custom TTLs or initial values in the same atomic operation.
         // The handler simulates this behavior.
         return $this->atomicOperations->increment($key, $step);
+    }
+
+    public function decrement(string $key, int $step = 1, int $initialValue = 0, \DateInterval|int|null $ttl = null): int
+    {
+        // APCu's native decrement does not support custom TTLs or initial values in the same atomic operation.
+        // The handler simulates this behavior.
+        return $this->atomicOperations->decrement($key, $step);
     }
 
     public function add(string $key, mixed $value, \DateInterval|int|null $ttl = null): bool

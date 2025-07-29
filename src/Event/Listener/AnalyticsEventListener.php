@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace KaririCode\Cache\Event\Listener;
 
 use KaririCode\Cache\Contract\CacheEventListener;
+use KaririCode\Cache\Contract\Structural\EventDispatcherAware;
 use KaririCode\Cache\Event\DTO\AnalyticsData;
 use Psr\EventDispatcher\EventDispatcherInterface;
 
@@ -12,7 +13,7 @@ use Psr\EventDispatcher\EventDispatcherInterface;
  * An essential and functional event listener for cache analytics.
  * This class uses a dedicated DTO for type-safe metrics collection.
  */
-final class AnalyticsEventListener implements CacheEventListener
+final class AnalyticsEventListener implements CacheEventListener, EventDispatcherAware
 {
     private AnalyticsData $operations;
 
@@ -21,21 +22,26 @@ final class AnalyticsEventListener implements CacheEventListener
      */
     private array $accessFrequency = [];
 
-    private ?EventDispatcherInterface $eventDispatcher = null;
+    private EventDispatcherInterface $eventDispatcher;
 
     public function __construct(private readonly int $maxKeysToTrack = 10000)
     {
         $this->initializeAnalytics();
     }
 
-    public function setEventDispatcher(?EventDispatcherInterface $eventDispatcher): void
+    public function setEventDispatcher(EventDispatcherInterface $eventDispatcher): void
     {
         $this->eventDispatcher = $eventDispatcher;
     }
 
-    public function getEventDispatcher(): ?EventDispatcherInterface
+    public function getEventDispatcher(): EventDispatcherInterface
     {
         return $this->eventDispatcher;
+    }
+
+    public function hasEventDispatcher(): bool
+    {
+        return null !== $this->eventDispatcher;
     }
 
     public function onCacheHit(string $key, mixed $value): void

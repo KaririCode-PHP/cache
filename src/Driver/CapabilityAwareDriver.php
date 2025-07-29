@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Driver;
 
-use KaririCode\Cache\Contract\AtomicCacheDriver;
+use KaririCode\Cache\Contract\Behavioral\AtomicOperable;
 use KaririCode\Cache\Contract\CacheCapabilities;
 use KaririCode\Cache\Contract\CacheDriver;
 use KaririCode\Cache\Contract\DriverStats;
@@ -19,7 +19,7 @@ use KaririCode\Cache\Validation\Trait\ExpirationManagementTrait;
  */
 final class CapabilityAwareDriver implements
     CacheDriver,
-    AtomicCacheDriver,
+    AtomicOperable,
     TaggableCacheDriver,
     TopicAwareCacheDriver
 {
@@ -75,7 +75,7 @@ final class CapabilityAwareDriver implements
 
     public function increment(string $key, int $step = 1, int $initialValue = 0, \DateInterval|int|null $ttl = null): int
     {
-        if ($this->hasCapability(CacheCapabilities::ATOMIC_OPERATIONS) && $this->driver instanceof AtomicCacheDriver) {
+        if ($this->hasCapability(CacheCapabilities::ATOMIC_OPERATIONS) && $this->driver instanceof AtomicOperable) {
             return $this->driver->increment($key, $step, $initialValue, $ttl);
         }
 
@@ -87,9 +87,23 @@ final class CapabilityAwareDriver implements
         return $newValue;
     }
 
+    public function decrement(string $key, int $step = 1, int $initialValue = 0, \DateInterval|int|null $ttl = null): int
+    {
+        if ($this->hasCapability(CacheCapabilities::ATOMIC_OPERATIONS) && $this->driver instanceof AtomicOperable) {
+            return $this->driver->decrement($key, $step, $initialValue, $ttl);
+        }
+
+        $current = $this->driver->get($key);
+        $currentValue = is_numeric($current) ? (int) $current : $initialValue;
+        $newValue = $currentValue - $step;
+        $this->driver->set($key, $newValue, $this->calculateExpiration($ttl));
+
+        return $newValue;
+    }
+
     public function add(string $key, mixed $value, \DateInterval|int|null $ttl = null): bool
     {
-        if ($this->hasCapability(CacheCapabilities::ATOMIC_OPERATIONS) && $this->driver instanceof AtomicCacheDriver) {
+        if ($this->hasCapability(CacheCapabilities::ATOMIC_OPERATIONS) && $this->driver instanceof AtomicOperable) {
             return $this->driver->add($key, $value, $ttl);
         }
 
@@ -174,7 +188,7 @@ final class CapabilityAwareDriver implements
 
     private function detectCapabilities(): void
     {
-        $this->capabilities[CacheCapabilities::ATOMIC_OPERATIONS] = $this->driver instanceof AtomicCacheDriver;
+        $this->capabilities[CacheCapabilities::ATOMIC_OPERATIONS] = $this->driver instanceof AtomicOperable;
         $this->capabilities[CacheCapabilities::TAGGING] = $this->driver instanceof TaggableCacheDriver;
         $this->capabilities[CacheCapabilities::TOPICS] = $this->driver instanceof TopicAwareCacheDriver;
     }

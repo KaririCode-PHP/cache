@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Driver\Memcached\Operation;
 
+use KaririCode\Cache\Contract\Behavioral\AtomicOperable;
 use KaririCode\Cache\Driver\Memcached\Component\MemcachedConnectionManager;
 use KaririCode\Cache\Driver\Memcached\Component\MemcachedErrorHandler;
 use KaririCode\Cache\Driver\Memcached\Component\MemcachedMonitoringService;
@@ -19,7 +20,7 @@ use KaririCode\Cache\Validation\Trait\ExpirationManagementTrait;
  * Manages atomic operations for Memcached.
  * SRP: This class is only responsible for operations like increment, decrement, add, and compareAndSwap.
  */
-final class MemcachedAtomicOperations
+final class MemcachedAtomicOperations implements AtomicOperable
 {
     use CacheKeyValidationTrait;
     use CacheValueValidationTrait;

@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Driver;
 
-use KaririCode\Cache\Contract\AtomicCacheDriver;
+use KaririCode\Cache\Contract\Behavioral\AtomicOperable;
 use KaririCode\Cache\Contract\CacheCapabilities;
 use KaririCode\Cache\Contract\CacheDriver;
 use KaririCode\Cache\Contract\DriverStats;
@@ -45,7 +45,7 @@ use KaririCode\Cache\ValueObject\Topic;
  */
 final class ArrayDriver implements
     CacheDriver,
-    AtomicCacheDriver,
+    AtomicOperable,
     TaggableCacheDriver,
     TopicAwareCacheDriver
 {
@@ -211,6 +211,22 @@ final class ArrayDriver implements
         }
 
         $newValue = (int) $current + $step;
+        $this->set($key, $newValue, $this->calculateExpiration($ttl));
+
+        return $newValue;
+    }
+
+    public function decrement(string $key, int $step = 1, int $initialValue = 0, \DateInterval|int|null $ttl = null): int
+    {
+        $this->validateKey($key);
+        $this->validateStep($step);
+
+        $current = $this->get($key);
+        if (!is_numeric($current)) {
+            $current = $initialValue;
+        }
+
+        $newValue = (int) $current - $step;
         $this->set($key, $newValue, $this->calculateExpiration($ttl));
 
         return $newValue;

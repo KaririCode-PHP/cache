@@ -26,10 +26,8 @@ interface EventDispatcherAware
      * Sets the event dispatcher for the current instance.
      *
      * @param EventDispatcherInterface $eventDispatcher the event dispatcher to set
-     *
-     * @return EventDispatcherAware returns the current instance to allow method chaining
      */
-    public function setEventDispatcher(EventDispatcherInterface $eventDispatcher): EventDispatcherAware;
+    public function setEventDispatcher(EventDispatcherInterface $eventDispatcher): void;
 
     /**
      * Retrieves the current event dispatcher.

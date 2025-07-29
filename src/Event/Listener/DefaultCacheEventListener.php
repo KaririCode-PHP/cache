@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace KaririCode\Cache\Event\Listener;
 
 use KaririCode\Cache\Contract\CacheEventListener as CacheEventListenerContract;
+use KaririCode\Cache\Contract\Structural\EventDispatcherAware;
 use KaririCode\Cache\Event\CacheClearEvent;
 use KaririCode\Cache\Event\CacheDeleteEvent;
 use KaririCode\Cache\Event\CacheHitEvent;
@@ -15,45 +16,44 @@ use Psr\EventDispatcher\EventDispatcherInterface;
 /**
  * Enhanced DefaultCacheEventListener with configurable max events.
  */
-final class DefaultCacheEventListener implements CacheEventListenerContract
+final class DefaultCacheEventListener implements CacheEventListenerContract, EventDispatcherAware
 {
     /**
      * @var array<int, array{type: string, key: string, timestamp: float, data: array<mixed>}>
      */
     private array $events = [];
 
-    private ?EventDispatcherInterface $eventDispatcher = null;
+    private EventDispatcherInterface $eventDispatcher;
 
     public function __construct(private int $maxEvents = 1000)
     {
     }
 
-    public function setEventDispatcher(?EventDispatcherInterface $eventDispatcher): void
+    public function setEventDispatcher(EventDispatcherInterface $eventDispatcher): void
     {
         $this->eventDispatcher = $eventDispatcher;
     }
 
-    public function getEventDispatcher(): ?EventDispatcherInterface
+    public function getEventDispatcher(): EventDispatcherInterface
     {
         return $this->eventDispatcher;
+    }
+
+    public function hasEventDispatcher(): bool
+    {
+        return null !== $this->eventDispatcher;
     }
 
     public function onCacheHit(string $key, mixed $value): void
     {
         $this->recordEvent('hit', $key, ['value_type' => gettype($value)]);
-
-        if ($this->eventDispatcher) {
-            $this->eventDispatcher->dispatch(new CacheHitEvent($key, $value));
-        }
+        $this->eventDispatcher->dispatch(new CacheHitEvent($key, $value));
     }
 
     public function onCacheMiss(string $key): void
     {
         $this->recordEvent('miss', $key);
-
-        if ($this->eventDispatcher) {
-            $this->eventDispatcher->dispatch(new CacheMissEvent($key));
-        }
+        $this->eventDispatcher->dispatch(new CacheMissEvent($key));
     }
 
     public function onCacheSet(string $key, mixed $value): void
@@ -63,27 +63,20 @@ final class DefaultCacheEventListener implements CacheEventListenerContract
             'value_size' => is_string($value) ? strlen($value) : null,
         ]);
 
-        if ($this->eventDispatcher) {
-            $this->eventDispatcher->dispatch(new CacheSetEvent($key, $value));
-        }
+        $this->eventDispatcher->dispatch(new CacheSetEvent($key, $value));
     }
 
     public function onCacheDelete(string $key): void
     {
         $this->recordEvent('delete', $key);
-
-        if ($this->eventDispatcher) {
-            $this->eventDispatcher->dispatch(new CacheDeleteEvent($key));
-        }
+        $this->eventDispatcher->dispatch(new CacheDeleteEvent($key));
     }
 
     public function onCacheClear(): void
     {
         $this->recordEvent('clear', 'all');
 
-        if ($this->eventDispatcher) {
-            $this->eventDispatcher->dispatch(new CacheClearEvent());
-        }
+        $this->eventDispatcher->dispatch(new CacheClearEvent());
     }
 
     /**

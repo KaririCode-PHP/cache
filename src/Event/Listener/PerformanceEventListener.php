@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace KaririCode\Cache\Event\Listener;
 
 use KaririCode\Cache\Contract\CacheEventListener as CacheEventListenerContract;
+use KaririCode\Cache\Contract\Structural\EventDispatcherAware;
 use KaririCode\Cache\Event\CachePerformanceEvent;
 use Psr\EventDispatcher\EventDispatcherInterface;
 
@@ -15,7 +16,7 @@ use Psr\EventDispatcher\EventDispatcherInterface;
  * on performance monitoring. It tracks operation timings, detects slow operations,
  * and provides key statistics for observability.
  */
-final class PerformanceEventListener implements CacheEventListenerContract
+final class PerformanceEventListener implements CacheEventListenerContract, EventDispatcherAware
 {
     /**
      * @var array<string, array<int, float>>
@@ -27,7 +28,7 @@ final class PerformanceEventListener implements CacheEventListenerContract
      */
     private array $slowOperations = [];
 
-    private ?EventDispatcherInterface $eventDispatcher = null;
+    private EventDispatcherInterface $eventDispatcher;
 
     public function __construct(
         private readonly float $slowThreshold = 0.1, // Operations slower than 100ms are flagged.
@@ -36,14 +37,19 @@ final class PerformanceEventListener implements CacheEventListenerContract
         $this->initializeMetrics();
     }
 
-    public function setEventDispatcher(?EventDispatcherInterface $eventDispatcher): void
+    public function setEventDispatcher(EventDispatcherInterface $eventDispatcher): void
     {
         $this->eventDispatcher = $eventDispatcher;
     }
 
-    public function getEventDispatcher(): ?EventDispatcherInterface
+    public function getEventDispatcher(): EventDispatcherInterface
     {
         return $this->eventDispatcher;
+    }
+
+    public function hasEventDispatcher(): bool
+    {
+        return null !== $this->eventDispatcher;
     }
 
     public function onCacheHit(string $key, mixed $value): void
@@ -127,10 +133,7 @@ final class PerformanceEventListener implements CacheEventListenerContract
             array_shift($this->operationTimings[$operation]);
         }
 
-        // Dispatch a PSR-14 event if a dispatcher is configured.
-        if ($this->eventDispatcher) {
-            $this->eventDispatcher->dispatch(new CachePerformanceEvent($operation, $key, $duration));
-        }
+        $this->eventDispatcher->dispatch(new CachePerformanceEvent($operation, $key, $duration));
     }
 
     private function recordSlowOperation(string $operation, string $key, float $duration): void
