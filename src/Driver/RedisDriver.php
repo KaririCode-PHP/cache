@@ -51,7 +51,7 @@ final class RedisDriver implements
         return $this->crudOperations->get($key);
     }
 
-    public function set(string $key, mixed $value, ?\DateTimeInterface $expiration = null): bool
+    public function set(string $key, mixed $value, \DateInterval|int|null $expiration = null): bool
     {
         return $this->crudOperations->set($key, $value, $expiration);
     }
@@ -73,17 +73,17 @@ final class RedisDriver implements
 
     // --- Batch Operations ---
 
-    public function getMultiple(array $keys): array
+    public function getMultiple(iterable $keys): iterable
     {
         return $this->batchOperations->getMultiple($keys);
     }
 
-    public function setMultiple(array $values, ?\DateTimeInterface $expiration = null): bool
+    public function setMultiple(iterable $values, \DateInterval|int|null $expiration = null): bool
     {
         return $this->batchOperations->setMultiple($values, $expiration);
     }
 
-    public function deleteMultiple(array $keys): bool
+    public function deleteMultiple(iterable $keys): bool
     {
         return $this->batchOperations->deleteMultiple($keys);
     }

@@ -77,10 +77,6 @@ final class CacheTransactionManager implements CacheTransactionManagerContract
                 $value = $data['value'];
                 $expiration = $data['expiration'];
 
-                if (!$expiration instanceof \DateTimeInterface) {
-                    $expiration = null;
-                }
-
                 if ($existed) {
                     $this->driver->set($key, $value, $expiration);
                 } else {
@@ -144,7 +140,7 @@ final class CacheTransactionManager implements CacheTransactionManagerContract
         );
     }
 
-    public function scheduleSet(string $key, mixed $value, ?\DateTimeInterface $expiration = null): void
+    public function scheduleSet(string $key, mixed $value, \DateInterval|int|null $expiration = null): void
     {
         if (!$this->inTransaction) {
             throw CacheException::operationFailed('scheduleSet', $key, new \RuntimeException('No transaction in progress'));

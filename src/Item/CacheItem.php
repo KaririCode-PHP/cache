@@ -72,7 +72,7 @@ final class CacheItem implements CacheItemContract
         return $this;
     }
 
-    public function getExpiration(): ?\DateTimeInterface
+    public function getExpiration(): \DateTimeInterface
     {
         return $this->expiration;
     }

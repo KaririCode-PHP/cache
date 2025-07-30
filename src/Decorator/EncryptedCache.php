@@ -82,19 +82,19 @@ final class EncryptedCache implements Cache
         }
     }
 
-    public function getMultiple(iterable $keys, mixed $default = null): iterable
+    public function getMultiple(iterable $keys): iterable
     {
         $encryptedValues = $this->cache->getMultiple($keys);
         $result = [];
 
         foreach ($encryptedValues as $key => $encryptedValue) {
             if (!is_string($encryptedValue) || empty($encryptedValue)) {
-                $result[$key] = $default;
+                $result[$key] = null;
             } else {
                 try {
                     $result[$key] = $this->decrypt($encryptedValue);
                 } catch (\Exception) {
-                    $result[$key] = $default;
+                    $result[$key] = null;
                 }
             }
         }

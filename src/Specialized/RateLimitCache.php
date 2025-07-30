@@ -25,7 +25,7 @@ final class RateLimitingCache
         }
 
         // Fallback without stampede protection
-        $current = $this->cache->get($key, 0);
+        $current = $this->cache->get($key) ?? 0;
         if ($current >= $limit) {
             return false;
         }

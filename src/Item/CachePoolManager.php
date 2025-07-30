@@ -10,7 +10,7 @@ use KaririCode\Cache\Contract\Behavioral\Maintainable;
 use KaririCode\Cache\Contract\Behavioral\TaggablePool;
 use KaririCode\Cache\Contract\CacheDriver;
 use KaririCode\Cache\Contract\CacheItemPool;
-use KaririCode\Cache\Contract\CacheValidator as CacheKeyValidatorContract;
+use KaririCode\Cache\Contract\CacheValidator;
 use KaririCode\Cache\Contract\TaggableCacheDriver;
 use KaririCode\Cache\Exception\InvalidArgumentException;
 use KaririCode\Cache\Validation\CacheKeyValidator;
@@ -31,13 +31,13 @@ final class CachePoolManager implements
 
     public function __construct(
         private readonly CacheDriver $driver,
-        private readonly CacheKeyValidatorContract $keyValidator = new CacheKeyValidator()
+        private readonly CacheValidator $validator = new CacheKeyValidator()
     ) {
     }
 
     public function getItem(string $key): CacheItemInterface
     {
-        $this->keyValidator->validateKey($key);
+        $this->validator->validateKey($key);
 
         if (isset($this->deferred[$key])) {
             return clone $this->deferred[$key];
@@ -56,7 +56,7 @@ final class CachePoolManager implements
     public function getItems(array $keys = []): iterable
     {
         foreach ($keys as $key) {
-            $this->keyValidator->validateKey($key);
+            $this->validator->validateKey($key);
         }
 
         $items = [];
@@ -75,7 +75,7 @@ final class CachePoolManager implements
 
     public function hasItem(string $key): bool
     {
-        $this->keyValidator->validateKey($key);
+        $this->validator->validateKey($key);
 
         return isset($this->deferred[$key]) || $this->driver->has($key);
     }
@@ -89,7 +89,7 @@ final class CachePoolManager implements
 
     public function deleteItem(string $key): bool
     {
-        $this->keyValidator->validateKey($key);
+        $this->validator->validateKey($key);
         unset($this->deferred[$key]);
 
         return $this->driver->delete($key);
@@ -98,7 +98,7 @@ final class CachePoolManager implements
     public function deleteItems(array $keys): bool
     {
         foreach ($keys as $key) {
-            $this->keyValidator->validateKey($key);
+            $this->validator->validateKey($key);
             unset($this->deferred[$key]);
         }
 
@@ -118,7 +118,7 @@ final class CachePoolManager implements
 
     public function saveDeferred(CacheItemInterface $item): bool
     {
-        $this->keyValidator->validateKey($item->getKey());
+        $this->validator->validateKey($item->getKey());
         $this->deferred[$item->getKey()] = clone $item;
 
         return true;
@@ -222,7 +222,7 @@ final class CachePoolManager implements
     /**
      * Calculates the expiration datetime from a TTL value.
      *
-     * @param mixed $ttl the TTL value (int, DateInterval, or null)
+     * @param \DateInterval|int|null $ttl the TTL value
      */
     private function calculateExpiration(mixed $ttl): ?\DateTimeInterface
     {

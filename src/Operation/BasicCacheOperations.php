@@ -53,13 +53,12 @@ final class BasicCacheOperations
      * Retrieves an item from the cache.
      *
      * @param string $key the unique key for the item
-     * @param mixed|null $default the default value to return if the item is not found
      *
      * @throws CacheException if the operation fails
      *
-     * @return mixed the value of the item from the cache, or $default if not found
+     * @return mixed the value of the item from the cache
      */
-    public function get(string $key, mixed $default = null): mixed
+    public function get(string $key): mixed
     {
         $this->validateKey($key);
 
@@ -71,8 +70,6 @@ final class BasicCacheOperations
             if (!$item->isHit()) {
                 $this->dispatchMissEvent($key);
                 $this->metricsCollector = $this->metricsCollector->recordMiss($key);
-
-                return $default;
             }
 
             $value = $this->deserialize($item->get());
@@ -210,18 +207,17 @@ final class BasicCacheOperations
      * Obtains multiple cache items by their unique keys.
      *
      * @param iterable<string> $keys the list of keys to retrieve
-     * @param mixed|null $default default value to return for keys that are not found
      *
      * @return array<string, mixed> a map of key => value pairs
      */
-    public function getMultiple(iterable $keys, mixed $default = null): iterable
+    public function getMultiple(iterable $keys): iterable
     {
         $keysArray = is_array($keys) ? $keys : iterator_to_array($keys);
         $this->validateKeys($keysArray);
 
         $results = [];
         foreach ($keys as $key) {
-            $results[$key] = $this->get($key, $default);
+            $results[$key] = $this->get($key);
         }
 
         return $results;

@@ -38,7 +38,7 @@ final class CapabilityAwareDriver implements
         return $this->driver->get($key);
     }
 
-    public function set(string $key, mixed $value, ?\DateTimeInterface $expiration = null): bool
+    public function set(string $key, mixed $value, \DateInterval|int|null $expiration = null): bool
     {
         return $this->driver->set($key, $value, $expiration);
     }
@@ -58,17 +58,17 @@ final class CapabilityAwareDriver implements
         return $this->driver->clear();
     }
 
-    public function getMultiple(array $keys): array
+    public function getMultiple(iterable $keys): iterable
     {
         return $this->driver->getMultiple($keys);
     }
 
-    public function setMultiple(array $values, ?\DateTimeInterface $expiration = null): bool
+    public function setMultiple(iterable $values, \DateInterval|int|null $expiration = null): bool
     {
         return $this->driver->setMultiple($values, $expiration);
     }
 
-    public function deleteMultiple(array $keys): bool
+    public function deleteMultiple(iterable $keys): bool
     {
         return $this->driver->deleteMultiple($keys);
     }

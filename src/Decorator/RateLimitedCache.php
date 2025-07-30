@@ -72,19 +72,19 @@ final class RateLimitedCache implements Cache
         return $this->cache->clear();
     }
 
-    public function getMultiple(iterable $keys, mixed $default = null): iterable
+    public function getMultiple(iterable $keys): iterable
     {
         if (!$this->isAllowed()) {
             $result = [];
             foreach ($keys as $key) {
-                $result[$key] = $default;
+                $result[$key] = null;
             }
 
             return $result;
         }
         $this->recordOperation();
 
-        return $this->cache->getMultiple($keys, $default);
+        return $this->cache->getMultiple($keys);
     }
 
     public function setMultiple(iterable $values, \DateInterval|int|null $ttl = null): bool

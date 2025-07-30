@@ -79,7 +79,7 @@ final class FilesystemDriver implements
         }
     }
 
-    public function set(string $key, mixed $value, ?\DateTimeInterface $expiration = null): bool
+    public function set(string $key, mixed $value, \DateInterval|int|null $expiration = null): bool
     {
         $startTime = microtime(true);
         try {
@@ -147,38 +147,69 @@ final class FilesystemDriver implements
     // Batch Operations (Existing Implementation)
     // ========================================================================
 
-    public function getMultiple(array $keys): array
+    /**
+     * Retrieves multiple cache items by their keys.
+     *
+     * @param iterable<string> $keys the cache keys to retrieve
+     *
+     * @return iterable<string, mixed> the retrieved values indexed by cache key
+     */
+    public function getMultiple(iterable $keys): iterable
     {
         $results = [];
         foreach ($keys as $key) {
-            $results[$key] = $this->get($key);
+            try {
+                $results[$key] = $this->get($key);
+            } catch (\Throwable $e) {
+                $results[$key] = null;
+            }
         }
 
         return $results;
     }
 
-    public function setMultiple(array $values, ?\DateTimeInterface $expiration = null): bool
+    /**
+     * Sets multiple cache items.
+     *
+     * @param iterable<string, mixed> $values
+     */
+    public function setMultiple(iterable $values, \DateInterval|int|null $expiration = null): bool
     {
-        $success = true;
+        $allSuccess = true;
         foreach ($values as $key => $value) {
-            if (!$this->set((string) $key, $value, $expiration)) {
-                $success = false;
+            try {
+                $success = $this->set($key, $value, $expiration);
+                if (!$success) {
+                    $allSuccess = false;
+                }
+            } catch (\Throwable $e) {
+                $allSuccess = false;
             }
         }
 
-        return $success;
+        return $allSuccess;
     }
 
-    public function deleteMultiple(array $keys): bool
+    /**
+     * Deletes multiple cache items.
+     *
+     * @param iterable<string> $keys
+     */
+    public function deleteMultiple(iterable $keys): bool
     {
-        $success = true;
+        $allSuccess = true;
         foreach ($keys as $key) {
-            if (!$this->delete($key)) {
-                $success = false;
+            try {
+                $success = $this->delete($key);
+                if (!$success) {
+                    $allSuccess = false;
+                }
+            } catch (\Throwable $e) {
+                $allSuccess = false;
             }
         }
 
-        return $success;
+        return $allSuccess;
     }
 
     // ========================================================================

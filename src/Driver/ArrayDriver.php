@@ -105,17 +105,18 @@ final class ArrayDriver implements
         return $this->storage[$key];
     }
 
-    public function set(string $key, mixed $value, ?\DateTimeInterface $expiration = null): bool
+    public function set(string $key, mixed $value, \DateInterval|int|null $expiration = null): bool
     {
         $this->validateKey($key);
         $this->validateValue($value);
 
         $this->storage[$key] = $value;
 
-        if ($expiration) {
-            $this->expirations[$key] = $expiration->getTimestamp();
-        } else {
-            unset($this->expirations[$key]);
+        $calculatedExpiration = $this->calculateExpiration($expiration);
+        if ($calculatedExpiration instanceof \DateTimeInterface) {
+            $this->expirations[$key] = $calculatedExpiration->getTimestamp();
+        } elseif (isset($this->expirations[$key])) {
+            unset($this->expirations[$key]); // Remove expiration if it was explicitly set to null
         }
 
         return true;
@@ -161,8 +162,7 @@ final class ArrayDriver implements
     // ========================================================================
     // Batch Operations
     // ========================================================================
-
-    public function getMultiple(array $keys): array
+    public function getMultiple(iterable $keys): iterable
     {
         $this->validateKeys($keys);
 
@@ -174,7 +174,7 @@ final class ArrayDriver implements
         return $results;
     }
 
-    public function setMultiple(array $values, ?\DateTimeInterface $expiration = null): bool
+    public function setMultiple(iterable $values, \DateInterval|int|null $expiration = null): bool
     {
         $this->validateMultipleValues($values);
 
@@ -185,7 +185,7 @@ final class ArrayDriver implements
         return true;
     }
 
-    public function deleteMultiple(array $keys): bool
+    public function deleteMultiple(iterable $keys): bool
     {
         $this->validateKeys($keys);
 

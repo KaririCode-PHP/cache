@@ -103,9 +103,9 @@ final class Cache implements CacheContract
         return $this->basic->has($key);
     }
 
-    public function getMultiple(iterable $keys, mixed $default = null): iterable
+    public function getMultiple(iterable $keys): iterable
     {
-        return $this->basic->getMultiple($keys, $default);
+        return $this->basic->getMultiple($keys);
     }
 
     public function setMultiple(iterable $values, \DateInterval|int|null $ttl = null): bool

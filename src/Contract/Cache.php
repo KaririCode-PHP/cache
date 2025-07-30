@@ -5,8 +5,8 @@ declare(strict_types=1);
 namespace KaririCode\Cache\Contract;
 
 use KaririCode\Cache\Contract\Behavioral\AtomicOperable;
-use KaririCode\Cache\Contract\Behavioral\Cacheable;
 use KaririCode\Cache\Contract\Behavioral\CompareAndSwapAware;
+use KaririCode\Cache\Contract\Behavioral\MultiOperationCacheable;
 use KaririCode\Cache\Contract\Behavioral\Taggable;
 use KaririCode\Cache\Contract\Behavioral\TopicSubscribable;
 use KaririCode\Cache\Metrics\CacheMetrics;
@@ -27,7 +27,7 @@ use KaririCode\Cache\Metrics\CacheMetrics;
  * @see       https://kariricode.org/
  */
 interface Cache extends
-    Cacheable,
+    MultiOperationCacheable,
     AtomicOperable,
     Taggable,
     TopicSubscribable,
