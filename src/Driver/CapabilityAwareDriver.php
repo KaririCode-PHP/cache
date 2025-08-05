@@ -73,57 +73,75 @@ final class CapabilityAwareDriver implements
         return $this->driver->deleteMultiple($keys);
     }
 
-    public function increment(string $key, int $step = 1, int $initialValue = 0, \DateInterval|int|null $ttl = null): int
+    public function increment(string $key, int $step = 1, int $initialValue = 0): int
     {
-        if ($this->hasCapability(CacheCapabilities::ATOMIC_OPERATIONS) && $this->driver instanceof AtomicOperable) {
-            return $this->driver->increment($key, $step, $initialValue, $ttl);
+        if ($this->hasCapability(CacheCapabilities::ATOMIC) && $this->driver instanceof AtomicOperable) {
+            return $this->driver->increment($key, $step, $initialValue);
         }
 
         $current = $this->driver->get($key);
         $currentValue = is_numeric($current) ? (int) $current : $initialValue;
         $newValue = $currentValue + $step;
-        $this->driver->set($key, $newValue, $this->calculateExpiration($ttl));
+        $this->driver->set($key, $newValue);
 
         return $newValue;
     }
 
-    public function decrement(string $key, int $step = 1, int $initialValue = 0, \DateInterval|int|null $ttl = null): int
+    public function decrement(string $key, int $step = 1, int $initialValue = 0): int
     {
         if ($this->hasCapability(CacheCapabilities::ATOMIC_OPERATIONS) && $this->driver instanceof AtomicOperable) {
-            return $this->driver->decrement($key, $step, $initialValue, $ttl);
+            return $this->driver->decrement($key, $step, $initialValue);
         }
 
         $current = $this->driver->get($key);
         $currentValue = is_numeric($current) ? (int) $current : $initialValue;
         $newValue = $currentValue - $step;
-        $this->driver->set($key, $newValue, $this->calculateExpiration($ttl));
+        $this->driver->set($key, $newValue);
 
         return $newValue;
     }
 
-    public function add(string $key, mixed $value, \DateInterval|int|null $ttl = null): bool
+    public function add(string $key, mixed $value): bool
     {
         if ($this->hasCapability(CacheCapabilities::ATOMIC_OPERATIONS) && $this->driver instanceof AtomicOperable) {
-            return $this->driver->add($key, $value, $ttl);
+            return $this->driver->add($key, $value);
         }
 
         if ($this->driver->has($key)) {
             return false;
         }
 
-        return $this->driver->set($key, $value, $this->calculateExpiration($ttl));
+        return $this->driver->set($key, $value);
     }
 
-    public function setWithTags(string $key, mixed $value, array $tags, \DateInterval|int|null $ttl = null): bool
+    public function getSubscribedTopics(string $key): array
     {
-        if ($this->hasCapability(CacheCapabilities::TAGGING) && $this->driver instanceof TaggableCacheDriver) {
-            return $this->driver->setWithTags($key, $value, $tags, $ttl);
+        if ($this->driver instanceof TopicAwareCacheDriver) {
+            return $this->driver->getSubscribedTopics($key);
         }
 
-        return $this->driver->set($key, $value, $this->calculateExpiration($ttl));
+        return [];
     }
 
-    public function invalidateTags(array $tags): bool
+    public function getSubscribersForTopic(string $topic): array
+    {
+        if ($this->driver instanceof TopicAwareCacheDriver) {
+            return $this->driver->getSubscribersForTopic($topic);
+        }
+
+        return [];
+    }
+
+    public function setWithTags(string $key, mixed $value, iterable $tags): bool
+    {
+        if ($this->hasCapability(CacheCapabilities::TAGGING) && $this->driver instanceof TaggableCacheDriver) {
+            return $this->driver->setWithTags($key, $value, $tags);
+        }
+
+        return $this->driver->set($key, $value);
+    }
+
+    public function invalidateTags(iterable $tags): bool
     {
         if ($this->hasCapability(CacheCapabilities::TAGGING) && $this->driver instanceof TaggableCacheDriver) {
             return $this->driver->invalidateTags($tags);
@@ -132,7 +150,7 @@ final class CapabilityAwareDriver implements
         return true;
     }
 
-    public function getByTags(array $tags): array
+    public function getByTags(iterable $tags): iterable
     {
         if ($this->hasCapability(CacheCapabilities::TAGGING) && $this->driver instanceof TaggableCacheDriver) {
             return $this->driver->getByTags($tags);
@@ -150,14 +168,14 @@ final class CapabilityAwareDriver implements
         return [];
     }
 
-    public function subscribeTo(string $key, array $topics): void
+    public function subscribeTo(string $key, iterable $topics): void
     {
         if ($this->hasCapability(CacheCapabilities::TOPICS) && $this->driver instanceof TopicAwareCacheDriver) {
             $this->driver->subscribeTo($key, $topics);
         }
     }
 
-    public function invalidateTopics(array $topics): bool
+    public function invalidateTopics(iterable $topics): bool
     {
         if ($this->hasCapability(CacheCapabilities::TOPICS) && $this->driver instanceof TopicAwareCacheDriver) {
             return $this->driver->invalidateTopics($topics);

@@ -33,12 +33,11 @@ interface Cacheable
      * Persists data in the cache, uniquely referenced by a key.
      *
      * @param string $key the unique cache key
-     * @param mixed $value the value to cache
-     * @param \DateInterval|int|null $ttl the time-to-live for the cached item
+     * @param mixed $value the value to caches
      *
      * @return bool true on success, false on failure
      */
-    public function set(string $key, mixed $value, \DateInterval|int|null $ttl = null): bool;
+    public function set(string $key, mixed $value): bool;
 
     /**
      * Determines whether an item is present in the cache.

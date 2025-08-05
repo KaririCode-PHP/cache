@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Contract;
 
+use KaririCode\Cache\Contract\Behavioral\Taggable;
 use KaririCode\Cache\ValueObject\Tag;
 
 /**
@@ -18,37 +19,6 @@ use KaririCode\Cache\ValueObject\Tag;
  *
  * @see       https://kariricode.org/
  */
-interface TaggableCacheDriver extends CacheDriver
+interface TaggableCacheDriver extends CacheDriver, Taggable
 {
-    /**
-     * Persists an item in the cache, associating it with one or more tags.
-     *
-     * @param string $key the cache item key
-     * @param mixed $value the value to store
-     * @param list<string|Tag> $tags an array of Tag objects to invalidate
-     * @param \DateInterval|int|null $ttl the Time To Live for the item
-     *
-     * @return bool true on success, false on failure
-     */
-    public function setWithTags(string $key, mixed $value, array $tags, \DateInterval|int|null $ttl = null): bool;
-
-    /**
-     * Retrieves all cache items associated with the given tags.
-     *
-     * @param list<string|Tag> $tags an array of Tag objects to invalidate
-     *
-     * @return array <string, mixed> an array of cache items indexed by their keys
-     */
-    public function getByTags(array $tags): array;
-
-    /**
-     * Invalidates all cache items associated with one or more specified tags.
-     *
-     * @param list<string|Tag> $tags an array of Tag objects to invalidate
-     *
-     * @return bool true on success, false on failure
-     */
-    public function invalidateTags(array $tags): bool;
-
-    public function getTags(): array;
 }

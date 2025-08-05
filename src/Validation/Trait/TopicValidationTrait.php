@@ -79,7 +79,7 @@ trait TopicValidationTrait
      *
      * @return array<Topic> Array of Topic objects
      */
-    protected function createTopicObjects(array $topics): array
+    protected function normalizeTopics(array $topics): array
     {
         if (empty($topics)) {
             return [];

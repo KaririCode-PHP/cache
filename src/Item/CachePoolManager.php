@@ -53,7 +53,7 @@ final class CachePoolManager implements
      *
      * @return iterable<string, CacheItemInterface>
      */
-    public function getItems(array $keys = []): iterable
+    public function getItems(iterable $keys = []): iterable
     {
         foreach ($keys as $key) {
             $this->validator->validateKey($key);
@@ -182,7 +182,7 @@ final class CachePoolManager implements
         return false;
     }
 
-    public function invalidateTags(array $tags): bool
+    public function invalidateTags(iterable $tags): bool
     {
         if ($this->driver instanceof TaggableCacheDriver) {
             return $this->driver->invalidateTags($tags);
@@ -192,7 +192,7 @@ final class CachePoolManager implements
         return true;
     }
 
-    public function getByTags(array $tags): array
+    public function getByTags(iterable $tags): iterable
     {
         if ($this->driver instanceof TaggableCacheDriver) {
             return $this->driver->getByTags($tags);
@@ -201,7 +201,7 @@ final class CachePoolManager implements
         return [];
     }
 
-    public function getTags(): array
+    public function getTags(): iterable
     {
         if ($this->driver instanceof TaggableCacheDriver) {
             return $this->driver->getTags();

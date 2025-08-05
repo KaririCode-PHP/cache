@@ -26,19 +26,37 @@ use KaririCode\Cache\ValueObject\Topic;
 interface TopicAwareCacheDriver extends CacheDriver
 {
     /**
-     * Subscribes a cache key to one or more invalidation topics.
+     * Subscribes a cache key to one or more topics.
      *
-     * @param string $key the cache key to subscribe
-     * @param Topic[] $topics an array of topics // CORREÇÃO: Tipo atualizado para Topic[]
+     * @param string $key the cache item key
+     * @param iterable<string|Topic> $topics an iterable of Topic objects to subscribe to
      */
-    public function subscribeTo(string $key, array $topics): void;
+    public function subscribeTo(string $key, iterable $topics): void;
 
     /**
-     * Invalidates all cache keys subscribed to the given topics.
+     * Unsubscribes a cache key from one or more topics.
      *
-     * @param Topic[] $topics the topics to invalidate // CORREÇÃO: Tipo atualizado para Topic[]
+     * @param iterable<string|Topic> $topics an iterable of Topic objects to unsubscribe from
      *
-     * @return bool true on success, false on failure
+     * @return bool true if the operation was successful, false otherwise
      */
-    public function invalidateTopics(array $topics): bool;
+    public function invalidateTopics(iterable $topics): bool;
+
+    /**
+     * Retrieves all topics a cache key is subscribed to.
+     *
+     * @param string $key the cache item key
+     *
+     * @return iterable<string, Topic> an iterable of Topic objects
+     */
+    public function getSubscribedTopics(string $key): iterable;
+
+    /**
+     * Retrieves all cache keys subscribed to a specific topic.
+     *
+     * @param string $topic the topic name
+     *
+     * @return iterable<string> an iterable of cache item keys
+     */
+    public function getSubscribersForTopic(string $topic): iterable;
 }

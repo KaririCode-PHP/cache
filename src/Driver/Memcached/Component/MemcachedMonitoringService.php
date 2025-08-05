@@ -54,6 +54,15 @@ final class MemcachedMonitoringService implements DriverStats
         ++$this->errors;
     }
 
+    public function recordClear(): void
+    {
+        $this->hits = 0;
+        $this->misses = 0;
+        $this->writes = 0;
+        $this->deletes = 0;
+        $this->errors = 0;
+    }
+
     // --- DriverStats Interface Implementation ---
 
     public function getDriverName(): string

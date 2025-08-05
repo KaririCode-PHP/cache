@@ -13,14 +13,13 @@ final class RateLimitingCache
     ) {
     }
 
-    public function allow(string $key, int $limit, int $window): bool
+    public function allow(string $key, int $limit): bool
     {
         // Use stampede protection if enabled
         if ($this->features->stampedeProtection) {
             return $this->cache->getWithCallback(
                 $key,
-                fn () => $this->initializeCounter(),
-                $window
+                fn () => $this->initializeCounter()
             ) <= $limit;
         }
 
@@ -30,7 +29,7 @@ final class RateLimitingCache
             return false;
         }
 
-        $this->cache->increment($key, 1, 1, $window);
+        $this->cache->increment($key, 1, 1);
 
         return true;
     }

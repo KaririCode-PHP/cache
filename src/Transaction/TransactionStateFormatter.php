@@ -29,7 +29,7 @@ final class TransactionStateFormatter
             'savepoint_count' => $state->getSavepointCount(),
             'savepoint_names' => $state->getSavepointNames(),
             'operations' => array_map(
-                [$this, 'formatOperation'], // Usa um método auxiliar para limpar a lógica
+                [$this, 'formatOperation'],
                 $state->getOperations()
             ),
         ];
@@ -47,7 +47,6 @@ final class TransactionStateFormatter
                 'type' => 'set',
                 'key' => $operation->getKey(),
                 'value_type' => gettype($operation->value),
-                'expiration' => $operation->expiration?->format(\DateTimeInterface::ATOM),
                 'timestamp' => $operation->getTimestamp()->format(\DateTimeInterface::ATOM),
             ];
         }

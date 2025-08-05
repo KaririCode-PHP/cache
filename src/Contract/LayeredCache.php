@@ -6,7 +6,7 @@ namespace KaririCode\Cache\Contract;
 
 use KaririCode\Cache\Contract\Behavioral\CompareAndSwapAware;
 use KaririCode\Cache\Contract\Behavioral\Maintainable;
-use KaririCode\Cache\Contract\Behavioral\TaggablePool;
+use KaririCode\Cache\Contract\Behavioral\Taggable;
 use KaririCode\Cache\Contract\Behavioral\TopicSubscribable;
 
 /**
@@ -23,7 +23,7 @@ use KaririCode\Cache\Contract\Behavioral\TopicSubscribable;
  *
  * @see       https://kariricode.org/
  */
-interface LayeredCache extends CacheItemPool, Maintainable, TaggablePool, TopicSubscribable, CompareAndSwapAware
+interface LayeredCache extends CacheItemPool, Maintainable, Taggable, TopicSubscribable, CompareAndSwapAware
 {
     /**
      * Adds a cache pool as a new layer with a specific priority.
@@ -38,5 +38,5 @@ interface LayeredCache extends CacheItemPool, Maintainable, TaggablePool, TopicS
      *
      * @return CacheItemPool[]
      */
-    public function getLayers(): array;
+    public function getLayers(): iterable;
 }

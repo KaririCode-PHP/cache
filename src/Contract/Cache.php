@@ -38,25 +38,22 @@ interface Cache extends
      *
      * @param string $key the cache key
      * @param callable|null $callback the callback to generate value if not cached
-     * @param \DateInterval|int|null $ttl the time-to-live for the cached item
-     * @param array $tags optional tags to associate with the cached value
+     * @param iterable $tags optional tags for cache entry
      *
      * @return mixed the cached or generated value
      */
     public function getWithCallback(
         string $key,
         ?callable $callback = null,
-        \DateInterval|int|null $ttl = null,
-        array $tags = []
+        iterable $tags = []
     ): mixed;
 
     /**
      * Warms the cache with predefined data.
      *
-     * @param array $data associative array of key-value pairs to cache
-     * @param \DateInterval|int|null $ttl the time-to-live for the cached items
+     * @param iterable $data associative iterable of key-value pairs to cache
      */
-    public function warm(array $data, \DateInterval|int|null $ttl = null): void;
+    public function warm(iterable $data): void;
 
     /**
      * Gets high-level performance metrics for the cache instance.
@@ -82,9 +79,9 @@ interface Cache extends
     /**
      * Performs cache maintenance operations.
      *
-     * @param array $options maintenance options
+     * @param iterable $options maintenance options
      *
      * @return bool true if maintenance was successful, false otherwise
      */
-    public function maintenance(array $options = []): bool;
+    public function maintenance(iterable $options = []): bool;
 }

@@ -27,15 +27,13 @@ interface Taggable extends TaggablePool
      *
      * @param string $key The unique cache key
      * @param mixed $value The value to cache
-     * @param array<string|Tag> $tags Tags to associate (HÍBRIDO)
-     * @param \DateInterval|int|null $ttl The time-to-live for the item
+     * @param iterable $tags Tags to associate with the cache item
      *
      * @return bool true on success, false on failure
      */
     public function setWithTags(
         string $key,
         mixed $value,
-        array $tags,
-        \DateInterval|int|null $ttl = null
+        iterable $tags
     ): bool;
 }

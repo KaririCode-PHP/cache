@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace KaririCode\Cache;
 
 use KaririCode\Cache\Config\CacheConfig;
-use KaririCode\Cache\Config\DTO\FeatureConfig;
 use KaririCode\Cache\Config\DTO\StoreConfig;
 use KaririCode\Cache\Contract\Cache;
 use KaririCode\Cache\Exception\ConfigurationException;
@@ -161,7 +160,7 @@ final class CacheManager
      *
      * @return list<string> a list of store names
      */
-    public function getStoreNames(): array
+    public function getStoreNames(): iterable
     {
         return $this->config->getStoreNames();
     }
@@ -171,7 +170,7 @@ final class CacheManager
      *
      * @return array<string, Cache>
      */
-    public function getLoadedCaches(): array
+    public function getLoadedCaches(): iterable
     {
         return $this->caches;
     }
@@ -221,15 +220,13 @@ final class CacheManager
      * Pre-populates all loaded caches with the given data.
      *
      * @param array<string, mixed> $data
-     *
-     * @return array<string, array{success: bool, error?: string}> an array of results for each cache
      */
-    public function warmAll(array $data, \DateInterval|int|null $ttl = null): array
+    public function warmAll(iterable $data): iterable
     {
         $results = [];
         foreach ($this->caches as $name => $cache) {
             try {
-                $cache->warm($data, $ttl);
+                $cache->warm($data);
                 $results[$name] = ['success' => true];
             } catch (\Exception $e) {
                 $this->logger->error('Cache warm failed', ['store' => $name, 'error' => $e->getMessage()]);
@@ -245,7 +242,7 @@ final class CacheManager
      *
      * @return array<string, array<string, mixed>>
      */
-    public function getAllMetrics(): array
+    public function getAllMetrics(): iterable
     {
         $metrics = [];
         foreach ($this->caches as $name => $cache) {
@@ -265,7 +262,7 @@ final class CacheManager
      *
      * @return array<string, mixed>
      */
-    public function getStats(): array
+    public function getStats(): iterable
     {
         return [
             'configured_stores' => count($this->getStoreNames()),
@@ -297,7 +294,7 @@ final class CacheManager
      *
      * @return list<string> a list of validation error messages
      */
-    public function validateConfiguration(): array
+    public function validateConfiguration(): iterable
     {
         $errors = $this->config->validate();
         foreach ($this->config->getStoreNames() as $storeName) {
@@ -359,20 +356,11 @@ final class CacheManager
             throw ConfigurationException::invalidConfiguration($storeName, 'Layered cache must have at least one layer');
         }
 
-        $this->validateFeatureDependencies($features);
-
         $this->logger->info('Store configuration validated', [
             'store' => $storeName,
             'driver' => $store->driver,
             'monitoring_enabled' => $features->hasMonitoringEnabled(),
         ]);
-    }
-
-    private function validateFeatureDependencies(FeatureConfig $features): void
-    {
-        if ($features->psr14EventsEnabled && !$features->eventsEnabled) {
-            throw ConfigurationException::invalidConfiguration('features', 'PSR-14 events require basic events to be enabled');
-        }
     }
 
     private function getStoreConfiguration(string $storeName): StoreConfig

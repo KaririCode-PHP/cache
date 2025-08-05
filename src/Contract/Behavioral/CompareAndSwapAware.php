@@ -26,9 +26,8 @@ interface CompareAndSwapAware
      * @param string $key the unique cache key
      * @param mixed $expected The expected value. The operation will fail if the current value does not match this.
      * @param mixed $value the new value to store
-     * @param \DateInterval|int|null $ttl optional TTL for the new value
      *
      * @return bool true if the value was successfully swapped, false otherwise
      */
-    public function compareAndSwap(string $key, mixed $expected, mixed $value, \DateInterval|int|null $ttl = null): bool;
+    public function compareAndSwap(string $key, mixed $expected, mixed $value): bool;
 }

@@ -42,14 +42,14 @@ final class RateLimitedCache implements Cache
         return $this->cache->get($key, $default);
     }
 
-    public function set(string $key, mixed $value, \DateInterval|int|null $ttl = null): bool
+    public function set(string $key, mixed $value): bool
     {
         if (!$this->isAllowed()) {
             return false;
         }
         $this->recordOperation();
 
-        return $this->cache->set($key, $value, $ttl);
+        return $this->cache->set($key, $value);
     }
 
     public function delete(string $key): bool
@@ -87,14 +87,14 @@ final class RateLimitedCache implements Cache
         return $this->cache->getMultiple($keys);
     }
 
-    public function setMultiple(iterable $values, \DateInterval|int|null $ttl = null): bool
+    public function setMultiple(iterable $values): bool
     {
         if (!$this->isAllowed()) {
             return false;
         }
         $this->recordOperation();
 
-        return $this->cache->setMultiple($values, $ttl);
+        return $this->cache->setMultiple($values);
     }
 
     public function deleteMultiple(iterable $keys): bool
@@ -121,58 +121,58 @@ final class RateLimitedCache implements Cache
     // AtomicOperable & CompareAndSwapAware Methods
     // ========================================================================
 
-    public function increment(string $key, int $step = 1, int $initialValue = 0, \DateInterval|int|null $ttl = null): int
+    public function increment(string $key, int $step = 1, int $initialValue = 0): int
     {
         if (!$this->isAllowed()) {
             return $initialValue;
         }
         $this->recordOperation();
 
-        return $this->cache->increment($key, $step, $initialValue, $ttl);
+        return $this->cache->increment($key, $step, $initialValue);
     }
 
-    public function decrement(string $key, int $step = 1, int $initialValue = 0, \DateInterval|int|null $ttl = null): int
+    public function decrement(string $key, int $step = 1, int $initialValue = 0): int
     {
         if (!$this->isAllowed()) {
             return $initialValue;
         }
         $this->recordOperation();
 
-        return $this->cache->decrement($key, $step, $initialValue, $ttl);
+        return $this->cache->decrement($key, $step, $initialValue);
     }
 
-    public function add(string $key, mixed $value, \DateInterval|int|null $ttl = null): bool
+    public function add(string $key, mixed $value): bool
     {
         if (!$this->isAllowed()) {
             return false;
         }
         $this->recordOperation();
 
-        return $this->cache->add($key, $value, $ttl);
+        return $this->cache->add($key, $value);
     }
 
-    public function compareAndSwap(string $key, mixed $expected, mixed $value, \DateInterval|int|null $ttl = null): bool
+    public function compareAndSwap(string $key, mixed $expected, mixed $value): bool
     {
         if (!$this->isAllowed()) {
             return false;
         }
         $this->recordOperation();
 
-        return $this->cache->compareAndSwap($key, $expected, $value, $ttl);
+        return $this->cache->compareAndSwap($key, $expected, $value);
     }
 
     // ========================================================================
     // Taggable & TopicSubscribable Methods
     // ========================================================================
 
-    public function setWithTags(string $key, mixed $value, array $tags, \DateInterval|int|null $ttl = null): bool
+    public function setWithTags(string $key, mixed $value, iterable $tags): bool
     {
         if (!$this->isAllowed()) {
             return false;
         }
         $this->recordOperation();
 
-        return $this->cache->setWithTags($key, $value, $tags, $ttl);
+        return $this->cache->setWithTags($key, $value, $tags);
     }
 
     public function invalidateTags(array $tags): bool
@@ -261,21 +261,21 @@ final class RateLimitedCache implements Cache
     // Core Cache Contract Methods
     // ========================================================================
 
-    public function getWithCallback(string $key, ?callable $callback = null, \DateInterval|int|null $ttl = null, array $tags = []): mixed
+    public function getWithCallback(string $key, ?callable $callback = null, iterable $tags = []): mixed
     {
         if (!$this->isAllowed()) {
             return $callback ? $callback() : null;
         }
         $this->recordOperation();
 
-        return $this->cache->getWithCallback($key, $callback, $ttl, $tags);
+        return $this->cache->getWithCallback($key, $callback, $tags);
     }
 
-    public function warm(array $data, \DateInterval|int|null $ttl = null): void
+    public function warm(iterable $data): void
     {
         if ($this->isAllowed()) {
             $this->recordOperation();
-            $this->cache->warm($data, $ttl);
+            $this->cache->warm($data);
         }
     }
 

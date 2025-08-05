@@ -64,7 +64,6 @@ final class ApiResponseCache
         }
 
         $key = $this->generateKey($endpoint, $params, $headers);
-        $ttl = $ttl ?? $this->calculateTtl($response);
 
         $cacheData = [
             'response' => $response,
@@ -77,7 +76,7 @@ final class ApiResponseCache
         $tagStrings = $this->generateTags($endpoint, $params);
         $tags = array_map(fn (string $tag) => new Tag($tag), $tagStrings);
 
-        return $this->cache->setWithTags($key, $cacheData, $tags, $ttl);
+        return $this->cache->setWithTags($key, $cacheData, $tags);
     }
 
     public function invalidateEndpoint(string $endpoint): bool
@@ -196,23 +195,5 @@ final class ApiResponseCache
     private function isValidResponse(array $cached): bool
     {
         return isset($cached['response'], $cached['cached_at']);
-    }
-
-    private function calculateTtl(array $response): int
-    {
-        if (isset($response['headers']['Cache-Control'])) {
-            $cacheControl = $response['headers']['Cache-Control'];
-            if (is_string($cacheControl) && preg_match('/max-age=(\d+)/', $cacheControl, $matches)) {
-                return (int) $matches[1];
-            }
-        }
-        if (isset($response['headers']['Expires'])) {
-            $expires = strtotime((string) $response['headers']['Expires']);
-            if ($expires > time()) {
-                return $expires - time();
-            }
-        }
-
-        return ($this->config['default_ttl'] ?? 3600) * 1;
     }
 }

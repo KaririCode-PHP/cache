@@ -5,320 +5,571 @@ declare(strict_types=1);
 namespace KaririCode\Cache\Operation;
 
 use KaririCode\Cache\Config\CacheConfig;
-use KaririCode\Cache\Contract\Behavioral\Maintainable;
-use KaririCode\Cache\Contract\CacheItem;
 use KaririCode\Cache\Contract\CacheSerializer;
 use KaririCode\Cache\Contract\LayeredCache as LayeredCacheContract;
 use KaririCode\Cache\Contract\MetricsCollector as MetricsCollectorContract;
+use KaririCode\Cache\Contract\Provider\ExpirationProvider;
 use KaririCode\Cache\Contract\StampedeProtector as StampedeProtectorContract;
 use KaririCode\Cache\Event\CacheMissEvent;
 use KaririCode\Cache\Event\CacheWarmupEvent;
 use KaririCode\Cache\Exception\CacheException;
-use KaririCode\Cache\Item\AdvancedCacheProxy;
+use KaririCode\Cache\Exception\InvalidArgumentException;
+use KaririCode\Cache\Item\CacheItem;
 use KaririCode\Cache\Metrics\CacheMetrics;
 use KaririCode\Cache\Metrics\MetricsCollector;
 use KaririCode\Cache\Protection\StampedeProtector;
-use KaririCode\Cache\Serializer\NativeSerializer;
+use KaririCode\Cache\Validation\Trait\CacheKeyValidationTrait;
+use KaririCode\Cache\Validation\Trait\CacheValueValidationTrait;
+use KaririCode\Cache\Validation\Trait\TtlValidationTrait;
 use KaririCode\Cache\ValueObject\Tag;
 use Psr\EventDispatcher\EventDispatcherInterface;
 use Psr\Log\LoggerInterface;
 
 /**
- * Handles advanced cache operations (callbacks, atomic operations, metrics).
- * Follows SRP by focusing only on advanced features.
+ * Enhanced AdvancedCacheOperations with proper TTL/expiration handling.
+ *
+ * This class handles advanced cache operations including callbacks, stampede
+ * protection, cache warming, and metrics collection while maintaining
+ * consistent TTL/expiration behavior across all operations.
+ *
+ * Key improvements:
+ * - Consistent TTL/expiration handling using ExpirationProvider
+ * - Enhanced stampede protection with proper TTL propagation
+ * - Cache warming operations with TTL support
+ * - Comprehensive metrics collection and reporting
+ * - Compare-and-swap operations with TTL handling
+ * - Enhanced error handling and logging
+ * - PSR-14 event dispatching support
+ * - Type safety with strict typing
+ *
+ * Design Patterns Applied:
+ * - Strategy Pattern: ExpirationProvider for TTL management
+ * - Decorator Pattern: StampedeProtector for cache stampede protection
+ * - Observer Pattern: Event dispatching and metrics collection
+ * - Template Method: Consistent operation flow
+ * - Factory Pattern: Component initialization
+ *
+ * @category  Cache
+ *
+ * @author    Walmir Silva <walmir.silva@kariricode.org>
+ * @license   MIT
+ *
+ * @see       https://kariricode.org/
+ * @see       StampedeProtector for cache stampede protection
+ * @see       ExpirationProvider for TTL management strategy
  */
 final class AdvancedCacheOperations
 {
-    private readonly CacheSerializer $serializer;
+    use CacheKeyValidationTrait;
+    use CacheValueValidationTrait;
+    use TtlValidationTrait;
+
     private readonly StampedeProtectorContract $stampedeProtector;
     private MetricsCollectorContract $metricsCollector;
 
-    /**
-     * @param LayeredCacheContract $layeredCache the underlying layered cache pool
-     * @param CacheSerializer|null $serializer the serializer for cache values
-     * @param LoggerInterface $logger a PSR-3 logger instance
-     * @param EventDispatcherInterface|null $eventDispatcher a PSR-14 event dispatcher
-     * @param CacheConfig $config the cache configuration
-     */
     public function __construct(
         private readonly LayeredCacheContract $layeredCache,
-        ?CacheSerializer $serializer,
+        private readonly ExpirationProvider $expirationProvider,
+        private readonly CacheSerializer $serializer,
         private readonly LoggerInterface $logger,
         private readonly ?EventDispatcherInterface $eventDispatcher,
-        CacheConfig $config
+        private readonly CacheConfig $config
     ) {
-        $this->serializer = $serializer ?? new NativeSerializer();
+        $this->stampedeProtector = new StampedeProtector();
         $this->metricsCollector = new MetricsCollector();
-
-        $features = $config->getFeatureConfig();
-
-        $this->stampedeProtector = new StampedeProtector(
-            $features->stampedeProtection,
-            $config->get('stampede_lock_timeout', 10),
-            $config->get('stampede_lock_retry_delay', 100)
-        );
     }
 
-    /**
-     * @param Tag[] $tags
-     *
-     * @throws CacheException
-     */
-    public function getWithCallback(string $key, callable $callback, \DateInterval|int|null $ttl = null, array $tags = []): mixed
-    {
+    // ========================================================================
+    // Advanced Cache Operations with Enhanced TTL Support
+    // ========================================================================
+    public function getWithCallback(
+        string $key,
+        ?callable $callback = null,
+        iterable $tags = [],
+    ): mixed {
+        $this->validateKey($key);
+
+        $startTime = microtime(true);
+
         try {
+            // Try to get from cache first
             $item = $this->layeredCache->getItem($key);
 
             if ($item->isHit()) {
-                $startTime = microtime(true);
-                $value = $this->deserialize($item->get());
-                $this->metricsCollector = $this->metricsCollector->recordHit($key, microtime(true) - $startTime);
+                $value = $this->deserializeValue($item->get());
+                $retrievalTime = microtime(true) - $startTime;
+
+                $this->metricsCollector = $this->metricsCollector->recordHit($key, $retrievalTime);
+
+                $this->logger->debug('Cache hit with callback', [
+                    'key' => $key,
+                    'retrieval_time_ms' => round($retrievalTime * 1000, 2),
+                ]);
 
                 return $value;
             }
 
-            $this->metricsCollector = $this->metricsCollector->recordMiss($key);
-            $startTime = microtime(true);
+            // Cache miss - use callback if provided
+            if (null === $callback) {
+                $this->metricsCollector = $this->metricsCollector->recordMiss($key);
+                $this->dispatchMissEvent($key);
 
-            $value = $this->stampedeProtector->get($key, $callback, $ttl);
+                $this->logger->debug('Cache miss without callback', ['key' => $key]);
 
-            $this->metricsCollector = $this->metricsCollector->recordGeneration($key, microtime(true) - $startTime);
-
-            $serialized = $this->serialize($value);
-            $item->set($serialized);
-
-            if (null !== $ttl) {
-                $item->expiresAfter($ttl);
+                return null;
             }
 
-            if (!empty($tags) && $item instanceof CacheItem) {
-                $item->tag($tags);
-            }
+            // Use stampede protection to prevent thundering herd
+            return $this->stampedeProtector->get($key, function () use ($key, $callback, $tags, $startTime) {
+                $generationStartTime = microtime(true);
 
-            $this->layeredCache->save($item);
+                try {
+                    $value = $callback();
+                    $generationTime = microtime(true) - $generationStartTime;
 
-            $this->dispatchMissWithCallbackEvent($key);
+                    // Store the generated value with proper TTL
+                    $this->storeWithTagsAndTtl($key, $value, $tags);
 
-            return $value;
-        } catch (\Throwable $e) {
-            $this->logger->error('Cache getWithCallback operation failed', [
+                    $totalTime = microtime(true) - $startTime;
+
+                    $this->metricsCollector = $this->metricsCollector
+                        ->recordMiss($key)
+                        ->recordGeneration($key, $generationTime);
+
+                    $this->dispatchMissEvent($key);
+
+                    $this->logger->info('Cache value generated', [
+                        'key' => $key,
+                        'generation_time_ms' => round($generationTime * 1000, 2),
+                        'total_time_ms' => round($totalTime * 1000, 2),
+                    ]);
+
+                    return $value;
+                } catch (\Throwable $exception) {
+                    $this->logger->error('Cache callback execution failed', [
+                        'key' => $key,
+                        'error' => $exception->getMessage(),
+                    ]);
+
+                    throw CacheException::operationFailed('callback', $key, $exception);
+                }
+            }, $this->resolveTtlToSeconds($key, 'getWithCallback'));
+        } catch (\Throwable $exception) {
+            $this->logger->error('Get with callback operation failed', [
                 'key' => $key,
-                'error' => $e->getMessage(),
+                'error' => $exception->getMessage(),
             ]);
-            throw CacheException::operationFailed('getWithCallback', $key, $e);
+
+            throw CacheException::operationFailed('getWithCallback', $key, $exception);
         }
     }
 
     /**
-     * @throws CacheException
-     */
-    public function increment(string $key, int $step = 1, int $initialValue = 0, \DateInterval|int|null $ttl = null): int
-    {
-        try {
-            $startTime = microtime(true);
-            $value = $this->layeredCache->increment($key, $step, $initialValue, $ttl);
-            $this->metricsCollector = $this->metricsCollector->recordGeneration($key, microtime(true) - $startTime);
-
-            return $value;
-        } catch (\Throwable $e) {
-            $this->logger->error('Cache increment operation failed', [
-                'key' => $key,
-                'step' => $step,
-                'error' => $e->getMessage(),
-            ]);
-            throw CacheException::operationFailed('increment', $key, $e);
-        }
-    }
-
-    /**
-     * @throws CacheException
-     */
-    public function decrement(string $key, int $step = 1, int $initialValue = 0, \DateInterval|int|null $ttl = null): int
-    {
-        try {
-            $startTime = microtime(true);
-            $value = $this->layeredCache->decrement($key, $step, $initialValue, $ttl);
-            $this->metricsCollector = $this->metricsCollector->recordGeneration($key, microtime(true) - $startTime);
-
-            return $value;
-        } catch (\Throwable $e) {
-            $this->logger->error('Cache decrement operation failed', [
-                'key' => $key,
-                'step' => $step,
-                'error' => $e->getMessage(),
-            ]);
-            throw CacheException::operationFailed('decrement', $key, $e);
-        }
-    }
-
-    /**
-     * @throws CacheException
-     */
-    public function add(string $key, mixed $value, \DateInterval|int|null $ttl = null): bool
-    {
-        try {
-            $startTime = microtime(true);
-            $serialized = $this->serialize($value);
-            $result = $this->layeredCache->add($key, $serialized, $ttl);
-            if ($result) {
-                $this->metricsCollector = $this->metricsCollector->recordGeneration($key, microtime(true) - $startTime);
-            }
-
-            return $result;
-        } catch (\Throwable $e) {
-            $this->logger->error('Cache add operation failed', [
-                'key' => $key,
-                'error' => $e->getMessage(),
-            ]);
-            throw CacheException::operationFailed('add', $key, $e);
-        }
-    }
-
-    /**
-     * @throws CacheException
-     */
-    public function compareAndSwap(string $key, mixed $expected, mixed $value, \DateInterval|int|null $ttl = null): bool
-    {
-        try {
-            $startTime = microtime(true);
-            $serializedExpected = $this->serialize($expected);
-            $serializedValue = $this->serialize($value);
-
-            $result = $this->layeredCache->compareAndSwap($key, $serializedExpected, $serializedValue, $ttl);
-
-            if ($result) {
-                $this->metricsCollector = $this->metricsCollector
-                    ->recordGeneration($key, microtime(true) - $startTime);
-            }
-
-            return $result;
-        } catch (\Throwable $e) {
-            $this->logger->error('Cache compareAndSwap operation failed', [
-                'key' => $key,
-                'error' => $e->getMessage(),
-            ]);
-            throw CacheException::operationFailed('compareAndSwap', $key, $e);
-        }
-    }
-
-    /**
-     * @param array<string, mixed> $data
+     * Warms the cache with predefined data and proper TTL handling.
      *
-     * @throws CacheException
+     * @param iterable<string, mixed> $data Key-value pairs to cache
+     * @param iterable<string|Tag> $tags Optional tags for all cached items
+     *
+     * @throws CacheException When cache operation fails
+     * @throws InvalidArgumentException When parameters are invalid
+     *
+     * @return array<string, bool> Results of warm-up operations per key
+     *
+     * @example
+     * ```php
+     * $warmupData = [
+     *     'config:app' => $appConfig,
+     *     'config:db' => $dbConfig,
+     * ];
+     * $results = $advancedOps->warm($warmupData, 3600, ['config']);
+     * ```
      */
-    public function warmup(array $data, \DateInterval|int|null $ttl = null): void
-    {
+    public function warm(
+        iterable $data,
+        iterable $tags = []
+    ): array {
+        $data = $this->validateAndNormalizeValues($data);
+
+        if (empty($data)) {
+            return [];
+        }
+
+        $startTime = microtime(true);
+        $results = [];
+
         try {
-            $this->dispatchWarmupEvent($data, $ttl);
+            $normalizedTags = $this->normalizeTags($tags);
+            $expiration = $this->resolveExpiration('warmup_operation', 'warm');
 
-            $serializedData = [];
             foreach ($data as $key => $value) {
-                $serializedData[$key] = $this->serialize($value);
-            }
+                try {
+                    $this->validateKey($key);
+                    $this->validateValue($value);
 
-            $items = $this->layeredCache->getItems(array_keys($serializedData));
-            foreach ($items as $item) {
-                if (isset($serializedData[$item->getKey()])) {
-                    $item->set($serializedData[$item->getKey()]);
-                    if (null !== $ttl) {
-                        $item->expiresAfter($ttl);
+                    if (!empty($normalizedTags)) {
+                        $success = $this->layeredCache->setWithTags($key, $value, $normalizedTags, $expiration);
+                    } else {
+                        $item = new CacheItem($key, $this->serializeValue($value), false);
+                        if (null !== $expiration) {
+                            $item->expiresAt($expiration);
+                        }
+                        $success = $this->layeredCache->save($item);
                     }
-                    $this->layeredCache->saveDeferred($item);
+
+                    $results[$key] = $success;
+                } catch (\Throwable $exception) {
+                    $results[$key] = false;
+                    $this->logger->warning('Individual warm-up operation failed', [
+                        'key' => $key,
+                        'error' => $exception->getMessage(),
+                    ]);
                 }
             }
-            $this->layeredCache->commit();
-        } catch (\Throwable $e) {
-            $this->logger->error('Cache warmup operation failed', ['error' => $e->getMessage()]);
-            throw CacheException::operationFailed('warmup', 'multiple', $e);
+
+            $operationTime = microtime(true) - $startTime;
+            $successCount = count(array_filter($results));
+
+            $this->dispatchWarmupEvent(array_keys($data), $successCount, $operationTime);
+
+            $this->logger->info('Cache warm-up completed', [
+                'items_count' => count($data),
+                'success_count' => $successCount,
+                'failure_count' => count($data) - $successCount,
+                'operation_time_ms' => round($operationTime * 1000, 2),
+            ]);
+
+            return $results;
+        } catch (\Throwable $exception) {
+            $this->logger->error('Cache warm-up operation failed', [
+                'items_count' => count($data),
+                'error' => $exception->getMessage(),
+            ]);
+
+            throw CacheException::operationFailed('warm', 'batch', $exception);
         }
     }
 
     /**
-     * @param array<string, mixed> $options
+     * Compare-and-swap operation with proper TTL handling.
+     *
+     * @param string $key The cache key
+     * @param mixed $expected The expected current value
+     * @param mixed $value The new value to set
+     *
+     * @throws CacheException When cache operation fails
+     * @throws InvalidArgumentException When parameters are invalid
+     *
+     * @return bool True if the operation succeeded (current value matched expected)
+     *
+     * @example
+     * ```php
+     * // Atomic counter increment with TTL
+     * $success = $advancedOps->compareAndSwap('counter', 10, 11, 3600);
+     *
+     * // Update with DateInterval TTL
+     * $success = $advancedOps->compareAndSwap(
+     *     'user:status',
+     *     'offline',
+     *     'online',
+     *     new DateInterval('PT30M')
+     * );
+     * ```
+     */
+    public function compareAndSwap(
+        string $key,
+        mixed $expected,
+        mixed $value
+    ): bool {
+        $this->validateKey($key);
+        $this->validateValue($expected);
+        $this->validateValue($value);
+
+        $startTime = microtime(true);
+
+        try {
+            $expiration = $this->resolveExpiration($key, 'compareAndSwap');
+            $success = $this->layeredCache->compareAndSwap($key, $expected, $value, $expiration);
+
+            $operationTime = microtime(true) - $startTime;
+
+            $this->logger->debug('Compare-and-swap completed', [
+                'key' => $key,
+                'success' => $success,
+                'operation_time_ms' => round($operationTime * 1000, 2),
+            ]);
+
+            return $success;
+        } catch (\Throwable $exception) {
+            $this->logger->error('Compare-and-swap operation failed', [
+                'key' => $key,
+                'error' => $exception->getMessage(),
+            ]);
+
+            throw CacheException::operationFailed('compareAndSwap', $key, $exception);
+        }
+    }
+
+    /**
+     * Gets high-level performance metrics for the cache instance.
+     *
+     * @return CacheMetrics Cache performance metrics as an immutable object
+     */
+    public function getMetrics(): CacheMetrics
+    {
+        $rawMetrics = $this->metricsCollector->getMetrics();
+
+        return new CacheMetrics(
+            $rawMetrics
+        );
+    }
+
+    /**
+     * Resets performance metrics.
+     */
+    public function resetMetrics(): void
+    {
+        $this->metricsCollector = $this->metricsCollector->reset();
+        $this->logger->debug('Cache metrics reset');
+    }
+
+    /**
+     * Performs cache maintenance operations.
+     *
+     * @param array<string, mixed> $options Maintenance options
+     *
+     * @throws CacheException When maintenance operation fails
+     *
+     * @return bool True if maintenance was successful
      */
     public function maintenance(array $options = []): bool
     {
-        $overallSuccess = true;
+        $startTime = microtime(true);
+
         try {
-            foreach ($this->layeredCache->getLayers() as $layer) {
-                if ($layer instanceof Maintainable) {
-                    if (!$layer->maintenance($options)) {
-                        $overallSuccess = false;
-                        $this->logger->warning('Maintenance failed for a cache layer.', [
-                            'layer' => get_class($layer),
-                            'options' => $options,
-                        ]);
-                    }
-                }
+            $success = $this->layeredCache->maintenance($options);
+            $operationTime = microtime(true) - $startTime;
+
+            if ($options['reset_metrics'] ?? false) {
+                $this->resetMetrics();
             }
 
-            if ($overallSuccess) {
-                $this->logger->info('Cache maintenance completed successfully for all applicable layers.', ['options' => $options]);
-            }
-
-            return $overallSuccess;
-        } catch (\Throwable $e) {
-            $this->logger->error('An unexpected error occurred during cache maintenance', [
-                'error' => $e->getMessage(),
+            $this->logger->info('Cache maintenance completed', [
+                'success' => $success,
                 'options' => $options,
+                'operation_time_ms' => round($operationTime * 1000, 2),
+            ]);
+
+            return $success;
+        } catch (\Throwable $exception) {
+            $this->logger->error('Cache maintenance failed', [
+                'options' => $options,
+                'error' => $exception->getMessage(),
+            ]);
+
+            throw CacheException::operationFailed('maintenance', 'system', $exception);
+        }
+    }
+
+    /**
+     * Checks if the cache is healthy and operational.
+     *
+     * @return bool True if cache is healthy
+     */
+    public function isHealthy(): bool
+    {
+        try {
+            $testKey = '__health_check_' . uniqid();
+            $testValue = microtime(true);
+
+            // Test basic operations
+            $setSuccess = $this->layeredCache->save(new CacheItem($testKey, $testValue, false));
+            if (!$setSuccess) {
+                return false;
+            }
+
+            $item = $this->layeredCache->getItem($testKey);
+            if (!$item->isHit() || $item->get() !== $testValue) {
+                return false;
+            }
+
+            $deleteSuccess = $this->layeredCache->deleteItem($testKey);
+            if (!$deleteSuccess) {
+                return false;
+            }
+
+            return true;
+        } catch (\Throwable $exception) {
+            $this->logger->error('Health check failed', [
+                'error' => $exception->getMessage(),
             ]);
 
             return false;
         }
     }
 
-    public function getMetrics(): CacheMetrics
-    {
-        return new CacheMetrics($this->metricsCollector->getMetrics());
+    // ========================================================================
+    // Private Helper Methods
+    // ========================================================================
+
+    /**
+     * Stores a value with tags and TTL support.
+     */
+    private function storeWithTagsAndTtl(
+        string $key,
+        mixed $value,
+        iterable $tags
+    ): bool {
+        $normalizedTags = $this->normalizeTags($tags);
+        $expiration = $this->resolveExpiration($key, 'store');
+
+        if (!empty($normalizedTags)) {
+            return $this->layeredCache->setWithTags($key, $value, $normalizedTags, $expiration);
+        }
+
+        $serializedValue = $this->serializeValue($value);
+        $item = new CacheItem($key, $serializedValue, false);
+
+        if (null !== $expiration) {
+            $item->expiresAt($expiration);
+        }
+
+        return $this->layeredCache->save($item);
     }
 
     /**
-     * @return array<string, mixed>
+     * Resolves expiration time using ExpirationProvider strategy.
      */
-    public function getHealthCheck(): array
+    private function resolveExpiration(string $key, string $operation): ?\DateTimeInterface
     {
-        return [
-            'status' => 'healthy',
-            'layers' => count($this->layeredCache->getLayers()),
-            'metrics' => $this->getMetrics()->toArray(),
-            'stampede_protection' => $this->stampedeProtector->isEnabled(),
-            'timestamp' => time(),
-        ];
+        $providerTtl = $this->expirationProvider->getTtlForKey($key);
+
+        return $this->expirationProvider->calculateExpiration($providerTtl);
     }
 
-    public function getItemPool(): \Psr\Cache\CacheItemPoolInterface
+    /**
+     * Converts TTL to seconds for stampede protector.
+     */
+    private function resolveTtlToSeconds(string $key, string $operation): ?int
     {
-        return new AdvancedCacheProxy($this->layeredCache, $this->serializer);
-    }
+        $expiration = $this->resolveExpiration($key, $operation);
 
-    private function serialize(mixed $value): string
-    {
-        return $this->serializer->serialize($value);
-    }
-
-    private function deserialize(mixed $data): mixed
-    {
-        if (!is_string($data)) {
-            return $data;
+        if (null === $expiration) {
+            return null;
         }
 
-        return $this->serializer->unserialize($data);
+        return max(0, $expiration->getTimestamp() - time());
     }
 
-    private function dispatchMissWithCallbackEvent(string $key): void
+    /**
+     * Serializes a value for storage.
+     */
+    private function serializeValue(mixed $value): mixed
     {
-        if ($this->eventDispatcher) {
-            $this->eventDispatcher->dispatch(new CacheMissEvent($key, true));
+        try {
+            return $this->serializer->serialize($value);
+        } catch (\Throwable $exception) {
+            throw CacheException::serializationFailed('value', $exception);
         }
     }
 
     /**
-     * @param array<string, mixed> $data
+     * Deserializes a value from storage.
      */
-    private function dispatchWarmupEvent(array $data, \DateInterval|int|null $ttl): void
+    private function deserializeValue(mixed $value): mixed
     {
-        if ($this->eventDispatcher) {
-            $this->eventDispatcher->dispatch(new CacheWarmupEvent($data, $ttl));
+        try {
+            return $this->serializer->unserialize($value);
+        } catch (\Throwable $exception) {
+            throw CacheException::deserializationFailed('value', $exception);
         }
+    }
+
+    /**
+     * Validates and normalizes an iterable of key-value pairs.
+     */
+    private function validateAndNormalizeValues(iterable $values): array
+    {
+        $normalizedValues = [];
+
+        foreach ($values as $key => $value) {
+            if (!is_string($key)) {
+                throw InvalidArgumentException::invalidKeyFormat('All keys must be strings');
+            }
+
+            $this->validateKey($key);
+            $this->validateValue($value);
+            $normalizedValues[$key] = $value;
+        }
+
+        return $normalizedValues;
+    }
+
+    /**
+     * Normalizes mixed tag input to consistent Tag objects.
+     */
+    private function normalizeTags(iterable $tags): array
+    {
+        $normalizedTags = [];
+
+        foreach ($tags as $tag) {
+            if ($tag instanceof Tag) {
+                $normalizedTags[] = $tag;
+            } elseif (is_string($tag)) {
+                if (empty(trim($tag))) {
+                    throw InvalidArgumentException::invalidTag('Tag name cannot be empty');
+                }
+                $normalizedTags[] = new Tag($tag);
+            } else {
+                throw InvalidArgumentException::invalidTag('Tags must be strings or Tag objects, got: ' . get_debug_type($tag));
+            }
+        }
+
+        return array_unique($normalizedTags, SORT_REGULAR);
+    }
+
+    /**
+     * Formats TTL for logging purposes.
+     */
+    private function formatTtlForLogging(\DateInterval|int|null $ttl): ?string
+    {
+        if (null === $ttl) {
+            return 'default';
+        }
+
+        if ($ttl instanceof \DateInterval) {
+            return $ttl->format('P%yY%mM%dDT%hH%iM%sS');
+        }
+
+        return "{$ttl}s";
+    }
+
+    // ========================================================================
+    // Event Dispatching Methods
+    // ========================================================================
+
+    /**
+     * Dispatches cache miss event.
+     */
+    private function dispatchMissEvent(string $key): void
+    {
+        if (null === $this->eventDispatcher) {
+            return;
+        }
+
+        $event = new CacheMissEvent($key);
+        $this->eventDispatcher->dispatch($event);
+    }
+
+    /**
+     * Dispatches cache warmup event.
+     */
+    private function dispatchWarmupEvent(array $keys, int $successCount, float $duration): void
+    {
+        if (null === $this->eventDispatcher) {
+            return;
+        }
+
+        $event = new CacheWarmupEvent($keys, $successCount, $duration);
+        $this->eventDispatcher->dispatch($event);
     }
 }

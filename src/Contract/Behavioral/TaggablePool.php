@@ -21,25 +21,25 @@ interface TaggablePool
     /**
      * Invalidates all cache items associated with the given tags.
      *
-     * @param array<string|Tag> $tags Tags to invalidate (can be strings or Tag objects)
+     * @param iterable<string|Tag> $tags Tags to invalidate (can be strings or Tag objects)
      *
      * @return bool True on success, false on failure
      */
-    public function invalidateTags(array $tags): bool;
+    public function invalidateTags(iterable $tags): bool;
 
     /**
      * Retrieves cache items associated with the given tags.
      *
-     * @param array<string|Tag> $tags Tags to search for (can be strings or Tag objects)
+     * @param iterable<string|Tag> $tags Tags to search for (can be strings or Tag objects)
      *
-     * @return array<string, mixed> Cache items indexed by their keys
+     * @return iterable<string, mixed> Cache items indexed by their keys
      */
-    public function getByTags(array $tags): array;
+    public function getByTags(iterable $tags): iterable;
 
     /**
      * Returns all tags currently in use in the cache pool.
      *
-     * @return array<Tag> Array of Tag objects
+     * @return iterable<Tag> iterable of Tag objects
      */
-    public function getTags(): array;
+    public function getTags(): iterable;
 }

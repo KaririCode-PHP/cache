@@ -9,19 +9,15 @@ use KaririCode\Cache\Exception\InvalidArgumentException;
 
 final class SetOperation implements Operation
 {
-    public readonly string $key;
-    public readonly mixed $value;
-    public readonly ?\DateTimeInterface $expiration;
     public readonly \DateTimeImmutable $timestamp;
 
-    public function __construct(string $key, mixed $value, ?\DateTimeInterface $expiration)
-    {
+    public function __construct(
+        public readonly string $key,
+        public readonly mixed $value
+    ) {
         if ('' === $key) {
             throw InvalidArgumentException::emptyKey();
         }
-        $this->key = $key;
-        $this->value = $value;
-        $this->expiration = $expiration;
         $this->timestamp = new \DateTimeImmutable();
     }
 

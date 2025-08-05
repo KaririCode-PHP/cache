@@ -4,32 +4,31 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Driver\Array\Operation;
 
+use KaririCode\Cache\Contract\Provider\ExpirationProvider;
 use KaririCode\Cache\Validation\Trait\CacheKeyValidationTrait;
 use KaririCode\Cache\Validation\Trait\TopicValidationTrait;
 use KaririCode\Cache\ValueObject\Topic;
+use KaririCode\Contract\DataStructure\Map;
+use KaririCode\DataStructure\Set\TreeSet;
 
 /**
- * Handles topic-based cache operations for ArrayDriver.
+ * Handles topic-based cache operations for ArrayDriver with ExpirationProvider support.
  *
- * This class follows the established architectural pattern by separating
- * topic operations from the main driver class, maintaining consistency with
- * other drivers like RedisTopicOperations and MemcachedTopicOperations.
+ * This class manages topic subscription and invalidation operations with proper
+ * TTL management using the Strategy Pattern through ExpirationProvider.
+ * Uses KaririCode\DataStructure components for efficient storage management.
  *
- * Key features:
- * - Follows SRP by focusing solely on topic operations
- * - Uses TopicValidationTrait for consistent validation
- * - Maintains reference-based access to storage for performance
- * - Implements proper Topic object handling
- * - Provides subscription-based cache invalidation
+ * Design Patterns Applied:
+ * - Strategy Pattern: ExpirationProvider for TTL management
+ * - Single Responsibility: Handles only topic operations
+ * - Dependency Injection: All dependencies injected via constructor
  *
  * @category  Cache
  *
  * @author    Walmir Silva <walmir.silva@kariricode.org>
  * @license   MIT
  *
- * @see      https://kariricode.org/
- * @see       TopicValidationTrait for validation logic
- * @see       Topic for topic value objects
+ * @see       https://kariricode.org/
  */
 final class ArrayTopicOperations
 {
@@ -37,252 +36,153 @@ final class ArrayTopicOperations
     use TopicValidationTrait;
 
     /**
-     * @param array<string, mixed> $storage Reference to main storage array
-     * @param array<string, int> $expirations Reference to expiration tracking
-     * @param array<string, list<string>> $topicIndex Reference to topic index
+     * Constructor applying Dependency Injection pattern.
+     *
+     * @param Map $storage Main cache storage
+     * @param Map $expirations Expiration timestamps storage
+     * @param Map $topicIndex Topic to keys mapping
      * @param callable $removeFromIndexesCallback Callback to remove keys from all indexes
+     * @param ExpirationProvider $expirationProvider Strategy for TTL management
      */
     public function __construct(
-        private array &$storage,
-        private array &$expirations,
-        private array &$topicIndex,
-        private $removeFromIndexesCallback
+        private readonly Map $storage,
+        private readonly Map $expirations,
+        private readonly Map $topicIndex,
+        private readonly mixed $removeFromIndexesCallback,
+        private readonly ExpirationProvider $expirationProvider
     ) {
     }
 
     /**
-     * Subscribes a cache key to one or more topics.
-     *
-     * This method allows cache keys to be associated with topics for
-     * event-driven invalidation. When a topic is invalidated, all
-     * subscribed keys are automatically removed from cache.
+     * Subscribes a cache key to one or more topics with TTL support.
      *
      * @param string $key The cache key to subscribe
-     * @param array<Topic> $topics Array of Topic objects to subscribe to
-     *
-     * @example
-     * ```php
-     * $topicOps->subscribeTo('user:123', [
-     *     new Topic('user.profile.updated'),
-     *     new Topic('user.permissions.changed')
-     * ]);
-     * ```
+     * @param iterable<string|Topic> $topics Topics to subscribe to
      */
-    public function subscribeTo(string $key, array $topics): void
+    public function subscribeTo(string $key, iterable $topics): void
     {
         $this->validateKey($key);
-        $this->validateTopics($topics);
 
-        foreach ($topics as $topic) {
-            $topicString = (string) $topic;
+        $normalizedTopics = $this->normalizeTopics($topics);
+        if (empty($normalizedTopics)) {
+            return; // No topics to subscribe to
+        }
 
-            if (!isset($this->topicIndex[$topicString])) {
-                $this->topicIndex[$topicString] = [];
-            }
+        $this->validateTopics($normalizedTopics);
 
-            // Avoid duplicates in topic index
-            if (!in_array($key, $this->topicIndex[$topicString], true)) {
-                $this->topicIndex[$topicString][] = $key;
-            }
+        foreach ($normalizedTopics as $topic) {
+            $this->addTopicSubscription((string) $topic, $key);
         }
     }
 
     /**
-     * Invalidates all cache keys subscribed to the given topics.
+     * Invalidates all cache keys subscribed to the provided topics.
      *
-     * This method implements efficient topic-based invalidation by removing
-     * all cache items associated with the specified topics and cleaning up
-     * the topic indices.
+     * @param iterable<string|Topic> $topics Topics to invalidate
      *
-     * @param array<Topic> $topics Array of Topic objects to invalidate
-     *
-     * @return bool True if topics were successfully invalidated, false otherwise
-     *
-     * @example
-     * ```php
-     * $success = $topicOps->invalidateTopics([
-     *     new Topic('user.profile.updated'),
-     *     new Topic('cache.refresh.all')
-     * ]);
-     * ```
+     * @return bool true if the operation was successful
      */
-    public function invalidateTopics(array $topics): bool
+    public function invalidateTopics(iterable $topics): bool
     {
-        $this->validateTopics($topics);
+        $normalizedTopics = $this->normalizeTopics($topics);
+        if (empty($normalizedTopics)) {
+            return true; // No topics to invalidate
+        }
 
-        $keysToInvalidate = [];
+        $this->validateTopics($normalizedTopics);
 
-        // Collect all keys subscribed to the topics
-        foreach ($topics as $topic) {
-            $topicString = (string) $topic;
-            if (isset($this->topicIndex[$topicString])) {
-                $keysToInvalidate = array_merge($keysToInvalidate, $this->topicIndex[$topicString]);
-                // Remove the topic index completely
-                unset($this->topicIndex[$topicString]);
+        $keysToDelete = new TreeSet();
+
+        // Collect all keys from all topics
+        foreach ($normalizedTopics as $topic) {
+            $topicName = (string) $topic;
+            if ($this->topicIndex->containsKey($topicName)) {
+                $keysSet = $this->topicIndex->get($topicName);
+                if ($keysSet instanceof TreeSet) {
+                    foreach ($keysSet->getItems() as $key) {
+                        $keysToDelete->add($key);
+                    }
+                }
+
+                // Clear the topic index
+                $this->topicIndex->remove($topicName);
             }
         }
 
-        // Remove duplicates
-        $keysToInvalidate = array_unique($keysToInvalidate);
-
-        // Delete all associated keys
-        foreach ($keysToInvalidate as $key) {
-            unset($this->storage[$key], $this->expirations[$key]);
-            // Remove from other indices (tags, etc.)
-            ($this->removeFromIndexesCallback)($key);
+        // Delete all subscribed keys using the callback
+        foreach ($keysToDelete->getItems() as $key) {
+            if ($this->removeFromIndexesCallback) {
+                call_user_func($this->removeFromIndexesCallback, $key);
+            }
         }
 
         return true;
     }
 
     /**
-     * Gets all cache keys subscribed to a specific topic.
-     *
-     * This method is useful for debugging and administrative purposes,
-     * allowing inspection of topic-to-key relationships.
-     *
-     * @param Topic $topic The topic to search for
-     *
-     * @return array<string> Array of keys subscribed to the topic
-     */
-    public function getSubscribedKeys(Topic $topic): array
-    {
-        $topicString = (string) $topic;
-
-        return $this->topicIndex[$topicString] ?? [];
-    }
-
-    /**
-     * Gets all topics currently in use.
-     *
-     * This method returns all topic strings that currently have subscribed
-     * cache items, providing visibility into the topic ecosystem.
-     *
-     * @return array<string> Array of unique topic strings currently in use
-     */
-    public function getTopics(): array
-    {
-        return array_keys($this->topicIndex);
-    }
-
-    /**
-     * Unsubscribes a cache key from specific topics.
-     *
-     * This method allows fine-grained control over topic subscriptions
-     * by removing a key from specific topics without affecting other
-     * topic associations.
-     *
-     * @param string $key The cache key to unsubscribe
-     * @param array<Topic> $topics Array of Topic objects to unsubscribe from
-     *
-     * @example
-     * ```php
-     * $topicOps->unsubscribeFrom('user:123', [
-     *     new Topic('user.profile.updated')
-     * ]);
-     * ```
-     */
-    public function unsubscribeFrom(string $key, array $topics): void
-    {
-        $this->validateKey($key);
-        $this->validateTopics($topics);
-
-        foreach ($topics as $topic) {
-            $topicString = (string) $topic;
-
-            if (isset($this->topicIndex[$topicString])) {
-                $keys = &$this->topicIndex[$topicString];
-                if (($index = array_search($key, $keys, true)) !== false) {
-                    unset($keys[$index]);
-                    // Reindex array to maintain sequential indices
-                    $keys = array_values($keys);
-
-                    // Remove empty topic indices
-                    if (empty($keys)) {
-                        unset($this->topicIndex[$topicString]);
-                    }
-                }
-            }
-        }
-    }
-
-    /**
-     * Removes a key from the topic index when the key is deleted.
-     *
-     * This method is called internally when keys are removed to maintain
-     * index consistency and prevent memory leaks.
-     *
-     * @param string $key The key to remove from topic indices
-     */
-    public function removeKeyFromTopicIndex(string $key): void
-    {
-        foreach ($this->topicIndex as $topic => &$keys) {
-            if (($index = array_search($key, $keys, true)) !== false) {
-                unset($keys[$index]);
-                // Reindex array to maintain sequential indices
-                $keys = array_values($keys);
-
-                // Remove empty topic indices
-                if (empty($keys)) {
-                    unset($this->topicIndex[$topic]);
-                }
-            }
-        }
-    }
-
-    /**
-     * Gets all topics a specific key is subscribed to.
-     *
-     * This method is useful for understanding the topic associations
-     * of a particular cache key.
+     * Gets all topics that a specific key is subscribed to.
      *
      * @param string $key The cache key to check
      *
-     * @return array<string> Array of topic strings the key is subscribed to
+     * @return array<string> List of topic names
      */
-    public function getKeyTopics(string $key): array
+    public function getSubscribedTopics(string $key): array
     {
         $this->validateKey($key);
 
-        $keyTopics = [];
+        $subscribedTopics = [];
 
-        foreach ($this->topicIndex as $topic => $keys) {
-            if (in_array($key, $keys, true)) {
-                $keyTopics[] = $topic;
+        foreach ($this->topicIndex->keys() as $topicName) {
+            $keysSet = $this->topicIndex->get($topicName);
+            if ($keysSet instanceof TreeSet && $keysSet->contains($key)) {
+                $subscribedTopics[] = $topicName;
             }
         }
 
-        return $keyTopics;
+        return $subscribedTopics;
     }
 
     /**
-     * Gets statistics about topic usage.
+     * Gets all keys subscribed to a specific topic.
      *
-     * @return array{total_topics: int, total_subscribed_keys: int, average_keys_per_topic: float}
+     * @param string $topic The topic name to check
+     *
+     * @return array<string> List of subscribed keys
      */
-    public function getTopicStatistics(): array
+    public function getSubscribersForTopic(string $topic): array
     {
-        $totalTopics = count($this->topicIndex);
-        $totalSubscribedKeys = 0;
-
-        foreach ($this->topicIndex as $keys) {
-            $totalSubscribedKeys += count($keys);
+        if (!$this->topicIndex->containsKey($topic)) {
+            return [];
         }
 
-        $averageKeysPerTopic = $totalTopics > 0 ? $totalSubscribedKeys / $totalTopics : 0;
+        $keysSet = $this->topicIndex->get($topic);
+        if (!$keysSet instanceof TreeSet) {
+            return [];
+        }
 
-        return [
-            'total_topics' => $totalTopics,
-            'total_subscribed_keys' => $totalSubscribedKeys,
-            'average_keys_per_topic' => round($averageKeysPerTopic, 2),
-        ];
+        // Filter out expired keys
+        $validKeys = [];
+        foreach ($keysSet->getItems() as $key) {
+            if (!$this->isExpired($key)) {
+                $validKeys[] = $key;
+            }
+        }
+
+        return $validKeys;
+    }
+
+    /**
+     * Gets all available topics.
+     *
+     * @return array<string> List of all topic names
+     */
+    public function getAllTopics(): array
+    {
+        return iterator_to_array($this->topicIndex->keys());
     }
 
     /**
      * Checks if a key is subscribed to any topics.
-     *
-     * This method quickly determines if a cache key has any topic
-     * associations, useful for cleanup and maintenance operations.
      *
      * @param string $key The cache key to check
      *
@@ -292,8 +192,8 @@ final class ArrayTopicOperations
     {
         $this->validateKey($key);
 
-        foreach ($this->topicIndex as $keys) {
-            if (in_array($key, $keys, true)) {
+        foreach ($this->topicIndex->values() as $keysSet) {
+            if ($keysSet instanceof TreeSet && $keysSet->contains($key)) {
                 return true;
             }
         }
@@ -304,14 +204,128 @@ final class ArrayTopicOperations
     /**
      * Counts the number of keys subscribed to a specific topic.
      *
-     * @param Topic $topic The topic to count subscribers for
+     * @param string|Topic $topic The topic to count subscribers for
      *
      * @return int Number of keys subscribed to the topic
      */
-    public function countTopicSubscribers(Topic $topic): int
+    public function countTopicSubscribers(string|Topic $topic): int
     {
-        $topicString = (string) $topic;
+        $topicString = $topic instanceof Topic ? (string) $topic : $topic;
 
-        return count($this->topicIndex[$topicString] ?? []);
+        if (!$this->topicIndex->containsKey($topicString)) {
+            return 0;
+        }
+
+        $keysSet = $this->topicIndex->get($topicString);
+        if (!$keysSet instanceof TreeSet) {
+            return 0;
+        }
+
+        return $keysSet->size();
+    }
+
+    /**
+     * Unsubscribes a key from specific topics.
+     *
+     * @param string $key The cache key to unsubscribe
+     * @param iterable<string|Topic> $topics Topics to unsubscribe from
+     *
+     * @return bool true if the operation was successful
+     */
+    public function unsubscribeFrom(string $key, iterable $topics): bool
+    {
+        $this->validateKey($key);
+
+        $normalizedTopics = $this->normalizeTopics($topics);
+        if (empty($normalizedTopics)) {
+            return true; // No topics to unsubscribe from
+        }
+
+        $this->validateTopics($normalizedTopics);
+
+        foreach ($normalizedTopics as $topic) {
+            $this->removeTopicSubscription((string) $topic, $key);
+        }
+
+        return true;
+    }
+
+    /**
+     * Adds a topic subscription for a key.
+     *
+     * @param string $topic The topic name
+     * @param string $key The cache key
+     */
+    public function addTopicSubscription(string $topic, string $key): void
+    {
+        if (!$this->topicIndex->containsKey($topic)) {
+            $this->topicIndex->put($topic, new TreeSet());
+        }
+
+        $keysSet = $this->topicIndex->get($topic);
+        if ($keysSet instanceof TreeSet) {
+            $keysSet->add($key);
+        }
+    }
+
+    /**
+     * Removes a topic subscription for a key.
+     *
+     * @param string $topic The topic name
+     * @param string $key The cache key
+     */
+    public function removeTopicSubscription(string $topic, string $key): void
+    {
+        if ($this->topicIndex->containsKey($topic)) {
+            $keysSet = $this->topicIndex->get($topic);
+            if ($keysSet instanceof TreeSet) {
+                $keysSet->remove($key);
+
+                // Remove empty topic index
+                if ($keysSet->isEmpty()) {
+                    $this->topicIndex->remove($topic);
+                }
+            }
+        }
+    }
+
+    // ========================================================================
+    // Private Helper Methods
+    // ========================================================================
+
+    /**
+     * Normalizes topics to Topic objects.
+     *
+     * @param iterable<string|Topic> $topics
+     *
+     * @return array<Topic>
+     */
+    private function normalizeTopics(iterable $topics): array
+    {
+        $normalized = [];
+
+        foreach ($topics as $topic) {
+            if (is_string($topic)) {
+                $normalized[] = new Topic($topic);
+            } elseif ($topic instanceof Topic) {
+                $normalized[] = $topic;
+            }
+        }
+
+        return $normalized;
+    }
+
+    /**
+     * Checks if a key is expired.
+     */
+    private function isExpired(string $key): bool
+    {
+        if (!$this->expirations->containsKey($key)) {
+            return false;
+        }
+
+        $expiration = $this->expirations->get($key);
+
+        return is_int($expiration) && $expiration < time();
     }
 }

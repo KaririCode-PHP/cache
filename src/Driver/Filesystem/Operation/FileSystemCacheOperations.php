@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace KaririCode\Cache\Driver\Filesystem\Cache;
+namespace KaririCode\Cache\Driver\Filesystem\Operation;
 
 use KaririCode\Cache\Contract\CacheSerializer;
 use KaririCode\Cache\Contract\Filesystem\DirectoryManager;
@@ -21,8 +21,8 @@ final class FileSystemCacheOperations
     private const MAX_KEY_LENGTH_IN_FILENAME = 50;
 
     public function __construct(
-        private FileManager $fileManager,
         private DirectoryManager $directoryManager,
+        private FileManager $fileManager,
         private CacheSerializer $serializer,
         private ExpirationManager $expirationManager,
         private LoggerInterface $logger,

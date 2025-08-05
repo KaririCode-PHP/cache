@@ -5,118 +5,121 @@ declare(strict_types=1);
 namespace KaririCode\Cache\Driver;
 
 use KaririCode\Cache\Contract\Behavioral\AtomicOperable;
+use KaririCode\Cache\Contract\Behavioral\CompareAndSwapAware;
+use KaririCode\Cache\Contract\Behavioral\Maintainable;
 use KaririCode\Cache\Contract\CacheCapabilities;
-use KaririCode\Cache\Contract\CacheDriver;
-use KaririCode\Cache\Contract\DriverStats;
+use KaririCode\Cache\Contract\Provider\ExpirationProvider;
 use KaririCode\Cache\Contract\TaggableCacheDriver;
 use KaririCode\Cache\Contract\TopicAwareCacheDriver;
 use KaririCode\Cache\Driver\Array\Operation\ArrayTagOperations;
 use KaririCode\Cache\Driver\Array\Operation\ArrayTopicOperations;
-use KaririCode\Cache\Serializer\Trait\SerializationTrait;
-use KaririCode\Cache\Validation\Trait\AtomicOperationValidationTrait;
 use KaririCode\Cache\Validation\Trait\CacheKeyValidationTrait;
 use KaririCode\Cache\Validation\Trait\CacheValueValidationTrait;
-use KaririCode\Cache\Validation\Trait\ExpirationManagementTrait;
-use KaririCode\Cache\ValueObject\MetricsSnapshot;
 use KaririCode\Cache\ValueObject\Tag;
-use KaririCode\Cache\ValueObject\Topic;
+use KaririCode\Contract\DataStructure\Map;
+use KaririCode\DataStructure\Map\HashMap;
+use KaririCode\DataStructure\Set\TreeSet;
 
 /**
- * An in-memory cache driver following the established architectural pattern.
+ * Array-based cache driver implementing all cache capabilities.
  *
- * This driver has been refactored to maintain consistency with other drivers
- * by delegating specialized operations to dedicated operation classes.
- * It is request-scoped and does not persist data between requests.
+ * This driver provides in-memory caching using KaririCode DataStructure components
+ * with full support for tags, topics, atomic operations, and proper TTL management
+ * through ExpirationProvider. Perfect for testing, development, and request-scoped caching.
  *
- * Key improvements:
- * - Follows SRP by delegating tag operations to ArrayTagOperations
- * - Maintains architectural consistency with other drivers
- * - Provides comprehensive validation and error handling
- * - Supports all cache capabilities with in-memory efficiency
+ * Architecture:
+ * - Uses HashMap for key-value storage and metadata
+ * - Uses TreeSet for efficient tag and topic indexing
+ * - Follows Clean Architecture principles
+ * - Implements SOLID design patterns
+ * - Uses Strategy Pattern for ExpirationProvider
  *
  * @category  Cache
  *
  * @author    Walmir Silva <walmir.silva@kariricode.org>
  * @license   MIT
  *
- * @see      https://kariricode.org/
- * @see       ArrayTagOperations for tag-related operations
- * @see       ArrayTopicOperations for topic-related operations
+ * @see       https://kariricode.org/
  */
 final class ArrayDriver implements
-    CacheDriver,
     AtomicOperable,
     TaggableCacheDriver,
-    TopicAwareCacheDriver
+    TopicAwareCacheDriver,
+    CompareAndSwapAware,
+    Maintainable
 {
     use CacheKeyValidationTrait;
     use CacheValueValidationTrait;
-    use ExpirationManagementTrait;
-    use AtomicOperationValidationTrait;
-    use SerializationTrait;
 
-    /** @var array<string, mixed> Main storage for cache values */
-    private array $storage = [];
-
-    /** @var array<string, int> Expiration timestamps for cache keys */
-    private array $expirations = [];
-
-    /** @var array<string, list<string>> Tag-to-keys mapping */
-    private array $tagIndex = [];
-
-    /** @var array<string, list<string>> Topic-to-keys mapping */
-    private array $topicIndex = [];
-
+    private Map $storage;
+    private Map $expirations;
+    private Map $tagIndex;
+    private Map $topicIndex;
     private ArrayTagOperations $tagOperations;
     private ArrayTopicOperations $topicOperations;
 
-    public function __construct()
-    {
-        // Create operation handlers following the established pattern
+    public function __construct(
+        private readonly ExpirationProvider $expirationProvider,
+        ?Map $storage = null,
+        ?Map $expirations = null,
+        ?Map $tagIndex = null,
+        ?Map $topicIndex = null
+    ) {
+        $this->storage = $storage ?? new HashMap();
+        $this->expirations = $expirations ?? new HashMap();
+        $this->tagIndex = $tagIndex ?? new HashMap();
+        $this->topicIndex = $topicIndex ?? new HashMap();
+
+        // Initialize operation handlers
+        $removeCallback = fn (string $key) => $this->removeFromAllIndexes($key);
+
         $this->tagOperations = new ArrayTagOperations(
             $this->storage,
             $this->expirations,
             $this->tagIndex,
-            $this->removeFromIndexes(...)
+            $removeCallback,
+            $this->expirationProvider
         );
 
         $this->topicOperations = new ArrayTopicOperations(
             $this->storage,
             $this->expirations,
             $this->topicIndex,
-            $this->removeFromIndexes(...)
+            $removeCallback,
+            $this->expirationProvider
         );
     }
 
     // ========================================================================
-    // Basic Cache Operations (PSR-16 Compatible)
+    // Basic Cache Operations
     // ========================================================================
 
     public function get(string $key): mixed
     {
         $this->validateKey($key);
 
-        if (!isset($this->storage[$key]) || $this->isExpired($key)) {
-            $this->delete($key);
+        if ($this->isExpired($key)) {
+            $this->removeFromAllIndexes($key);
 
             return null;
         }
 
-        return $this->storage[$key];
+        return $this->storage->containsKey($key) ? $this->storage->get($key) : null;
     }
 
-    public function set(string $key, mixed $value, \DateInterval|int|null $expiration = null): bool
+    public function set(string $key, mixed $value, \DateInterval|int|null $ttl = null): bool
     {
         $this->validateKey($key);
         $this->validateValue($value);
 
-        $this->storage[$key] = $value;
+        $expiration = $this->resolveExpiration($key, $ttl, 'set');
 
-        $calculatedExpiration = $this->calculateExpiration($expiration);
-        if ($calculatedExpiration instanceof \DateTimeInterface) {
-            $this->expirations[$key] = $calculatedExpiration->getTimestamp();
-        } elseif (isset($this->expirations[$key])) {
-            unset($this->expirations[$key]); // Remove expiration if it was explicitly set to null
+        $this->storage->put($key, $value);
+
+        if (null !== $expiration) {
+            $this->expirations->put($key, $expiration->getTimestamp());
+        } else {
+            $this->expirations->remove($key);
         }
 
         return true;
@@ -126,35 +129,29 @@ final class ArrayDriver implements
     {
         $this->validateKey($key);
 
-        if (!isset($this->storage[$key])) {
-            return false;
-        }
-
         if ($this->isExpired($key)) {
-            $this->delete($key);
+            $this->removeFromAllIndexes($key);
 
             return false;
         }
 
-        return true;
+        return $this->storage->containsKey($key);
     }
 
     public function delete(string $key): bool
     {
         $this->validateKey($key);
-
-        unset($this->storage[$key], $this->expirations[$key]);
-        $this->removeFromIndexes($key);
+        $this->removeFromAllIndexes($key);
 
         return true;
     }
 
     public function clear(): bool
     {
-        $this->storage = [];
-        $this->expirations = [];
-        $this->tagIndex = [];
-        $this->topicIndex = [];
+        $this->storage->clear();
+        $this->expirations->clear();
+        $this->tagIndex->clear();
+        $this->topicIndex->clear();
 
         return true;
     }
@@ -162,33 +159,41 @@ final class ArrayDriver implements
     // ========================================================================
     // Batch Operations
     // ========================================================================
+
     public function getMultiple(iterable $keys): iterable
     {
-        $this->validateKeys($keys);
+        $result = [];
 
-        $results = [];
         foreach ($keys as $key) {
-            $results[$key] = $this->get($key);
+            $result[$key] = $this->get($key);
         }
 
-        return $results;
+        return $result;
     }
 
-    public function setMultiple(iterable $values, \DateInterval|int|null $expiration = null): bool
+    public function setMultiple(iterable $values): bool
     {
-        $this->validateMultipleValues($values);
+        $expiration = $this->resolveExpiration('', null, 'setMultiple');
+        $success = true;
 
         foreach ($values as $key => $value) {
-            $this->set((string) $key, $value, $expiration);
+            $this->validateKey($key);
+            $this->validateValue($value);
+
+            $this->storage->put($key, $value);
+
+            if (null !== $expiration) {
+                $this->expirations->put($key, $expiration->getTimestamp());
+            } else {
+                $this->expirations->remove($key);
+            }
         }
 
-        return true;
+        return $success;
     }
 
     public function deleteMultiple(iterable $keys): bool
     {
-        $this->validateKeys($keys);
-
         foreach ($keys as $key) {
             $this->delete($key);
         }
@@ -200,131 +205,161 @@ final class ArrayDriver implements
     // Atomic Operations
     // ========================================================================
 
-    public function increment(string $key, int $step = 1, int $initialValue = 0, \DateInterval|int|null $ttl = null): int
+    public function increment(string $key, int $step = 1, int $initialValue = 0): int
     {
         $this->validateKey($key);
-        $this->validateStep($step);
 
         $current = $this->get($key);
-        if (!is_numeric($current)) {
-            $current = $initialValue;
-        }
+        $currentValue = is_numeric($current) ? (int) $current : $initialValue;
+        $newValue = $currentValue + $step;
 
-        $newValue = (int) $current + $step;
-        $this->set($key, $newValue, $this->calculateExpiration($ttl));
+        $expiration = $this->resolveExpiration($key, null, 'increment');
+        $this->storage->put($key, $newValue);
+
+        if (null !== $expiration) {
+            $this->expirations->put($key, $expiration->getTimestamp());
+        }
 
         return $newValue;
     }
 
-    public function decrement(string $key, int $step = 1, int $initialValue = 0, \DateInterval|int|null $ttl = null): int
+    public function decrement(string $key, int $step = 1, int $initialValue = 0): int
     {
         $this->validateKey($key);
-        $this->validateStep($step);
 
         $current = $this->get($key);
-        if (!is_numeric($current)) {
-            $current = $initialValue;
-        }
+        $currentValue = is_numeric($current) ? (int) $current : $initialValue;
+        $newValue = $currentValue - $step;
 
-        $newValue = (int) $current - $step;
-        $this->set($key, $newValue, $this->calculateExpiration($ttl));
+        $expiration = $this->resolveExpiration($key, null, 'decrement');
+        $this->storage->put($key, $newValue);
+
+        if (null !== $expiration) {
+            $this->expirations->put($key, $expiration->getTimestamp());
+        }
 
         return $newValue;
     }
 
-    public function add(string $key, mixed $value, \DateInterval|int|null $ttl = null): bool
+    public function add(string $key, mixed $value): bool
     {
         $this->validateKey($key);
+        $this->validateValue($value);
 
         if ($this->has($key)) {
             return false;
         }
 
-        return $this->set($key, $value, $this->calculateExpiration($ttl));
+        $expiration = $this->resolveExpiration($key, null, 'add');
+        $this->storage->put($key, $value);
+
+        if (null !== $expiration) {
+            $this->expirations->put($key, $expiration->getTimestamp());
+        }
+
+        return true;
+    }
+
+    public function compareAndSwap(string $key, mixed $expected, mixed $value): bool
+    {
+        $this->validateKey($key);
+        $this->validateValue($expected);
+        $this->validateValue($value);
+
+        $current = $this->get($key);
+        if ($current !== $expected) {
+            return false;
+        }
+
+        $expiration = $this->resolveExpiration($key, null, 'compareAndSwap');
+        $this->storage->put($key, $value);
+
+        if (null !== $expiration) {
+            $this->expirations->put($key, $expiration->getTimestamp());
+        }
+
+        return true;
     }
 
     // ========================================================================
-    // Tag Operations (Delegated to ArrayTagOperations)
+    // Tag Operations (TaggableCacheDriver)
     // ========================================================================
 
-    /**
-     * Sets a cache item with associated tags.
-     *
-     * @param string $key The cache key
-     * @param mixed $value The value to store
-     * @param array<string|Tag> $tags Array of tags (strings or Tag objects)
-     * @param \DateInterval|int|null $ttl Time to live
-     *
-     * @return bool True on success, false on failure
-     */
-    public function setWithTags(string $key, mixed $value, array $tags, \DateInterval|int|null $ttl = null): bool
+    public function setWithTags(string $key, mixed $value, iterable $tags): bool
     {
-        return $this->tagOperations->setWithTags($key, $value, $tags, $ttl);
+        $this->validateKey($key);
+        $this->validateValue($value);
+
+        // First set the value normally
+        $this->storage->put($key, $value);
+
+        // Calculate and set expiration
+        $expiration = $this->resolveExpiration($key, null, 'setWithTags');
+        if (null !== $expiration) {
+            $this->expirations->put($key, $expiration->getTimestamp());
+        }
+
+        // Then handle tag associations
+        return $this->tagOperations->setWithTags($key, $value, $tags, $expiration);
     }
 
-    /**
-     * Invalidates all cache items associated with the given tags.
-     *
-     * @param array<Tag> $tags Array of Tag objects to invalidate
-     *
-     * @return bool True if tags were successfully invalidated, false otherwise
-     */
-    public function invalidateTags(array $tags): bool
-    {
-        return $this->tagOperations->invalidateTags($tags);
-    }
-
-    /**
-     * Retrieves all cache items associated with the given tags.
-     *
-     * @param array<Tag> $tags Array of Tag objects
-     *
-     * @return array<string, mixed> Array of cache items indexed by their keys
-     */
-    public function getByTags(array $tags): array
+    public function getByTags(iterable $tags): iterable
     {
         return $this->tagOperations->getByTags($tags);
     }
 
-    /**
-     * Gets all tags currently in use.
-     *
-     * @return array<string> Array of tag names
-     */
-    public function getTags(): array
+    public function invalidateTags(iterable $tags): bool
+    {
+        return $this->tagOperations->invalidateTags($tags);
+    }
+
+    public function getTags(): iterable
     {
         return $this->tagOperations->getTags();
     }
 
     // ========================================================================
-    // Topic Operations (Delegated to ArrayTopicOperations)
+    // Topic Operations (TopicAwareCacheDriver)
     // ========================================================================
 
-    /**
-     * Subscribes a cache key to one or more topics.
-     *
-     * @param string $key The cache key to subscribe
-     * @param array<Topic> $topics Array of Topic objects
-     */
-    public function subscribeTo(string $key, array $topics): void
+    public function subscribeTo(string $key, iterable $topics): void
     {
         $this->topicOperations->subscribeTo($key, $topics);
     }
 
-    /**
-     * Invalidates all cache keys subscribed to the given topics.
-     *
-     * @param array<Topic> $topics Array of Topic objects to invalidate
-     *
-     * @return bool True on success, false on failure
-     */
-    public function invalidateTopics(array $topics): bool
+    public function invalidateTopics(iterable $topics): bool
     {
         return $this->topicOperations->invalidateTopics($topics);
     }
 
+    public function getSubscribedTopics(string $key): array
+    {
+        return $this->topicOperations->getSubscribedTopics($key);
+    }
+
+    public function getSubscribersForTopic(string $topic): array
+    {
+        return $this->topicOperations->getSubscribersForTopic($topic);
+    }
+
     // ========================================================================
-    // Driver Information and Capabilities
+    // Additional Methods for backward compatibility
+    // ========================================================================
+
+    /**
+     * Gets keys by tag (for backward compatibility).
+     *
+     * @param iterable<string|Tag> $tags
+     *
+     * @return array<string>
+     */
+    public function getKeysByTag(iterable $tags): array
+    {
+        return $this->tagOperations->getKeysByTag($tags);
+    }
+
+    // ========================================================================
+    // Driver Management and Statistics
     // ========================================================================
 
     public function getCapabilities(): array
@@ -336,33 +371,31 @@ final class ArrayDriver implements
         ];
     }
 
-    public function getStats(): DriverStats
+    public function maintenance(array $options = []): bool
     {
-        $memoryUsage = 0;
-        foreach ($this->storage as $value) {
-            $memoryUsage += strlen($this->serialize($value));
-        }
+        $this->cleanupExpired();
 
-        $stats = [
-            'memory_usage' => $memoryUsage,
-            'item_count' => count($this->storage),
-            'tag_count' => count($this->tagIndex),
-            'topic_count' => count($this->topicIndex),
-            'expired_items' => $this->countExpiredItems(),
-        ];
-
-        return new MetricsSnapshot(
-            'Array',
-            $stats['memory_usage'],
-            $stats['item_count'],
-            phpversion(),
-            $stats
-        );
+        return true;
     }
 
-    public function isHealthy(): bool
+    /**
+     * Cleans up all expired entries.
+     */
+    public function cleanupExpired(): void
     {
-        return true; // In-memory driver is always healthy
+        $currentTime = time();
+        $expiredKeys = [];
+
+        foreach ($this->expirations->keys() as $key) {
+            $expiration = $this->expirations->get($key);
+            if (is_int($expiration) && $expiration <= $currentTime) {
+                $expiredKeys[] = $key;
+            }
+        }
+
+        foreach ($expiredKeys as $key) {
+            $this->removeFromAllIndexes($key);
+        }
     }
 
     // ========================================================================
@@ -370,64 +403,80 @@ final class ArrayDriver implements
     // ========================================================================
 
     /**
-     * Checks if a cache key has expired.
+     * Checks if a key is expired.
      */
     private function isExpired(string $key): bool
     {
-        return isset($this->expirations[$key]) && $this->expirations[$key] < time();
+        if (!$this->expirations->containsKey($key)) {
+            return false;
+        }
+
+        $expiration = $this->expirations->get($key);
+
+        return is_int($expiration) && $expiration < time();
     }
 
     /**
-     * Removes a key from all indices (tags and topics).
-     *
-     * This method is passed as a callback to operation classes to maintain
-     * index consistency when keys are deleted.
+     * Removes a key from all indexes (storage, expiration, tags, topics).
      */
-    private function removeFromIndexes(string $key): void
+    private function removeFromAllIndexes(string $key): void
     {
-        // Remove from tag indices
-        $this->tagOperations->removeKeyFromTagIndex($key);
+        $this->storage->remove($key);
+        $this->expirations->remove($key);
 
-        // Remove from topic indices
-        foreach ($this->topicIndex as $topic => &$keys) {
-            if (($index = array_search($key, $keys, true)) !== false) {
-                unset($keys[$index]);
-                $keys = array_values($keys); // Reindex
+        // Remove from tag associations
+        foreach ($this->tagIndex->keys() as $tagName) {
+            $keysSet = $this->tagIndex->get($tagName);
+            if ($keysSet instanceof TreeSet && $keysSet->contains($key)) {
+                $keysSet->remove($key);
+                if ($keysSet->isEmpty()) {
+                    $this->tagIndex->remove($tagName);
+                }
+            }
+        }
 
-                if (empty($keys)) {
-                    unset($this->topicIndex[$topic]);
+        // Remove from topic subscriptions
+        foreach ($this->topicIndex->keys() as $topicName) {
+            $keysSet = $this->topicIndex->get($topicName);
+            if ($keysSet instanceof TreeSet && $keysSet->contains($key)) {
+                $keysSet->remove($key);
+                if ($keysSet->isEmpty()) {
+                    $this->topicIndex->remove($topicName);
                 }
             }
         }
     }
 
     /**
-     * Counts expired items for statistics.
+     * Resolves expiration time using ExpirationProvider strategy.
      */
-    private function countExpiredItems(): int
+    private function resolveExpiration(string $key, \DateInterval|int|null $ttl, string $operation): ?\DateTimeInterface
     {
-        $count = 0;
-        $currentTime = time();
+        // Handle explicit null (no expiration)
+        if (null === $ttl) {
+            // Use ExpirationProvider to get appropriate TTL
+            $providerTtl = $this->expirationProvider->getTtlForOperation($operation);
 
-        foreach ($this->expirations as $expiration) {
-            if ($expiration < $currentTime) {
-                ++$count;
+            return $this->expirationProvider->calculateExpiration($providerTtl);
+        }
+
+        // Handle DateInterval
+        if ($ttl instanceof \DateInterval) {
+            return (new \DateTimeImmutable())->add($ttl);
+        }
+
+        // Handle integer (seconds)
+        if (is_int($ttl)) {
+            if ($ttl <= 0) {
+                return null; // No expiration for non-positive values
             }
+
+            return new \DateTimeImmutable("+{$ttl} seconds");
         }
 
-        return $count;
-    }
+        // Fallback to ExpirationProvider
+        $providerTtl = $this->expirationProvider->getTtlForKey($key);
 
-    /**
-     * Validates multiple key-value pairs for batch operations.
-     *
-     * @param array<string, mixed> $values
-     */
-    private function validateMultipleValues(array $values): void
-    {
-        foreach ($values as $key => $value) {
-            $this->validateKey((string) $key);
-            $this->validateValue($value);
-        }
+        return $this->expirationProvider->calculateExpiration($providerTtl);
     }
 }

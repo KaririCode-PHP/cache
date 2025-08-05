@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Driver\Apcu\Operation;
 
+use KaririCode\Cache\Contract\Provider\ExpirationProvider;
 use KaririCode\Cache\Driver\Apcu\Component\ApcuErrorHandler;
 use KaririCode\Cache\Driver\Apcu\Component\ApcuMonitoringService;
 use KaririCode\Cache\Driver\Apcu\Config\ApcuConfig;
@@ -11,79 +12,73 @@ use KaririCode\Cache\Exception\InvalidArgumentException;
 use KaririCode\Cache\Serializer\Trait\SerializationTrait;
 use KaririCode\Cache\Validation\Trait\CacheKeyValidationTrait;
 use KaririCode\Cache\Validation\Trait\CacheValueValidationTrait;
-use KaririCode\Cache\Validation\Trait\ExpirationManagementTrait;
 
 /**
- * Handles batch operations for APCu.
+ * Handles batch operations for APCu (multi-key operations).
  * SRP: This class is only responsible for multi-key operations.
+ * Uses ExpirationProvider for TTL management - follows Strategy Pattern.
  */
 final class ApcuBatchOperations
 {
     use SerializationTrait;
     use CacheKeyValidationTrait;
     use CacheValueValidationTrait;
-    use ExpirationManagementTrait;
 
     public function __construct(
         private ApcuConfig $config,
         private ApcuErrorHandler $errorHandler,
-        private ApcuMonitoringService $monitoringService
+        private ApcuMonitoringService $monitoringService,
+        private ExpirationProvider $expirationProvider
     ) {
     }
 
     /**
-     * @param array<string> $keys
+     * @param iterable<string> $keys
      *
-     * @return array<string, mixed>
+     * @return iterable<string, mixed>
      */
-    public function getMultiple(array $keys): array
+    public function getMultiple(iterable $keys): iterable
     {
-        $this->validateKeys($keys);
+        $keyArray = $this->normalizeToArray($keys);
+        $this->validateKeys($keyArray);
 
-        if (empty($keys)) {
-            return [];
-        }
-
-        return (array) $this->errorHandler->executeWithRetry(
-            fn () => $this->performGetMultiple($keys),
+        return $this->errorHandler->executeWithRetry(
+            fn () => $this->performGetMultiple($keyArray),
             'getMultiple',
-            implode(',', $keys)
+            implode(',', $keyArray)
         );
     }
 
     /**
-     * @param array<string, mixed> $values
+     * @param iterable<string, mixed> $values
      */
-    public function setMultiple(array $values, ?\DateTimeInterface $expiration = null): bool
+    public function setMultiple(iterable $values, ?\DateTimeInterface $expiration = null): bool
     {
-        if (empty($values)) {
-            return true;
-        }
+        $valueArray = $this->normalizeToArray($values);
+        $this->validateMultipleValues($valueArray);
 
-        $this->validateMultipleValues($values);
+        $finalExpiration = $expiration ?? $this->expirationProvider->calculateExpiration(
+            $this->expirationProvider->getTtlForOperation('setMultiple')
+        );
 
         return (bool) $this->errorHandler->executeWithRetry(
-            fn () => $this->performSetMultiple($values, $expiration),
-            'setMultiple',
-            implode(',', array_keys($values))
+            fn () => $this->performSetMultiple($valueArray, $finalExpiration),
+            'setMultiple'
         );
     }
 
     /**
-     * @param array<string> $keys
+     * @param iterable<string> $keys
      */
-    public function deleteMultiple(array $keys): bool
+    public function deleteMultiple(iterable $keys): bool
     {
-        $this->validateKeys($keys);
-
-        if (empty($keys)) {
-            return true;
-        }
+        $keyArray = $this->normalizeToArray($keys);
+        $this->validateKeys($keyArray);
 
         return (bool) $this->errorHandler->executeWithRetry(
-            fn () => $this->performDeleteMultiple($keys),
+            fn () => $this->performDeleteMultiple($keyArray),
             'deleteMultiple',
-            implode(',', $keys)
+            implode(',', $keyArray)
         );
     }
 
@@ -126,32 +121,22 @@ final class ApcuBatchOperations
      */
     private function performSetMultiple(array $values, ?\DateTimeInterface $expiration): bool
     {
-        $prefixedValues = [];
-        $ttl = $this->calculateTtlInSeconds($expiration);
+        $ttl = $expiration ? max(0, $expiration->getTimestamp() - time()) : 0;
 
+        $success = true;
         foreach ($values as $key => $value) {
-            $prefixedValues[$this->config->keyPrefix . $key] = $this->serialize($value);
+            $fullKey = $this->config->keyPrefix . (string) $key;
+            $serialized = $this->serialize($value);
+
+            if (!apcu_store($fullKey, $serialized, $ttl)) {
+                $success = false;
+                $this->monitoringService->recordError();
+            } else {
+                $this->monitoringService->recordWrite();
+            }
         }
 
-        $failures = apcu_store($prefixedValues, null, $ttl);
-
-        if (!is_array($failures)) {
-            // A non-array return indicates a catastrophic failure.
-            $this->monitoringService->recordError();
-
-            return false;
-        }
-
-        $successCount = count($prefixedValues) - count($failures);
-
-        for ($i = 0; $i < $successCount; ++$i) {
-            $this->monitoringService->recordWrite();
-        }
-        for ($i = 0; $i < count($failures); ++$i) {
-            $this->monitoringService->recordError();
-        }
-
-        return empty($failures);
+        return $success;
     }
 
     /**
@@ -164,10 +149,8 @@ final class ApcuBatchOperations
             $keys
         );
 
-        // ANÁLISE: apcu_delete() com um array de chaves sempre retorna um array com as chaves que falharam.
         $failures = apcu_delete($prefixedKeys);
 
-        // Se o retorno não for um array, algo muito errado aconteceu (falha catastrófica).
         if (!is_array($failures)) {
             $this->monitoringService->recordError();
 
@@ -179,8 +162,31 @@ final class ApcuBatchOperations
             $this->monitoringService->recordDelete();
         }
 
-        // A operação é considerada um sucesso se o array de falhas estiver vazio.
         return empty($failures);
+    }
+
+    /**
+     * @param iterable<mixed> $iterable
+     *
+     * @return array<mixed>
+     */
+    private function normalizeToArray(iterable $iterable): array
+    {
+        if (is_array($iterable)) {
+            return $iterable;
+        }
+
+        return iterator_to_array($iterable);
+    }
+
+    /**
+     * @param array<string> $keys
+     */
+    private function validateKeys(array $keys): void
+    {
+        foreach ($keys as $key) {
+            $this->validateKey($key);
+        }
     }
 
     /**

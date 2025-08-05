@@ -11,8 +11,9 @@ use KaririCode\Cache\Contract\DriverStats;
 use KaririCode\Cache\Contract\Filesystem\DirectoryManager;
 use KaririCode\Cache\Contract\Filesystem\FileSystemStatistics;
 use KaririCode\Cache\Contract\Filesystem\FileSystemValidator;
+use KaririCode\Cache\Contract\Provider\ExpirationProvider;
 use KaririCode\Cache\Contract\TaggableCacheDriver;
-use KaririCode\Cache\Driver\Filesystem\Cache\FileSystemCacheOperations;
+use KaririCode\Cache\Driver\Filesystem\Operation\FilesystemCrudOperations;
 use KaririCode\Cache\Driver\Filesystem\Operation\FilesystemTagOperations;
 use KaririCode\Cache\ValueObject\MetricsSnapshot;
 use KaririCode\Cache\ValueObject\Tag;
@@ -21,252 +22,147 @@ use Psr\Log\LoggerInterface;
 /**
  * Enhanced filesystem-based cache driver with tag support.
  *
- * This driver has been extended to support tag-based cache operations
- * while maintaining the existing filesystem architecture. It demonstrates
- * how the filesystem driver can be enhanced to match the capabilities
- * of other drivers in the system.
+ * This driver provides filesystem-based caching with support for tag-based operations
+ * while maintaining the existing filesystem architecture. It uses dedicated operation
+ * classes following Clean Architecture principles.
  *
- * Key enhancements:
+ * Key features:
  * - Implements TaggableCacheDriver interface
+ * - Uses FilesystemCrudOperations for basic operations
  * - Delegates tag operations to FilesystemTagOperations
- * - Maintains architectural consistency with other drivers
- * - Preserves existing filesystem optimizations
+ * - Proper TTL management through ExpirationProvider
+ * - Comprehensive error handling and logging
  *
  * @category  Cache
  *
  * @author    Walmir Silva <walmir.silva@kariricode.org>
  * @license   MIT
  *
- * @see      https://kariricode.org/
- * @see       FilesystemTagOperations for tag-specific operations
- * @see       FileSystemCacheOperations for basic cache operations
+ * @see       https://kariricode.org/
  */
 final class FilesystemDriver implements
     CacheDriver,
     Maintainable,
     TaggableCacheDriver
 {
+    /**
+     * Constructor applying Dependency Injection pattern.
+     *
+     * @param DirectoryManager $directoryManager Directory operations handler
+     * @param FilesystemCrudOperations $crudOperations Basic CRUD operations handler
+     * @param FilesystemTagOperations $tagOperations Tag-specific operations handler
+     * @param FileSystemStatistics $statistics Statistics collection handler
+     * @param FileSystemValidator $validator Filesystem validation handler
+     * @param ExpirationProvider $expirationProvider Strategy for TTL management
+     * @param LoggerInterface $logger PSR-3 logger for debugging and monitoring
+     */
     public function __construct(
         private readonly DirectoryManager $directoryManager,
-        private readonly FileSystemCacheOperations $cacheOperations,
+        private readonly FilesystemCrudOperations $crudOperations,
         private readonly FilesystemTagOperations $tagOperations,
         private readonly FileSystemStatistics $statistics,
         private readonly FileSystemValidator $validator,
+        private readonly ExpirationProvider $expirationProvider,
         private readonly LoggerInterface $logger
     ) {
         $this->logger->info('Enhanced FilesystemDriver initialized with tag support');
     }
 
     // ========================================================================
-    // Basic Cache Operations (Existing Implementation)
+    // Basic Cache Operations (CacheDriver interface)
     // ========================================================================
 
     public function get(string $key): mixed
     {
-        $startTime = microtime(true);
-        try {
-            $this->validator->validateKey($key);
-            $result = $this->cacheOperations->get($key);
-            $this->statistics->recordOperation('get', microtime(true) - $startTime);
-
-            return $result;
-        } catch (\Throwable $e) {
-            $this->logger->error('Failed to get cache item', [
-                'key' => $key,
-                'error' => $e->getMessage(),
-            ]);
-            throw $e;
-        }
+        return $this->crudOperations->get($key);
     }
 
-    public function set(string $key, mixed $value, \DateInterval|int|null $expiration = null): bool
+    public function set(string $key, mixed $value, \DateInterval|int|null $ttl = null): bool
     {
-        $startTime = microtime(true);
-        try {
-            $this->validator->validateKey($key);
-            $this->validator->validateValue($value);
-            $result = $this->cacheOperations->set($key, $value, $expiration);
-            $this->statistics->recordOperation('set', microtime(true) - $startTime);
+        $expiration = $this->resolveExpiration($key, $ttl, 'set');
 
-            return $result;
-        } catch (\Throwable $e) {
-            $this->logger->error('Failed to set cache item', [
-                'key' => $key,
-                'error' => $e->getMessage(),
-            ]);
-            throw $e;
-        }
+        return $this->crudOperations->set($key, $value, $expiration);
     }
 
     public function has(string $key): bool
     {
-        try {
-            $this->validator->validateKey($key);
-
-            return $this->cacheOperations->has($key);
-        } catch (\Throwable $e) {
-            $this->logger->error('Failed to check cache item existence', [
-                'key' => $key,
-                'error' => $e->getMessage(),
-            ]);
-
-            return false;
-        }
+        return $this->crudOperations->has($key);
     }
 
     public function delete(string $key): bool
     {
-        try {
-            $this->validator->validateKey($key);
-
-            return $this->cacheOperations->delete($key);
-        } catch (\Throwable $e) {
-            $this->logger->error('Failed to delete cache item', [
-                'key' => $key,
-                'error' => $e->getMessage(),
-            ]);
-
-            return false;
-        }
+        return $this->crudOperations->delete($key);
     }
 
     public function clear(): bool
     {
-        try {
-            return $this->directoryManager->clear();
-        } catch (\Throwable $e) {
-            $this->logger->error('Failed to clear cache', [
-                'error' => $e->getMessage(),
-            ]);
-
-            return false;
-        }
+        return $this->crudOperations->clear();
     }
 
-    // ========================================================================
-    // Batch Operations (Existing Implementation)
-    // ========================================================================
-
-    /**
-     * Retrieves multiple cache items by their keys.
-     *
-     * @param iterable<string> $keys the cache keys to retrieve
-     *
-     * @return iterable<string, mixed> the retrieved values indexed by cache key
-     */
     public function getMultiple(iterable $keys): iterable
     {
         $results = [];
         foreach ($keys as $key) {
-            try {
-                $results[$key] = $this->get($key);
-            } catch (\Throwable $e) {
-                $results[$key] = null;
-            }
+            $results[$key] = $this->get($key);
         }
 
         return $results;
     }
 
-    /**
-     * Sets multiple cache items.
-     *
-     * @param iterable<string, mixed> $values
-     */
-    public function setMultiple(iterable $values, \DateInterval|int|null $expiration = null): bool
+    public function setMultiple(iterable $values): bool
     {
-        $allSuccess = true;
+        $success = true;
+        $expiration = $this->resolveExpiration('', null, 'setMultiple');
+
         foreach ($values as $key => $value) {
-            try {
-                $success = $this->set($key, $value, $expiration);
-                if (!$success) {
-                    $allSuccess = false;
-                }
-            } catch (\Throwable $e) {
-                $allSuccess = false;
+            if (!$this->crudOperations->set($key, $value, $expiration)) {
+                $success = false;
             }
         }
 
-        return $allSuccess;
+        return $success;
     }
 
-    /**
-     * Deletes multiple cache items.
-     *
-     * @param iterable<string> $keys
-     */
     public function deleteMultiple(iterable $keys): bool
     {
-        $allSuccess = true;
+        $success = true;
         foreach ($keys as $key) {
-            try {
-                $success = $this->delete($key);
-                if (!$success) {
-                    $allSuccess = false;
-                }
-            } catch (\Throwable $e) {
-                $allSuccess = false;
+            if (!$this->delete($key)) {
+                $success = false;
             }
         }
 
-        return $allSuccess;
+        return $success;
     }
 
     // ========================================================================
-    // Tag Operations (NEW - Delegated to FilesystemTagOperations)
+    // Tag Operations (TaggableCacheDriver interface)
     // ========================================================================
 
-    /**
-     * Sets a cache item with associated tags.
-     *
-     * @param string $key The cache key
-     * @param mixed $value The value to store
-     * @param array<string|Tag> $tags Array of tags (strings or Tag objects)
-     * @param \DateInterval|int|null $ttl Time to live
-     *
-     * @return bool True on success, false on failure
-     */
-    public function setWithTags(string $key, mixed $value, array $tags, \DateInterval|int|null $ttl = null): bool
+    public function setWithTags(string $key, mixed $value, iterable $tags): bool
     {
-        return $this->tagOperations->setWithTags($key, $value, $tags, $ttl);
+        $expiration = $this->resolveExpiration($key, null, 'setWithTags');
+
+        return $this->tagOperations->setWithTags($key, $value, $tags, $expiration);
     }
 
-    /**
-     * Invalidates all cache items associated with the given tags.
-     *
-     * @param array<Tag> $tags Array of Tag objects to invalidate
-     *
-     * @return bool True if tags were successfully invalidated, false otherwise
-     */
-    public function invalidateTags(array $tags): bool
-    {
-        return $this->tagOperations->invalidateTags($tags);
-    }
-
-    /**
-     * Retrieves all cache items associated with the given tags.
-     *
-     * @param array<Tag> $tags Array of Tag objects
-     *
-     * @return array<string, mixed> Array of cache items indexed by their keys
-     */
-    public function getByTags(array $tags): array
+    public function getByTags(iterable $tags): iterable
     {
         return $this->tagOperations->getByTags($tags);
     }
 
-    /**
-     * Gets all tags currently in use.
-     *
-     * @return array<string> Array of tag names
-     */
-    public function getTags(): array
+    public function invalidateTags(iterable $tags): bool
+    {
+        return $this->tagOperations->invalidateTags($tags);
+    }
+
+    public function getTags(): iterable
     {
         return $this->tagOperations->getTags();
     }
 
     // ========================================================================
-    // Driver Information and Maintenance
+    // Driver Management and Statistics
     // ========================================================================
 
     public function getCapabilities(): array
@@ -278,40 +174,150 @@ final class FilesystemDriver implements
 
     public function getStats(): DriverStats
     {
-        $statsArray = $this->statistics->getStats();
-
-        return new MetricsSnapshot(
-            'Filesystem',
-            $statsArray['directory_size'],
-            $statsArray['file_count'],
-            null, // Filesystem driver does not have a specific version
-            $statsArray
-        );
-    }
-
-    public function isHealthy(): bool
-    {
-        return $this->directoryManager->isWritable(
-            $this->directoryManager->getBaseDirectory()
-        );
+        return $this->statistics;
     }
 
     public function maintenance(array $options = []): bool
     {
         try {
-            // Perform basic cache cleanup
-            $this->cacheOperations->performCleanup();
+            // Cleanup expired entries
+            $cleanupStats = $this->crudOperations->cleanupExpired();
 
-            // Perform tag-specific cleanup
-            $this->tagOperations->performCleanup();
+            // Log cleanup results
+            $this->logger->info('Filesystem cache maintenance completed', $cleanupStats);
+
+            // Perform directory optimization if requested
+            if ($options['optimize_directories'] ?? false) {
+                $this->directoryManager->optimizeStructure();
+            }
+
+            // Validate filesystem health
+            if ($options['validate_health'] ?? true) {
+                $healthCheck = $this->validator->validateHealth();
+                if (!$healthCheck['healthy']) {
+                    $this->logger->warning('Filesystem health check failed', $healthCheck);
+
+                    return false;
+                }
+            }
 
             return true;
         } catch (\Throwable $e) {
-            $this->logger->error('Cache maintenance failed', [
+            $this->logger->error('Filesystem cache maintenance failed', [
                 'error' => $e->getMessage(),
             ]);
 
             return false;
         }
+    }
+
+    /**
+     * Gets detailed cache statistics.
+     *
+     * @return array<string, mixed> Comprehensive cache statistics
+     */
+    public function getDetailedStats(): array
+    {
+        return [
+            'driver_type' => 'filesystem',
+            'capabilities' => $this->getCapabilities(),
+            'filesystem_stats' => $this->statistics->getStats(),
+            'directory_info' => $this->directoryManager->getInfo(),
+            'validator_status' => $this->validator->getStatus(),
+        ];
+    }
+
+    /**
+     * Gets current cache metrics.
+     *
+     * @return MetricsSnapshot Current metrics snapshot
+     */
+    public function getMetrics(): MetricsSnapshot
+    {
+        return $this->statistics->getMetrics();
+    }
+
+    /**
+     * Performs a health check on the filesystem cache.
+     *
+     * @return array<string, mixed> Health check results
+     */
+    public function healthCheck(): array
+    {
+        return $this->validator->validateHealth();
+    }
+
+    /**
+     * Optimizes the cache directory structure.
+     *
+     * @return bool true if optimization was successful
+     */
+    public function optimizeDirectoryStructure(): bool
+    {
+        try {
+            return $this->directoryManager->optimizeStructure();
+        } catch (\Throwable $e) {
+            $this->logger->error('Directory structure optimization failed', [
+                'error' => $e->getMessage(),
+            ]);
+
+            return false;
+        }
+    }
+
+    /**
+     * Gets filesystem usage information.
+     *
+     * @return array<string, mixed> Usage information
+     */
+    public function getUsageInfo(): array
+    {
+        return [
+            'directory_info' => $this->directoryManager->getInfo(),
+            'statistics' => $this->statistics->getStats(),
+            'health_status' => $this->validator->getStatus(),
+        ];
+    }
+
+    // ========================================================================
+    // Private Helper Methods
+    // ========================================================================
+
+    /**
+     * Resolves expiration time using ExpirationProvider strategy.
+     *
+     * @param string $key The cache key for context
+     * @param \DateInterval|int|null $ttl The provided TTL
+     * @param string $operation The operation type for context
+     *
+     * @return \DateTimeInterface|null The resolved expiration time
+     */
+    private function resolveExpiration(string $key, \DateInterval|int|null $ttl, string $operation): ?\DateTimeInterface
+    {
+        // Handle explicit null (use provider defaults)
+        if (null === $ttl) {
+            $providerTtl = $this->expirationProvider->getTtlForOperation($operation);
+
+            return $this->expirationProvider->calculateExpiration($providerTtl);
+        }
+
+        // Handle DateInterval
+        if ($ttl instanceof \DateInterval) {
+            return (new \DateTimeImmutable())->add($ttl);
+        }
+
+        // Handle integer (seconds)
+        if (is_int($ttl)) {
+            if ($ttl <= 0) {
+                return null; // No expiration for non-positive values
+            }
+
+            return new \DateTimeImmutable("+{$ttl} seconds");
+        }
+
+        // Fallback to ExpirationProvider
+        $providerTtl = $this->expirationProvider->getTtlForKey($key);
+
+        return $this->expirationProvider->calculateExpiration($providerTtl);
     }
 }

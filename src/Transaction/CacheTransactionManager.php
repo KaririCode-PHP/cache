@@ -75,10 +75,9 @@ final class CacheTransactionManager implements CacheTransactionManagerContract
             foreach (array_reverse($this->rollbackData, true) as $key => $data) {
                 $existed = $data['existed'];
                 $value = $data['value'];
-                $expiration = $data['expiration'];
 
                 if ($existed) {
-                    $this->driver->set($key, $value, $expiration);
+                    $this->driver->set($key, $value);
                 } else {
                     $this->driver->delete($key);
                 }
@@ -140,13 +139,13 @@ final class CacheTransactionManager implements CacheTransactionManagerContract
         );
     }
 
-    public function scheduleSet(string $key, mixed $value, \DateInterval|int|null $expiration = null): void
+    public function scheduleSet(string $key, mixed $value): void
     {
         if (!$this->inTransaction) {
             throw CacheException::operationFailed('scheduleSet', $key, new \RuntimeException('No transaction in progress'));
         }
         $this->storeRollbackData($key);
-        $this->operations[] = new SetOperation($key, $value, $expiration);
+        $this->operations[] = new SetOperation($key, $value);
     }
 
     public function scheduleDelete(string $key): void
@@ -179,7 +178,7 @@ final class CacheTransactionManager implements CacheTransactionManagerContract
      */
     private function executeSetOperation(Operation $operation): void
     {
-        $this->driver->set($operation->key, $operation->value, $operation->expiration);
+        $this->driver->set($operation->key, $operation->value);
     }
 
     /**

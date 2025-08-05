@@ -4,19 +4,18 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Driver\Redis\Operation;
 
+use KaririCode\Cache\Contract\Provider\ExpirationProvider;
 use KaririCode\Cache\Driver\Redis\Component\RedisConnectionManager;
 use KaririCode\Cache\Driver\Redis\Component\RedisErrorHandler;
 use KaririCode\Cache\Driver\Redis\Config\RedisConfig;
-use KaririCode\Cache\Exception\CacheException;
-use KaririCode\Cache\Exception\InvalidArgumentException;
-use KaririCode\Cache\Exception\SerializationException;
 use KaririCode\Cache\Serializer\Trait\SerializationTrait;
 use KaririCode\Cache\Validation\Trait\CacheKeyValidationTrait;
 use KaririCode\Cache\Validation\Trait\CacheValueValidationTrait;
 
 /**
  * Handles batch operations for Redis (multi-key operations).
- * SRP: This class is only responsible for multi-key operations like mget, mset, and del.
+ * SRP: This class is only responsible for multi-key operations.
+ * Uses ExpirationProvider for TTL management - follows Strategy Pattern.
  */
 final class RedisBatchOperations
 {
@@ -24,74 +23,77 @@ final class RedisBatchOperations
     use CacheKeyValidationTrait;
     use CacheValueValidationTrait;
 
+    private const MAX_BATCH_SIZE = 1000;
+
     public function __construct(
         private \Redis $redis,
         private RedisConfig $config,
         private RedisErrorHandler $errorHandler,
-        private RedisConnectionManager $connectionManager
+        private RedisConnectionManager $connectionManager,
+        private readonly ExpirationProvider $expirationProvider
     ) {
     }
 
     /**
-     * @param array<string> $keys
+     * @param iterable<string> $keys
      *
-     * @return array<string, mixed>
+     * @return iterable<string, mixed>
      */
-    public function getMultiple(array $keys): array
+    public function getMultiple(iterable $keys): iterable
     {
-        $this->validateKeys($keys);
-
-        if (empty($keys)) {
+        $keyArray = $this->normalizeToArray($keys);
+        if (empty($keyArray)) {
             return [];
         }
 
-        return (array) $this->errorHandler->executeWithRetry(
-            fn () => $this->performGetMultiple($keys),
+        $this->validateKeys($keyArray);
+
+        return $this->errorHandler->executeWithRetry(
+            fn () => $this->performGetMultiple($keyArray),
             $this->connectionManager,
-            'getMultiple',
-            implode(',', $keys)
+            'getMultiple'
         );
     }
 
     /**
-     * @param array<string, mixed> $values
+     * @param iterable<string, mixed> $values
      */
-    public function setMultiple(array $values, ?\DateTimeInterface $expiration = null): bool
+    public function setMultiple(iterable $values, ?\DateTimeInterface $expiration = null): bool
     {
-        if (empty($values)) {
+        $valueArray = $this->normalizeToArray($values);
+        if (empty($valueArray)) {
             return true;
         }
 
-        $this->validateMultipleValues($values);
+        $this->validateMultipleValues($valueArray);
 
-        if ($expiration && $expiration->getTimestamp() <= time()) {
-            throw InvalidArgumentException::invalidTtl('Expiration time is in the past');
-        }
+        $finalExpiration = $expiration ?? $this->expirationProvider->calculateExpiration(
+            $this->expirationProvider->getTtlForOperation('setMultiple')
+        );
 
         return (bool) $this->errorHandler->executeWithRetry(
-            fn () => $this->performSetMultiple($values, $expiration),
+            fn () => $this->performSetMultiple($valueArray, $finalExpiration),
             $this->connectionManager,
-            'setMultiple',
-            implode(',', array_keys($values))
+            'setMultiple'
         );
     }
 
     /**
-     * @param array<string> $keys
+     * @param iterable<string> $keys
      */
-    public function deleteMultiple(array $keys): bool
+    public function deleteMultiple(iterable $keys): bool
     {
-        $this->validateKeys($keys);
-
-        if (empty($keys)) {
+        $keyArray = $this->normalizeToArray($keys);
+        if (empty($keyArray)) {
             return true;
         }
 
+        $this->validateKeys($keyArray);
+
         return (bool) $this->errorHandler->executeWithRetry(
-            fn () => $this->performDeleteMultiple($keys),
+            fn () => $this->performDeleteMultiple($keyArray),
             $this->connectionManager,
-            'deleteMultiple',
-            implode(',', $keys)
+            'deleteMultiple'
         );
     }
 
@@ -102,36 +104,22 @@ final class RedisBatchOperations
      */
     private function performGetMultiple(array $keys): array
     {
-        $prefixedKeys = array_map(fn ($k) => $this->config->keyPrefix . $k, $keys);
+        $prefixedKeys = array_map(fn (string $key) => $this->config->keyPrefix . $key, $keys);
+        $values = $this->redis->mGet($prefixedKeys);
 
-        try {
-            /** @var list<string|false>|false $rawValues */
-            $rawValues = $this->redis->mget($prefixedKeys);
-
-            if (!is_array($rawValues)) {
-                return array_fill_keys($keys, null);
-            }
-
-            $results = [];
-            foreach ($keys as $index => $key) {
-                $value = $rawValues[$index] ?? false;
-
-                if (false === $value) {
-                    $results[$key] = null;
-                    continue;
-                }
-
-                try {
-                    $results[$key] = $this->unserialize($value);
-                } catch (\Throwable) {
-                    $results[$key] = null;
-                }
-            }
-
-            return $results;
-        } catch (\RedisException $e) {
-            throw CacheException::operationFailed('mget', implode(',', $keys), $e);
+        if (!is_array($values)) {
+            return [];
         }
+
+        $result = [];
+        foreach ($keys as $index => $originalKey) {
+            $value = $values[$index] ?? false;
+            if (false !== $value) {
+                $result[$originalKey] = $value;
+            }
+        }
+
+        return $result;
     }
 
     /**
@@ -139,33 +127,23 @@ final class RedisBatchOperations
      */
     private function performSetMultiple(array $values, ?\DateTimeInterface $expiration): bool
     {
-        try {
-            // Use a pipeline for atomic and performant multi-set operations.
-            $pipe = $this->redis->multi(\Redis::PIPELINE);
+        $pipeline = $this->redis->multi(\Redis::PIPELINE);
 
-            foreach ($values as $key => $value) {
-                $fullKey = $this->config->keyPrefix . (string) $key;
+        foreach ($values as $key => $value) {
+            $fullKey = $this->config->keyPrefix . $key;
+            $serializedValue = $this->serialize($value);
 
-                try {
-                    $serialized = $this->serialize($value);
-                } catch (\Throwable $e) {
-                    throw SerializationException::serializationFailed($value, $e);
-                }
-
-                if ($expiration) {
-                    $ttl = max(1, $expiration->getTimestamp() - time());
-                    $pipe->setex($fullKey, $ttl, $serialized);
-                } else {
-                    $pipe->set($fullKey, $serialized);
-                }
+            if ($expiration) {
+                $ttl = max(1, $expiration->getTimestamp() - time());
+                $pipeline->setex($fullKey, $ttl, $serializedValue);
+            } else {
+                $pipeline->set($fullKey, $serializedValue);
             }
-
-            $results = $pipe->exec();
-
-            return is_array($results) && !in_array(false, $results, true);
-        } catch (\RedisException $e) {
-            throw CacheException::operationFailed('setMultiple', implode(',', array_keys($values)), $e);
         }
+
+        $results = $pipeline->exec();
+
+        return is_array($results) && !in_array(false, $results, true);
     }
 
     /**
@@ -173,14 +151,34 @@ final class RedisBatchOperations
      */
     private function performDeleteMultiple(array $keys): bool
     {
-        $prefixedKeys = array_map(fn ($k) => $this->config->keyPrefix . $k, $keys);
+        $prefixedKeys = array_map(fn (string $key) => $this->config->keyPrefix . $key, $keys);
 
-        try {
-            $deleted = (int) $this->redis->del($prefixedKeys);
+        $deletedCount = $this->redis->del($prefixedKeys);
 
-            return $deleted > 0;
-        } catch (\RedisException $e) {
-            throw CacheException::operationFailed('deleteMultiple', implode(',', $keys), $e);
+        return $deletedCount >= 0;
+    }
+
+    /**
+     * @param iterable<mixed> $iterable
+     *
+     * @return array<mixed>
+     */
+    private function normalizeToArray(iterable $iterable): array
+    {
+        if (is_array($iterable)) {
+            return $iterable;
+        }
+
+        return iterator_to_array($iterable);
+    }
+
+    /**
+     * @param array<string> $keys
+     */
+    private function validateKeys(array $keys): void
+    {
+        foreach ($keys as $key) {
+            $this->validateKey($key);
         }
     }
 
@@ -190,15 +188,8 @@ final class RedisBatchOperations
     private function validateMultipleValues(array $values): void
     {
         foreach ($values as $key => $value) {
-            try {
-                $this->validateKey((string) $key);
-                $this->validateValue($value);
-            } catch (\Throwable $e) {
-                if ($e instanceof InvalidArgumentException) {
-                    throw $e;
-                }
-                throw InvalidArgumentException::invalidValue("Invalid value for key '{$key}': " . $e->getMessage(), $e);
-            }
+            $this->validateKey((string) $key);
+            $this->validateValue($value);
         }
     }
 }

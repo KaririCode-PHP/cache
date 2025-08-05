@@ -11,12 +11,17 @@ use KaririCode\Cache\Contract\Cache as CacheContract;
 use KaririCode\Cache\Contract\CacheSerializer;
 use KaririCode\Cache\Contract\LayeredCache;
 use KaririCode\Cache\Contract\MetricsCollector as MetricsCollectorContract;
+use KaririCode\Cache\Contract\Provider\ExpirationProvider;
 use KaririCode\Cache\Contract\StampedeProtector as StampedeProtectorContract;
 use KaririCode\Cache\Driver\Factory\DriverFactoryRegistry;
 use KaririCode\Cache\Event\Factory\CacheEventFactory;
 use KaririCode\Cache\Exception\ConfigurationException;
 use KaririCode\Cache\Item\CachePoolManager;
 use KaririCode\Cache\Metrics\MetricsCollector;
+use KaririCode\Cache\Operation\AdvancedCacheOperations;
+use KaririCode\Cache\Operation\BasicCacheOperations;
+use KaririCode\Cache\Operation\TaggedCacheOperations;
+use KaririCode\Cache\Operation\TopicCacheOperations;
 use KaririCode\Cache\Protection\StampedeProtector;
 use KaririCode\Cache\Serializer\CompressingSerializer;
 use KaririCode\Cache\Serializer\IgbinarySerializer;
@@ -25,6 +30,7 @@ use KaririCode\Cache\Serializer\NativeSerializer;
 use KaririCode\Cache\Validation\CacheKeyValidator;
 use Psr\EventDispatcher\EventDispatcherInterface;
 use Psr\Log\LoggerInterface;
+use Psr\Log\NullLogger;
 
 /**
  * Implements the Builder pattern for constructing complex Cache instances.
@@ -38,6 +44,7 @@ final class CacheBuilder
 
     private string $storeName = 'default';
     private CacheSerializer $serializer;
+    private ExpirationProvider $expirationProvider;
     private LoggerInterface $logger;
     private ?StampedeProtectorContract $stampedeProtector = null;
     private ?MetricsCollectorContract $metricsCollector = null;
@@ -66,9 +73,17 @@ final class CacheBuilder
      */
     public function configureFromStore(string $storeName): self
     {
+        if (!$this->config->has("stores.{$storeName}")) {
+            throw ConfigurationException::missingDriver($storeName);
+        }
+
         $this->storeName = $storeName;
-        $storeConfig = $this->config->getStore($storeName);
-        $this->setupFromStoreConfig($storeConfig);
+        $storeConfig = $this->config->get("stores.{$storeName}");
+
+        // Load store-specific configuration
+        if (isset($storeConfig['driver'])) {
+            $this->addLayer($storeConfig['driver'], $storeConfig['config'] ?? [], 0);
+        }
 
         return $this;
     }
@@ -203,17 +218,159 @@ final class CacheBuilder
      */
     public function build(): CacheContract
     {
-        $this->validateConfiguration();
+        $this->validate();
+
         $layeredCache = $this->buildLayeredCache();
+        $logger = $this->logger ?? new NullLogger();
+
+        $basic = new BasicCacheOperations(
+            layeredCache: $layeredCache,
+            expirationProvider: $this->expirationProvider,
+            serializer: $this->serializer,
+            logger: $logger,
+            eventDispatcher: $this->eventDispatcher
+        );
+
+        $tagged = new TaggedCacheOperations(
+            layeredCache: $layeredCache,
+            expirationProvider: $this->expirationProvider,
+            logger: $logger,
+            eventDispatcher: $this->eventDispatcher
+        );
+
+        $topic = new TopicCacheOperations(
+            layeredCache: $layeredCache,
+            expirationProvider: $this->expirationProvider,
+            logger: $logger,
+            eventDispatcher: $this->eventDispatcher
+        );
+
+        $advanced = new AdvancedCacheOperations(
+            layeredCache: $layeredCache,
+            expirationProvider: $this->expirationProvider,
+            serializer: $this->serializer,
+            logger: $logger,
+            eventDispatcher: $this->eventDispatcher,
+            config: $this->config
+        );
 
         return new Cache(
-            $layeredCache,
-            $this->config,
-            $this->serializer,
-            $this->logger,
-            $this->eventDispatcher,
-            $this->storeName
+            basic: $basic,
+            tagged: $tagged,
+            topic: $topic,
+            advanced: $advanced,
+            name: $this->storeName
         );
+    }
+
+    /**
+     * Sets the expiration provider for the cache.
+     *
+     * @param ExpirationProvider $provider the expiration provider to use
+     *
+     * @return $this
+     */
+    public function setExpirationProvider(ExpirationProvider $provider): self
+    {
+        $this->expirationProvider = $provider;
+
+        return $this;
+    }
+
+    /**
+     * Sets the serializer for the cache.
+     *
+     * @param CacheSerializer $serializer the serializer to use
+     *
+     * @return $this
+     */
+    public function setSerializer(CacheSerializer $serializer): self
+    {
+        $this->serializer = $serializer;
+
+        return $this;
+    }
+
+    /**
+     * Sets the logger for the cache.
+     *
+     * @param LoggerInterface $logger the logger to use
+     *
+     * @return $this
+     */
+    public function setLogger(LoggerInterface $logger): self
+    {
+        $this->logger = $logger;
+
+        return $this;
+    }
+
+    /**
+     * Sets the event dispatcher for the cache.
+     *
+     * @param EventDispatcherInterface $eventDispatcher the event dispatcher to use
+     *
+     * @return $this
+     */
+    public function setEventDispatcher(EventDispatcherInterface $eventDispatcher): self
+    {
+        $this->eventDispatcher = $eventDispatcher;
+
+        return $this;
+    }
+
+    /**
+     * Sets the stampede protector for the cache.
+     *
+     * @param StampedeProtectorContract $protector the stampede protector to use
+     *
+     * @return $this
+     */
+    public function setStampedeProtector(StampedeProtectorContract $protector): self
+    {
+        $this->stampedeProtector = $protector;
+
+        return $this;
+    }
+
+    /**
+     * Sets the metrics collector for the cache.
+     *
+     * @param MetricsCollectorContract $collector the metrics collector to use
+     *
+     * @return $this
+     */
+    public function setMetricsCollector(MetricsCollectorContract $collector): self
+    {
+        $this->metricsCollector = $collector;
+
+        return $this;
+    }
+
+    /**
+     * Adds a layer to the cache builder.
+     *
+     * @param string $driver the name of the driver for this layer
+     * @param array<string, mixed> $config the configuration for this layer's driver
+     * @param int $priority the priority of this layer (higher numbers are checked first)
+     *
+     * @throws ConfigurationException if the driver is not registered
+     *
+     * @return $this
+     */
+    public function addLayer(string $driver, array $config = [], int $priority = 0): self
+    {
+        if (empty($driver)) {
+            throw ConfigurationException::invalidConfiguration('driver', 'Driver name cannot be empty');
+        }
+
+        $this->layers[] = [
+            'driver' => $driver,
+            'config' => $config,
+            'priority' => $priority,
+        ];
+
+        return $this;
     }
 
     private function setupFromStoreConfig(StoreConfig $storeConfig): void
@@ -321,10 +478,14 @@ final class CacheBuilder
         return $layeredCache;
     }
 
-    private function validateConfiguration(): void
+    private function validate(): void
     {
+        if (empty($this->storeName)) {
+            throw ConfigurationException::invalidConfiguration('storeName', 'Store name cannot be empty');
+        }
+
         if (empty($this->layers)) {
-            throw ConfigurationException::invalidConfiguration('layers', 'At least one cache layer must be configured.');
+            throw ConfigurationException::invalidConfiguration('layers', 'At least one cache layer must be configured');
         }
 
         foreach ($this->layers as $layer) {

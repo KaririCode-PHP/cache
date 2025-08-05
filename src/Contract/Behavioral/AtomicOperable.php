@@ -26,11 +26,10 @@ interface AtomicOperable
      * @param string $key the unique cache key
      * @param int $step the increment step (default: 1)
      * @param int $initialValue the initial value if key doesn't exist (default: 0)
-     * @param \DateInterval|int|null $ttl the time-to-live for the item
      *
      * @return int the new incremented value
      */
-    public function increment(string $key, int $step = 1, int $initialValue = 0, \DateInterval|int|null $ttl = null): int;
+    public function increment(string $key, int $step = 1, int $initialValue = 0): int;
 
     /**
      * Atomically decrements the value of the specified key.
@@ -38,20 +37,18 @@ interface AtomicOperable
      * @param string $key the unique cache key
      * @param int $step the decrement step (default: 1)
      * @param int $initialValue the initial value if key doesn't exist (default: 0)
-     * @param \DateInterval|int|null $ttl the time-to-live for the item
      *
      * @return int the new decremented value
      */
-    public function decrement(string $key, int $step = 1, int $initialValue = 0, \DateInterval|int|null $ttl = null): int;
+    public function decrement(string $key, int $step = 1, int $initialValue = 0): int;
 
     /**
      * Adds a cache item only if the key doesn't already exist.
      *
      * @param string $key the unique cache key
-     * @param mixed $value the value to cache
-     * @param \DateInterval|int|null $ttl the time-to-live for the item
+     * @param mixed $value the value to caches
      *
      * @return bool true if added successfully, false if key already exists
      */
-    public function add(string $key, mixed $value, \DateInterval|int|null $ttl = null): bool;
+    public function add(string $key, mixed $value): bool;
 }

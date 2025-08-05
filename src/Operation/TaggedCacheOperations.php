@@ -4,11 +4,12 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Operation;
 
-use KaririCode\Cache\Contract\CacheItem;
 use KaririCode\Cache\Contract\LayeredCache as LayeredCacheContract;
+use KaririCode\Cache\Contract\Provider\ExpirationProvider;
 use KaririCode\Cache\Event\CacheSetEvent;
 use KaririCode\Cache\Event\TagInvalidationEvent;
 use KaririCode\Cache\Exception\CacheException;
+use KaririCode\Cache\Exception\InvalidArgumentException;
 use KaririCode\Cache\Operation\Factory\TagNormalizer;
 use KaririCode\Cache\Validation\Trait\CacheKeyValidationTrait;
 use KaririCode\Cache\Validation\Trait\CacheValueValidationTrait;
@@ -17,30 +18,38 @@ use KaririCode\Cache\Validation\Trait\TtlValidationTrait;
 use KaririCode\Cache\ValueObject\Tag;
 use Psr\EventDispatcher\EventDispatcherInterface;
 use Psr\Log\LoggerInterface;
+use Psr\Log\NullLogger;
 
 /**
- * Handles cache operations related to tagging.
+ * Enhanced TaggedCacheOperations with proper TTL/expiration handling.
  *
- * This class follows the Single Responsibility Principle by focusing exclusively
- * on tag-related cache operations. It implements proper validation, error handling,
- * and event dispatching while maintaining consistency with other operation classes
- * in the codebase architecture.
+ * This class handles cache operations related to tagging while maintaining
+ * consistent TTL/expiration behavior across all operations. It follows
+ * Clean Architecture principles and SOLID design patterns.
  *
  * Key improvements:
- * - Added TagValidationTrait for proper validation consistency
- * - Enhanced error handling with contextual information
- * - Improved documentation following clean code principles
- * - Maintains the established architectural patterns
+ * - Consistent TTL/expiration handling using ExpirationProvider
+ * - Support for DateInterval, int, and null TTL values
+ * - Proper tag validation and normalization
+ * - Enhanced error handling and logging
+ * - PSR-14 event dispatching support
+ * - Type safety with strict typing
+ * - Comprehensive documentation
+ *
+ * Design Patterns Applied:
+ * - Strategy Pattern: ExpirationProvider for TTL management
+ * - Template Method: Consistent operation flow
+ * - Factory Pattern: TagNormalizer for tag creation
+ * - Observer Pattern: Event dispatching for monitoring
  *
  * @category  Cache
  *
  * @author    Walmir Silva <walmir.silva@kariricode.org>
  * @license   MIT
  *
- * @see      https://kariricode.org/
- * @see       TagValidationTrait for validation logic
- * @see       CacheException for error handling patterns
+ * @see       https://kariricode.org/
  * @see       TagNormalizer for tag normalization utilities
+ * @see       ExpirationProvider for TTL management strategy
  */
 final class TaggedCacheOperations
 {
@@ -49,191 +58,505 @@ final class TaggedCacheOperations
     use TagValidationTrait;
     use TtlValidationTrait;
 
+    private readonly LoggerInterface $logger;
+
     /**
-     * @param LayeredCacheContract $layeredCache The underlying cache pool for operations
-     * @param LoggerInterface $logger PSR-3 compliant logger for operation tracking
+     * Constructor applying Dependency Injection pattern.
+     *
+     * @param LayeredCacheContract $layeredCache The underlying cache implementation
+     * @param ExpirationProvider $expirationProvider Strategy for TTL management
+     * @param LoggerInterface|null $logger Optional PSR-3 logger
      * @param EventDispatcherInterface|null $eventDispatcher Optional PSR-14 event dispatcher
      */
     public function __construct(
         private readonly LayeredCacheContract $layeredCache,
-        private readonly LoggerInterface $logger,
-        private readonly ?EventDispatcherInterface $eventDispatcher
+        private readonly ExpirationProvider $expirationProvider,
+        ?LoggerInterface $logger = null,
+        private readonly ?EventDispatcherInterface $eventDispatcher = null
     ) {
+        $this->logger = $logger ?? new NullLogger();
     }
 
+    // ========================================================================
+    // Tag-based Cache Operations with Enhanced TTL Support
+    // ========================================================================
+
     /**
-     * Sets a cache item with associated tags.
+     * Sets a cache item with associated tags and proper TTL handling.
      *
-     * This method follows the fail-fast principle by validating all inputs
-     * before attempting the cache operation. It supports hybrid tag input
-     * (strings or Tag objects) and normalizes them for consistent handling.
+     * This method provides enhanced functionality by:
+     * - Supporting flexible TTL formats (DateInterval, int, null)
+     * - Using ExpirationProvider for consistent TTL management
+     * - Normalizing tags for consistency
+     * - Providing comprehensive error handling and logging
+     * - Dispatching events for monitoring
      *
-     * @param string $key The cache key to set
+     * @param string $key The cache key
      * @param mixed $value The value to store
-     * @param array<string|Tag> $tags Array of tags (strings or Tag objects)
-     * @param \DateInterval|int|null $ttl Time to live for the cache item
+     * @param iterable<string|Tag> $tags Tags to associate with the cache item
+     * @param \DateInterval|int|null $ttl Time-to-live (supports DateInterval, seconds as int, or null for default)
      *
-     * @throws CacheException If the operation fails
+     * @throws CacheException When cache operation fails
+     * @throws InvalidArgumentException When parameters are invalid
      *
-     * @return bool True if the item was successfully stored, false otherwise
+     * @return bool True on success, false on failure
      *
      * @example
      * ```php
+     * // Using integer TTL (seconds)
      * $success = $taggedOps->setWithTags('user:123', $userData, ['user', 'profile'], 3600);
-     * $success = $taggedOps->setWithTags('post:456', $post, [new Tag('post'), new Tag('blog')]);
+     *
+     * // Using DateInterval TTL
+     * $success = $taggedOps->setWithTags('post:456', $postData, [new Tag('post')], new DateInterval('PT1H'));
+     *
+     * // Using default TTL from ExpirationProvider
+     * $success = $taggedOps->setWithTags('cache:key', $data, ['general'], null);
      * ```
      */
-    public function setWithTags(
-        string $key,
-        mixed $value,
-        array $tags,
-        \DateInterval|int|null $ttl = null
-    ): bool {
+    public function setWithTags(string $key, mixed $value, iterable $tags, \DateInterval|int|null $ttl = null): bool
+    {
         $this->validateKey($key);
         $this->validateValue($value);
-        $this->validateMixedTags($tags);
         $this->validateTtl($ttl);
 
         $startTime = microtime(true);
 
         try {
-            // Validate and normalize tags using the shared validation trait
-            $normalizedTags = $this->validateAndNormalizeTags($tags);
+            $normalizedTags = $this->normalizeTags($tags);
+            $expiration = $this->resolveExpiration($key, $ttl, 'setWithTags');
 
-            // Get cache item and configure it
-            $item = $this->layeredCache->getItem($key);
-            $item->set($value);
+            $success = $this->layeredCache->setWithTags($key, $value, $normalizedTags, $expiration);
+            $operationTime = microtime(true) - $startTime;
 
-            if (null !== $ttl) {
-                $item->expiresAfter($ttl);
+            if ($success) {
+                $this->dispatchSetWithTagsEvent($key, $value, $normalizedTags, $ttl, $operationTime);
+
+                $this->logger->debug('Tagged cache set successful', [
+                    'key' => $key,
+                    'tags' => $this->formatTagsForLogging($normalizedTags),
+                    'ttl' => $this->formatTtlForLogging($ttl),
+                    'expiration' => $expiration?->format('c'),
+                    'operation_time_ms' => round($operationTime * 1000, 2),
+                ]);
+            } else {
+                $this->logger->warning('Tagged cache set failed', [
+                    'key' => $key,
+                    'tags' => $this->formatTagsForLogging($normalizedTags),
+                    'operation_time_ms' => round($operationTime * 1000, 2),
+                ]);
             }
 
-            // Apply tags if the item supports tagging
-            if ($item instanceof CacheItem) {
-                $item->tag($normalizedTags);
-            }
-
-            // Perform the cache operation
-            $result = $this->layeredCache->save($item);
-
-            // Dispatch success event if configured
-            if ($result && $this->eventDispatcher) {
-                $duration = microtime(true) - $startTime;
-                $tagStrings = TagNormalizer::toStrings($normalizedTags);
-                $this->eventDispatcher->dispatch(
-                    new CacheSetEvent($key, $value, $ttl, $tagStrings, $duration)
-                );
-            }
-
-            return $result;
-        } catch (\Throwable $e) {
-            // Log detailed error information for debugging
-            $this->logger->error('Cache setWithTags operation failed', [
+            return $success;
+        } catch (\Throwable $exception) {
+            $this->logger->error('Tagged cache set operation failed', [
                 'key' => $key,
-                'tags' => TagNormalizer::toStrings($this->validateAndNormalizeTags($tags)),
-                'ttl' => $ttl,
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
+                'tags' => $this->formatTagsForLogging($this->normalizeTags($tags)),
+                'ttl' => $this->formatTtlForLogging($ttl),
+                'error' => $exception->getMessage(),
+                'trace' => $exception->getTraceAsString(),
             ]);
 
-            throw CacheException::operationFailed('setWithTags', $key, $e);
+            throw CacheException::operationFailed('setWithTags', $key, $exception);
         }
     }
 
     /**
      * Invalidates all cache items associated with the given tags.
      *
-     * This method implements efficient tag-based invalidation by leveraging
-     * the underlying cache layer's tag support. It provides comprehensive
-     * error handling and event dispatching for monitoring purposes.
+     * This method provides comprehensive tag invalidation with:
+     * - Support for both string and Tag object inputs
+     * - Proper validation and normalization
+     * - Event dispatching for monitoring
+     * - Detailed logging for debugging
      *
-     * @param array<string|Tag> $tags Array of tags to invalidate
+     * @param iterable<string|Tag> $tags Tags to invalidate (strings or Tag objects)
      *
-     * @throws CacheException If the invalidation operation fails
+     * @throws CacheException When cache operation fails
+     * @throws InvalidArgumentException When tags are invalid
      *
-     * @return bool True if tags were successfully invalidated, false otherwise
+     * @return bool True on success, false on failure
      *
      * @example
      * ```php
+     * // Invalidate using string tags
      * $success = $taggedOps->invalidateTags(['user', 'profile']);
+     *
+     * // Invalidate using Tag objects
      * $success = $taggedOps->invalidateTags([new Tag('post'), new Tag('blog')]);
+     *
+     * // Mixed usage
+     * $success = $taggedOps->invalidateTags(['user', new Tag('profile')]);
      * ```
      */
-    public function invalidateTags(array $tags): bool
+    public function invalidateTags(iterable $tags): bool
     {
-        $this->validateTags($tags);
+        $startTime = microtime(true);
+
         try {
-            // Validate and normalize tags
-            $normalizedTags = $this->validateAndNormalizeTags($tags);
-            $tagStrings = TagNormalizer::toStrings($normalizedTags);
+            $normalizedTags = $this->normalizeTags($tags);
 
-            // Get affected keys for metrics (before invalidation)
-            $keysToInvalidate = $this->getByTags($normalizedTags);
-            $affectedKeys = count($keysToInvalidate);
+            if (empty($normalizedTags)) {
+                $this->logger->debug('Tag invalidation skipped - no tags provided');
 
-            // Perform the invalidation operation
-            $result = $this->layeredCache->invalidateTags($normalizedTags);
-
-            // Dispatch invalidation event if successful
-            if ($result && $this->eventDispatcher) {
-                $this->eventDispatcher->dispatch(
-                    new TagInvalidationEvent($tagStrings, $affectedKeys)
-                );
+                return true;
             }
 
-            // Log successful invalidation
-            if ($result) {
-                $this->logger->info('Tags successfully invalidated', [
-                    'tags' => $tagStrings,
-                    'affected_keys' => $affectedKeys,
+            $success = $this->layeredCache->invalidateTags($normalizedTags);
+            $operationTime = microtime(true) - $startTime;
+
+            if ($success) {
+                $this->dispatchTagInvalidationEvent($normalizedTags, $operationTime);
+
+                $this->logger->info('Tag invalidation successful', [
+                    'tags' => $this->formatTagsForLogging($normalizedTags),
+                    'operation_time_ms' => round($operationTime * 1000, 2),
+                ]);
+            } else {
+                $this->logger->warning('Tag invalidation failed', [
+                    'tags' => $this->formatTagsForLogging($normalizedTags),
+                    'operation_time_ms' => round($operationTime * 1000, 2),
                 ]);
             }
 
-            return $result;
-        } catch (\Throwable $e) {
-            // Ensure we can always get tag strings for error logging
-            $tagStrings = [];
-            try {
-                $tagStrings = TagNormalizer::toStrings($this->validateAndNormalizeTags($tags));
-            } catch (\Throwable) {
-                // Fallback to raw tags if normalization fails
-                $tagStrings = array_map('strval', $tags);
-            }
-
-            $this->logger->error('Tag invalidation failed', [
-                'tags' => $tagStrings,
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
+            return $success;
+        } catch (\Throwable $exception) {
+            $this->logger->error('Tag invalidation operation failed', [
+                'error' => $exception->getMessage(),
+                'trace' => $exception->getTraceAsString(),
             ]);
 
-            throw CacheException::tagInvalidationFailed($tagStrings, $e);
+            throw CacheException::tagInvalidationFailed($this->formatTagsForLogging($this->normalizeTags($tags)), $exception);
         }
     }
 
     /**
      * Retrieves all cache items associated with the given tags.
      *
-     * This method provides efficient tag-based retrieval by delegating
-     * to the underlying cache layer. It maintains consistency with the
-     * codebase's delegation pattern and error handling approach.
+     * This method provides efficient tag-based retrieval with:
+     * - Support for both string and Tag object inputs
+     * - Proper validation and normalization
+     * - Comprehensive error handling
+     * - Performance monitoring
      *
-     * @param array<Tag> $tags Array of Tag objects to search for
+     * @param iterable<string|Tag> $tags Tags to search for (strings or Tag objects)
      *
-     * @return array<string, mixed> Array of cache items indexed by their keys
+     * @throws CacheException When cache operation fails
+     * @throws InvalidArgumentException When tags are invalid
+     *
+     * @return iterable<string, mixed> Cache items indexed by their keys
      *
      * @example
      * ```php
-     * $userItems = $taggedOps->getByTags([new Tag('user')]);
+     * // Get items by string tags
+     * $userItems = $taggedOps->getByTags(['user']);
+     *
+     * // Get items by Tag objects
      * $blogPosts = $taggedOps->getByTags([new Tag('post'), new Tag('blog')]);
+     *
+     * // Mixed usage
+     * $items = $taggedOps->getByTags(['user', new Tag('active')]);
      * ```
      */
-    public function getByTags(array $tags): array
+    public function getByTags(iterable $tags): iterable
     {
-        return $this->layeredCache->getByTags($tags);
+        $startTime = microtime(true);
+
+        try {
+            $normalizedTags = $this->normalizeTags($tags);
+
+            if (empty($normalizedTags)) {
+                $this->logger->debug('Get by tags skipped - no tags provided');
+
+                return [];
+            }
+
+            $results = $this->layeredCache->getByTags($normalizedTags);
+            $operationTime = microtime(true) - $startTime;
+
+            $resultCount = is_countable($results) ? count($results) : 0;
+
+            $this->logger->debug('Get by tags completed', [
+                'tags' => $this->formatTagsForLogging($normalizedTags),
+                'result_count' => $resultCount,
+                'operation_time_ms' => round($operationTime * 1000, 2),
+            ]);
+
+            return $results;
+        } catch (\Throwable $exception) {
+            $this->logger->error('Get by tags operation failed', [
+                'tags' => $this->formatTagsForLogging($this->normalizeTags($tags)),
+                'error' => $exception->getMessage(),
+            ]);
+
+            throw CacheException::operationFailed('getByTags', 'tags', $exception);
+        }
     }
 
-    public function getAllTags(): array
+    /**
+     * Returns all tags currently in use in the cache.
+     *
+     * This method provides comprehensive tag listing with:
+     * - Proper error handling
+     * - Performance monitoring
+     * - Consistent return type (Tag objects)
+     *
+     * @throws CacheException When cache operation fails
+     *
+     * @return iterable<Tag> Collection of Tag objects currently in use
+     *
+     * @example
+     * ```php
+     * $allTags = $taggedOps->getTags();
+     * foreach ($allTags as $tag) {
+     *     echo "Tag: " . (string) $tag . PHP_EOL;
+     * }
+     * ```
+     */
+    public function getTags(): iterable
     {
-        return $this->layeredCache->getTags();
+        $startTime = microtime(true);
+
+        try {
+            $tags = $this->layeredCache->getTags();
+            $operationTime = microtime(true) - $startTime;
+
+            $tagCount = is_countable($tags) ? count($tags) : 0;
+
+            $this->logger->debug('Get all tags completed', [
+                'tag_count' => $tagCount,
+                'operation_time_ms' => round($operationTime * 1000, 2),
+            ]);
+
+            return $tags;
+        } catch (\Throwable $exception) {
+            $this->logger->error('Get tags operation failed', [
+                'error' => $exception->getMessage(),
+            ]);
+
+            throw CacheException::operationFailed('getTags', 'all', $exception);
+        }
+    }
+
+    /**
+     * Sets multiple cache items with associated tags and proper TTL handling.
+     *
+     * This method provides batch operation capabilities with:
+     * - Consistent TTL handling across all items
+     * - Tag normalization and validation
+     * - Comprehensive error handling
+     * - Performance optimization for batch operations
+     *
+     * @param iterable<string, mixed> $values Key-value pairs to store
+     * @param iterable<string|Tag> $tags Tags to associate with all items
+     * @param \DateInterval|int|null $ttl Time-to-live for all items
+     *
+     * @throws CacheException When cache operation fails
+     * @throws InvalidArgumentException When parameters are invalid
+     *
+     * @return bool True if all items were stored successfully
+     *
+     * @example
+     * ```php
+     * $values = [
+     *     'user:123' => $userData1,
+     *     'user:456' => $userData2,
+     * ];
+     * $success = $taggedOps->setMultipleWithTags($values, ['user', 'batch'], 3600);
+     * ```
+     */
+    public function setMultipleWithTags(iterable $values, iterable $tags, \DateInterval|int|null $ttl = null): bool
+    {
+        $values = $this->validateAndNormalizeValues($values);
+        $this->validateTtl($ttl);
+
+        if (empty($values)) {
+            return true;
+        }
+
+        $startTime = microtime(true);
+
+        try {
+            $normalizedTags = $this->normalizeTags($tags);
+            $expiration = $this->resolveExpiration('batch_operation', $ttl, 'setMultipleWithTags');
+            $allSuccess = true;
+
+            foreach ($values as $key => $value) {
+                if (!$this->layeredCache->setWithTags($key, $value, $normalizedTags, $expiration)) {
+                    $allSuccess = false;
+                }
+            }
+
+            $operationTime = microtime(true) - $startTime;
+
+            $this->logger->debug('Set multiple with tags completed', [
+                'items_count' => count($values),
+                'tags' => $this->formatTagsForLogging($normalizedTags),
+                'success' => $allSuccess,
+                'ttl' => $this->formatTtlForLogging($ttl),
+                'operation_time_ms' => round($operationTime * 1000, 2),
+            ]);
+
+            return $allSuccess;
+        } catch (\Throwable $exception) {
+            $this->logger->error('Set multiple with tags operation failed', [
+                'items_count' => count($values),
+                'error' => $exception->getMessage(),
+            ]);
+
+            throw CacheException::operationFailed('setMultipleWithTags', 'batch', $exception);
+        }
+    }
+
+    // ========================================================================
+    // Private Helper Methods
+    // ========================================================================
+
+    /**
+     * Normalizes mixed tag input to consistent Tag objects.
+     *
+     * @param iterable<string|Tag> $tags Mixed tag input
+     *
+     * @throws InvalidArgumentException When tags are invalid
+     *
+     * @return array<Tag> Normalized Tag objects
+     */
+    private function normalizeTags(iterable $tags): array
+    {
+        try {
+            return TagNormalizer::normalize(is_array($tags) ? $tags : iterator_to_array($tags));
+        } catch (\Throwable $exception) {
+            throw InvalidArgumentException::invalidTag("Failed to normalize tags: {$exception->getMessage()}");
+        }
+    }
+
+    /**
+     * Resolves expiration time using ExpirationProvider strategy.
+     *
+     * @param string $key The cache key for context
+     * @param \DateInterval|int|null $ttl The provided TTL
+     * @param string $operation The operation type for context
+     *
+     * @return \DateTimeInterface|null The resolved expiration time
+     */
+    private function resolveExpiration(string $key, \DateInterval|int|null $ttl, string $operation): ?\DateTimeInterface
+    {
+        // Handle explicit null (use provider defaults)
+        if (null === $ttl) {
+            $providerTtl = $this->expirationProvider->getTtlForOperation($operation);
+
+            return $this->expirationProvider->calculateExpiration($providerTtl);
+        }
+
+        // Handle DateInterval
+        if ($ttl instanceof \DateInterval) {
+            return (new \DateTimeImmutable())->add($ttl);
+        }
+
+        // Handle integer (seconds)
+        if (is_int($ttl)) {
+            if ($ttl <= 0) {
+                return null; // No expiration for non-positive values
+            }
+
+            return new \DateTimeImmutable("+{$ttl} seconds");
+        }
+
+        // Fallback to ExpirationProvider
+        $providerTtl = $this->expirationProvider->getTtlForKey($key);
+
+        return $this->expirationProvider->calculateExpiration($providerTtl);
+    }
+
+    /**
+     * Validates and normalizes an iterable of key-value pairs.
+     *
+     * @param iterable<string, mixed> $values
+     *
+     * @throws InvalidArgumentException When values are invalid
+     *
+     * @return array<string, mixed>
+     */
+    private function validateAndNormalizeValues(iterable $values): array
+    {
+        $normalizedValues = [];
+
+        foreach ($values as $key => $value) {
+            if (!is_string($key)) {
+                throw InvalidArgumentException::invalidKeyFormat('All keys must be strings');
+            }
+
+            $this->validateKey($key);
+            $this->validateValue($value);
+            $normalizedValues[$key] = $value;
+        }
+
+        return $normalizedValues;
+    }
+
+    /**
+     * Formats tags for logging purposes.
+     *
+     * @param array<Tag> $tags
+     *
+     * @return array<string>
+     */
+    private function formatTagsForLogging(array $tags): array
+    {
+        return array_map(fn (Tag $tag) => (string) $tag, $tags);
+    }
+
+    /**
+     * Formats TTL for logging purposes.
+     */
+    private function formatTtlForLogging(\DateInterval|int|null $ttl): ?string
+    {
+        if (null === $ttl) {
+            return 'default';
+        }
+
+        if ($ttl instanceof \DateInterval) {
+            return $ttl->format('P%yY%mM%dDT%hH%iM%sS');
+        }
+
+        return "{$ttl}s";
+    }
+
+    // ========================================================================
+    // Event Dispatching Methods
+    // ========================================================================
+
+    /**
+     * Dispatches set with tags event.
+     */
+    private function dispatchSetWithTagsEvent(
+        string $key,
+        mixed $value,
+        array $tags,
+        \DateInterval|int|null $ttl,
+        float $duration
+    ): void {
+        if (null === $this->eventDispatcher) {
+            return;
+        }
+
+        $event = new CacheSetEvent($key, $value, $ttl, $duration, [
+            'tags' => $this->formatTagsForLogging($tags),
+            'operation' => 'setWithTags',
+        ]);
+
+        $this->eventDispatcher->dispatch($event);
+    }
+
+    /**
+     * Dispatches tag invalidation event.
+     */
+    private function dispatchTagInvalidationEvent(array $tags, float $duration): void
+    {
+        if (null === $this->eventDispatcher) {
+            return;
+        }
+
+        $event = new TagInvalidationEvent($this->formatTagsForLogging($tags), $duration);
+        $this->eventDispatcher->dispatch($event);
     }
 }

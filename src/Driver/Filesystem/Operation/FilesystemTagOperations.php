@@ -7,44 +7,22 @@ namespace KaririCode\Cache\Driver\Filesystem\Operation;
 use KaririCode\Cache\Contract\CacheSerializer;
 use KaririCode\Cache\Contract\Filesystem\DirectoryManager;
 use KaririCode\Cache\Contract\Filesystem\FileManager;
-use KaririCode\Cache\Exception\CacheException;
-use KaririCode\Cache\Operation\Factory\TagNormalizer;
+use KaririCode\Cache\Contract\Provider\ExpirationProvider;
 use KaririCode\Cache\Validation\Trait\CacheKeyValidationTrait;
 use KaririCode\Cache\Validation\Trait\CacheValueValidationTrait;
-use KaririCode\Cache\Validation\Trait\ExpirationManagementTrait;
 use KaririCode\Cache\Validation\Trait\TagValidationTrait;
 use KaririCode\Cache\ValueObject\Tag;
 use Psr\Log\LoggerInterface;
 
 /**
  * Handles tag-based cache operations for FilesystemDriver.
- *
- * This class extends the filesystem caching capabilities by implementing
- * tag support through metadata storage. Tags are stored as part of the
- * cache item metadata, allowing for efficient tag-based operations while
- * maintaining the filesystem driver's file-based architecture.
- *
- * Key features:
- * - Stores tags as metadata alongside cached values
- * - Maintains tag index files for efficient lookups
- * - Implements atomic operations for tag consistency
- * - Provides cleanup mechanisms for orphaned tag references
- *
- * @category  Cache
- *
- * @author    Walmir Silva <walmir.silva@kariricode.org>
- * @license   MIT
- *
- * @see      https://kariricode.org/
- * @see       TagValidationTrait for validation logic
- * @see       FileManager for file operations
+ * Uses ExpirationProvider for TTL management - follows Strategy Pattern.
  */
 final class FilesystemTagOperations
 {
     use CacheKeyValidationTrait;
     use CacheValueValidationTrait;
     use TagValidationTrait;
-    use ExpirationManagementTrait;
 
     private const TAG_INDEX_DIRECTORY = 'tags';
     private const TAG_INDEX_FILE_EXTENSION = '.tagindex';
@@ -55,408 +33,287 @@ final class FilesystemTagOperations
         private readonly DirectoryManager $directoryManager,
         private readonly CacheSerializer $serializer,
         private readonly LoggerInterface $logger,
+        private readonly ExpirationProvider $expirationProvider,
         private readonly string $keyPrefix = 'cache_'
     ) {
         $this->initializeTagIndexDirectory();
     }
 
     /**
-     * Sets a cache item with associated tags.
-     *
-     * This method stores the cache value along with tag metadata in a single
-     * file, then updates tag index files for efficient tag-based lookups.
-     *
-     * @param string $key The cache key to set
-     * @param mixed $value The value to store
-     * @param array<string|Tag> $tags Array of tags (strings or Tag objects)
-     * @param \DateInterval|int|null $ttl Time to live for the cache item
-     *
-     * @return bool True if the item was successfully stored, false otherwise
+     * @param array<Tag> $tags
      */
-    public function setWithTags(string $key, mixed $value, array $tags, \DateInterval|int|null $ttl = null): bool
+    public function setWithTags(string $key, mixed $value, array $tags, ?\DateTimeInterface $expiration = null): bool
     {
         $this->validateKey($key);
         $this->validateValue($value);
+        $this->validateTags($tags);
 
-        // Validate and normalize tags
-        $normalizedTags = $this->validateAndNormalizeTags($tags);
-        $tagStrings = TagNormalizer::toStrings($normalizedTags);
+        $finalExpiration = $expiration ?? $this->expirationProvider->calculateExpiration(
+            $this->expirationProvider->getTtlForKey($key)
+        );
 
         try {
-            // Create metadata with tags
-            $expiration = $this->calculateExpiration($ttl);
-            $metadata = [
-                'value' => $value,
-                'tags' => $tagStrings,
-                'created_at' => time(),
-                'expires_at' => $expiration?->getTimestamp(),
-            ];
-
-            // Store the cache item with metadata
-            $filename = $this->generateFilename($key);
-            $serializedData = $this->serializer->serialize($metadata);
-
-            if (!$this->fileManager->writeSecurely($filename, $serializedData)) {
-                return false;
-            }
-
-            // Update tag indices
-            $this->updateTagIndices($key, $tagStrings);
-
-            return true;
+            return $this->performSetWithTags($key, $value, $tags, $finalExpiration);
         } catch (\Throwable $e) {
             $this->logger->error('Failed to set cache item with tags', [
                 'key' => $key,
-                'tags' => $tagStrings,
+                'tags' => array_map(fn (Tag $tag) => (string) $tag, $tags),
                 'error' => $e->getMessage(),
             ]);
 
-            throw CacheException::operationFailed('setWithTags', $key, $e);
+            return false;
         }
     }
 
     /**
-     * Invalidates all cache items associated with the given tags.
+     * @param array<Tag> $tags
      *
-     * This method reads tag index files to find all keys associated with
-     * the specified tags, then removes both the cache files and updates
-     * the tag indices.
-     *
-     * @param array<string|Tag> $tags Array of tags to invalidate
-     *
-     * @return bool True if tags were successfully invalidated, false otherwise
-     */
-    public function invalidateTags(array $tags): bool
-    {
-        // Validate and normalize tags
-        $normalizedTags = $this->validateAndNormalizeTags($tags);
-        $tagStrings = TagNormalizer::toStrings($normalizedTags);
-
-        try {
-            $keysToDelete = [];
-
-            // Collect all keys associated with the tags
-            foreach ($tagStrings as $tag) {
-                $taggedKeys = $this->getKeysForTag($tag);
-                $keysToDelete = array_merge($keysToDelete, $taggedKeys);
-            }
-
-            // Remove duplicates
-            $keysToDelete = array_unique($keysToDelete);
-
-            // Delete all associated cache files
-            $deletedCount = 0;
-            foreach ($keysToDelete as $key) {
-                $filename = $this->generateFilename($key);
-                if ($this->fileManager->deleteFile($filename)) {
-                    ++$deletedCount;
-                }
-            }
-
-            // Clean up tag indices
-            foreach ($tagStrings as $tag) {
-                $this->removeTagIndex($tag);
-            }
-
-            $this->logger->info('Tag invalidation completed', [
-                'tags' => $tagStrings,
-                'keys_deleted' => $deletedCount,
-            ]);
-
-            return true;
-        } catch (\Throwable $e) {
-            $this->logger->error('Tag invalidation failed', [
-                'tags' => $tagStrings,
-                'error' => $e->getMessage(),
-            ]);
-
-            throw CacheException::tagInvalidationFailed($tagStrings, $e);
-        }
-    }
-
-    /**
-     * Retrieves all cache items associated with the given tags.
-     *
-     * @param array<string|Tag> $tags Array of tags to search for
-     *
-     * @return array<string, mixed> Array of cache items indexed by their keys
+     * @return array<string>
      */
     public function getByTags(array $tags): array
     {
-        // Validate and normalize tags
-        $normalizedTags = $this->validateAndNormalizeTags($tags);
-        $tagStrings = TagNormalizer::toStrings($normalizedTags);
+        $this->validateTags($tags);
 
-        $allKeys = [];
-
-        // Collect all keys associated with the tags
-        foreach ($tagStrings as $tag) {
-            $taggedKeys = $this->getKeysForTag($tag);
-            $allKeys = array_merge($allKeys, $taggedKeys);
-        }
-
-        // Remove duplicates
-        $uniqueKeys = array_unique($allKeys);
-
-        $results = [];
-
-        // Retrieve values for all keys
-        foreach ($uniqueKeys as $key) {
-            $filename = $this->generateFilename($key);
-
-            if (!$this->fileManager->exists($filename)) {
-                continue;
-            }
-
-            $content = $this->fileManager->readSecurely($filename);
-            if (null === $content) {
-                continue;
-            }
-
-            try {
-                $metadata = $this->serializer->unserialize($content);
-
-                if (!is_array($metadata) || !isset($metadata['value'])) {
-                    continue;
-                }
-
-                // Check expiration
-                if (isset($metadata['expires_at']) && $metadata['expires_at'] < time()) {
-                    $this->fileManager->deleteFile($filename);
-                    continue;
-                }
-
-                $results[$key] = $metadata['value'];
-            } catch (\Throwable $e) {
-                $this->logger->warning('Failed to deserialize tagged cache item', [
-                    'key' => $key,
-                    'error' => $e->getMessage(),
-                ]);
-                continue;
-            }
-        }
-
-        return $results;
-    }
-
-    /**
-     * Gets all tags currently in use.
-     *
-     * @return array<string> Array of unique tag strings currently in use
-     */
-    public function getTags(): array
-    {
-        $tagDirectory = $this->getTagDirectory();
-        $tagFiles = glob($tagDirectory . '/*' . self::TAG_INDEX_FILE_EXTENSION);
-
-        if (false === $tagFiles) {
-            return [];
-        }
-
-        $tags = [];
-        foreach ($tagFiles as $tagFile) {
-            $filename = basename($tagFile, self::TAG_INDEX_FILE_EXTENSION);
-            // Decode the tag name (it was hashed for filename safety)
-            $tags[] = $this->decodeTagFromFilename($filename);
-        }
-
-        return array_filter($tags); // Remove any null/empty values
-    }
-
-    /**
-     * Performs cleanup of expired items and orphaned tag references.
-     */
-    public function performCleanup(): void
-    {
         try {
-            $cleanupCount = 0;
-            $tagDirectory = $this->getTagDirectory();
-            $tagFiles = glob($tagDirectory . '/*' . self::TAG_INDEX_FILE_EXTENSION);
-
-            if (false === $tagFiles) {
-                return;
-            }
-
-            foreach ($tagFiles as $tagFile) {
-                $content = $this->fileManager->readSecurely($tagFile);
-                if (null === $content) {
-                    continue;
-                }
-
-                $taggedKeys = $this->serializer->unserialize($content);
-                if (!is_array($taggedKeys)) {
-                    continue;
-                }
-
-                $validKeys = [];
-                foreach ($taggedKeys as $key) {
-                    $cacheFile = $this->generateFilename($key);
-                    if ($this->fileManager->exists($cacheFile)) {
-                        $validKeys[] = $key;
-                    } else {
-                        ++$cleanupCount;
-                    }
-                }
-
-                // Update tag index with only valid keys
-                if (empty($validKeys)) {
-                    $this->fileManager->deleteFile($tagFile);
-                } elseif (count($validKeys) !== count($taggedKeys)) {
-                    $updatedContent = $this->serializer->serialize($validKeys);
-                    $this->fileManager->writeSecurely($tagFile, $updatedContent);
-                }
-            }
-
-            if ($cleanupCount > 0) {
-                $this->logger->info('Filesystem tag cleanup completed', [
-                    'orphaned_references_removed' => $cleanupCount,
-                ]);
-            }
+            return $this->performGetByTags($tags);
         } catch (\Throwable $e) {
-            $this->logger->error('Tag cleanup failed', [
+            $this->logger->error('Failed to get cache items by tags', [
+                'tags' => array_map(fn (Tag $tag) => (string) $tag, $tags),
                 'error' => $e->getMessage(),
             ]);
+
+            return [];
         }
     }
 
     /**
-     * Updates tag indices with the given key and tags.
+     * @param array<Tag> $tags
      */
-    private function updateTagIndices(string $key, array $tagStrings): void
+    public function deleteByTags(array $tags): bool
     {
-        foreach ($tagStrings as $tag) {
-            $tagIndexFile = $this->getTagIndexFile($tag);
+        $this->validateTags($tags);
 
-            // Read existing tagged keys
-            $taggedKeys = [];
-            if ($this->fileManager->exists($tagIndexFile)) {
-                $content = $this->fileManager->readSecurely($tagIndexFile);
-                if (null !== $content) {
-                    $existingKeys = $this->serializer->unserialize($content);
-                    if (is_array($existingKeys)) {
-                        $taggedKeys = $existingKeys;
-                    }
-                }
-            }
+        try {
+            return $this->performDeleteByTags($tags);
+        } catch (\Throwable $e) {
+            $this->logger->error('Failed to delete cache items by tags', [
+                'tags' => array_map(fn (Tag $tag) => (string) $tag, $tags),
+                'error' => $e->getMessage(),
+            ]);
 
-            // Add the new key if not already present
-            if (!in_array($key, $taggedKeys, true)) {
-                $taggedKeys[] = $key;
-            }
-
-            // Write updated tag index
-            $serializedKeys = $this->serializer->serialize($taggedKeys);
-            $this->fileManager->writeSecurely($tagIndexFile, $serializedKeys);
+            return false;
         }
     }
 
     /**
-     * Gets all keys associated with a specific tag.
+     * @param array<Tag> $tags
      */
-    private function getKeysForTag(string $tag): array
+    private function performSetWithTags(string $key, mixed $value, array $tags, ?\DateTimeInterface $expiration): bool
     {
-        $tagIndexFile = $this->getTagIndexFile($tag);
+        $filename = $this->generateFilename($key);
 
-        if (!$this->fileManager->exists($tagIndexFile)) {
+        $metadata = $this->createMetadata($value, $expiration, $tags);
+        $serializedData = $this->serializer->serialize($metadata);
+
+        if (!$this->fileManager->writeSecurely($filename, $serializedData)) {
+            return false;
+        }
+
+        // Update tag indexes
+        foreach ($tags as $tag) {
+            $this->updateTagIndex($tag, $key, true);
+        }
+
+        return true;
+    }
+
+    /**
+     * @param array<Tag> $tags
+     *
+     * @return array<string>
+     */
+    private function performGetByTags(array $tags): array
+    {
+        if (empty($tags)) {
             return [];
         }
 
-        $content = $this->fileManager->readSecurely($tagIndexFile);
-        if (null === $content) {
+        $keySets = [];
+        foreach ($tags as $tag) {
+            $keys = $this->getKeysForTag($tag);
+            if (empty($keys)) {
+                return []; // If any tag has no keys, intersection will be empty
+            }
+            $keySets[] = $keys;
+        }
+
+        // Find intersection of all tag key sets
+        $intersectionKeys = array_intersect(...$keySets);
+
+        // Filter out expired items
+        $validKeys = [];
+        foreach ($intersectionKeys as $key) {
+            if ($this->isKeyValid($key)) {
+                $validKeys[] = $key;
+            }
+        }
+
+        return $validKeys;
+    }
+
+    /**
+     * @param array<Tag> $tags
+     */
+    private function performDeleteByTags(array $tags): bool
+    {
+        $keys = $this->performGetByTags($tags);
+
+        if (empty($keys)) {
+            return true;
+        }
+
+        $allSuccessful = true;
+
+        foreach ($keys as $key) {
+            $filename = $this->generateFilename($key);
+
+            if (!$this->fileManager->delete($filename)) {
+                $allSuccessful = false;
+                continue;
+            }
+
+            // Remove from tag indexes
+            foreach ($tags as $tag) {
+                $this->updateTagIndex($tag, $key, false);
+            }
+        }
+
+        return $allSuccessful;
+    }
+
+    /**
+     * @param array<Tag> $tags
+     *
+     * @return array{value: mixed, expiration: int|null, created: int, accessed: int, size: int, tags: array<string>}
+     */
+    private function createMetadata(mixed $value, ?\DateTimeInterface $expiration, array $tags): array
+    {
+        return [
+            'value' => $value,
+            'expiration' => $expiration?->getTimestamp(),
+            'created' => time(),
+            'accessed' => time(),
+            'size' => 0, // Will be set after serialization
+            'tags' => array_map(fn (Tag $tag) => (string) $tag, $tags),
+        ];
+    }
+
+    private function updateTagIndex(Tag $tag, string $key, bool $add): void
+    {
+        $tagIndexFile = $this->getTagIndexFilename($tag);
+        $keys = $this->loadTagIndex($tagIndexFile);
+
+        if ($add) {
+            $keys[$key] = time(); // Store timestamp for potential cleanup
+        } else {
+            unset($keys[$key]);
+        }
+
+        $this->saveTagIndex($tagIndexFile, $keys);
+    }
+
+    /**
+     * @return array<string>
+     */
+    private function getKeysForTag(Tag $tag): array
+    {
+        $tagIndexFile = $this->getTagIndexFilename($tag);
+        $keys = $this->loadTagIndex($tagIndexFile);
+
+        return array_keys($keys);
+    }
+
+    /**
+     * @return array<string, int>
+     */
+    private function loadTagIndex(string $filename): array
+    {
+        if (!$this->fileManager->exists($filename)) {
             return [];
         }
 
         try {
-            $taggedKeys = $this->serializer->unserialize($content);
+            $content = $this->fileManager->read($filename);
+            $data = $this->serializer->unserialize($content);
 
-            return is_array($taggedKeys) ? $taggedKeys : [];
+            return is_array($data) ? $data : [];
         } catch (\Throwable) {
             return [];
         }
     }
 
     /**
-     * Removes a tag index file.
+     * @param array<string, int> $keys
      */
-    private function removeTagIndex(string $tag): void
+    private function saveTagIndex(string $filename, array $keys): void
     {
-        $tagIndexFile = $this->getTagIndexFile($tag);
-        $this->fileManager->deleteFile($tagIndexFile);
+        try {
+            $serialized = $this->serializer->serialize($keys);
+            $this->fileManager->writeSecurely($filename, $serialized);
+        } catch (\Throwable $e) {
+            $this->logger->warning('Failed to save tag index', [
+                'filename' => $filename,
+                'error' => $e->getMessage(),
+            ]);
+        }
     }
 
-    /**
-     * Generates the tag index file path for a given tag.
-     */
-    private function getTagIndexFile(string $tag): string
+    private function isKeyValid(string $key): bool
     {
-        $tagDirectory = $this->getTagDirectory();
-        $safeTagName = $this->encodeTagForFilename($tag);
+        $filename = $this->generateFilename($key);
 
-        return $tagDirectory . DIRECTORY_SEPARATOR . $safeTagName . self::TAG_INDEX_FILE_EXTENSION;
+        if (!$this->fileManager->exists($filename)) {
+            return false;
+        }
+
+        try {
+            $content = $this->fileManager->read($filename);
+            $metadata = $this->serializer->unserialize($content);
+
+            if (!is_array($metadata) || !isset($metadata['expiration'])) {
+                return true; // No expiration means it's valid
+            }
+
+            return null === $metadata['expiration'] || $metadata['expiration'] > time();
+        } catch (\Throwable) {
+            return false;
+        }
     }
 
-    /**
-     * Gets the tag directory path.
-     */
-    private function getTagDirectory(): string
+    private function getTagIndexFilename(Tag $tag): string
     {
-        $baseDirectory = $this->directoryManager->getBaseDirectory();
+        $tagHash = hash(self::HASH_ALGORITHM, (string) $tag);
 
-        return $baseDirectory . self::TAG_INDEX_DIRECTORY;
+        return $this->directoryManager->getBasePath() . DIRECTORY_SEPARATOR .
+               self::TAG_INDEX_DIRECTORY . DIRECTORY_SEPARATOR .
+               $tagHash . self::TAG_INDEX_FILE_EXTENSION;
     }
 
-    /**
-     * Initializes the tag index directory.
-     */
-    private function initializeTagIndexDirectory(): void
-    {
-        $tagDirectory = $this->getTagDirectory();
-        $this->directoryManager->ensureExists($tagDirectory);
-    }
-
-    /**
-     * Encodes a tag name for safe use as a filename.
-     */
-    private function encodeTagForFilename(string $tag): string
-    {
-        // Use hash to ensure filename safety while maintaining uniqueness
-        return hash(self::HASH_ALGORITHM, $tag);
-    }
-
-    /**
-     * Decodes a tag name from a filename (this is a placeholder -
-     * in a real implementation, you'd need a reverse mapping).
-     *
-     * @param string $filename o nome do arquivo a ser decodificado
-     *
-     * @return string o nome da tag (atualmente, o próprio hash do nome do arquivo)
-     */
-    private function decodeTagFromFilename(string $filename): string
-    {
-        // Note: This is a limitation of the hash-based approach.
-        // In a production implementation, you might want to store
-        // a reverse mapping or use a different encoding strategy.
-
-        // For now, we'll reconstruct from the tag index content
-        // This is not efficient but works for demonstration
-        return $filename; // Return the hash as the tag name
-    }
-
-    /**
-     * Generates the cache filename for a given key.
-     */
     private function generateFilename(string $key): string
     {
         $hash = hash(self::HASH_ALGORITHM, $key);
-
-        $safeKey = (string) preg_replace('/[^a-zA-Z0-9_-]/', '_', $key);
+        $safeKey = preg_replace('/[^a-zA-Z0-9_-]/', '_', $key);
         $safeKey = substr($safeKey, 0, 50); // Limit length
 
-        $filename = $this->keyPrefix . $safeKey . '_' . substr($hash, 0, 16) . '.cache';
-
-        // Create subdirectory for better performance
+        $filename = $this->keyPrefix . $safeKey . '_' . substr($hash, 0, 8) . '.cache';
         $directory = $this->directoryManager->createSubdirectoryPath($hash, 2);
 
         return $directory . $filename;
+    }
+
+    private function initializeTagIndexDirectory(): void
+    {
+        $tagIndexPath = $this->directoryManager->getBasePath() . DIRECTORY_SEPARATOR . self::TAG_INDEX_DIRECTORY;
+        $this->directoryManager->createDirectory($tagIndexPath);
     }
 }

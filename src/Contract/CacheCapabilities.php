@@ -20,8 +20,9 @@ namespace KaririCode\Cache\Contract;
  */
 interface CacheCapabilities
 {
-    public const ATOMIC_OPERATIONS = 'atomic';
+    public const ATOMIC = 'atomic';
     public const TAGGING = 'tagging';
     public const TOPICS = 'topics';
+    public const MAINTENANCE = 'maintenance';
     public const TRANSACTIONS = 'transactions';
 }

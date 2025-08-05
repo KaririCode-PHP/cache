@@ -4,288 +4,375 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Driver\Array\Operation;
 
-use KaririCode\Cache\Operation\Factory\TagNormalizer;
+use KaririCode\Cache\Contract\Provider\ExpirationProvider;
 use KaririCode\Cache\Validation\Trait\CacheKeyValidationTrait;
 use KaririCode\Cache\Validation\Trait\CacheValueValidationTrait;
-use KaririCode\Cache\Validation\Trait\ExpirationManagementTrait;
 use KaririCode\Cache\Validation\Trait\TagValidationTrait;
 use KaririCode\Cache\ValueObject\Tag;
+use KaririCode\Contract\DataStructure\Map;
+use KaririCode\DataStructure\Set\TreeSet;
 
 /**
- * Handles tag-based cache operations for ArrayDriver.
+ * Handles tag-based cache operations for ArrayDriver with ExpirationProvider support.
  *
- * This class follows the established architectural pattern by separating
- * tag operations from the main driver class, maintaining consistency with
- * other drivers like RedisTagOperations and MemcachedTagOperations.
+ * This class manages tag-based cache operations with proper TTL management
+ * using the Strategy Pattern through ExpirationProvider. Uses KaririCode\DataStructure
+ * components for efficient storage management.
  *
- * Key improvements:
- * - Follows SRP by focusing solely on tag operations
- * - Uses TagValidationTrait for consistent validation
- * - Maintains reference-based access to storage for performance
- * - Implements proper Tag object handling
+ * Design Patterns Applied:
+ * - Strategy Pattern: ExpirationProvider for TTL management
+ * - Single Responsibility: Handles only tag operations
+ * - Dependency Injection: All dependencies injected via constructor
  *
  * @category  Cache
  *
  * @author    Walmir Silva <walmir.silva@kariricode.org>
  * @license   MIT
  *
- * @see      https://kariricode.org/
- * @see       TagValidationTrait for validation logic
- * @see       TagNormalizer for tag normalization utilities
+ * @see       https://kariricode.org/
  */
 final class ArrayTagOperations
 {
     use CacheKeyValidationTrait;
     use CacheValueValidationTrait;
     use TagValidationTrait;
-    use ExpirationManagementTrait;
 
     /**
-     * @param array<string, mixed> $storage Reference to main storage array
-     * @param array<string, int> $expirations Reference to expiration tracking
-     * @param array<string, list<string>> $tagIndex Reference to tag index
+     * Constructor applying Dependency Injection pattern.
+     *
+     * @param Map $storage Main cache storage
+     * @param Map $expirations Expiration timestamps storage
+     * @param Map $tagIndex Tag to keys mapping
      * @param callable $removeFromIndexesCallback Callback to remove keys from all indexes
+     * @param ExpirationProvider $expirationProvider Strategy for TTL management
      */
     public function __construct(
-        private array &$storage,
-        private array &$expirations,
-        private array &$tagIndex,
-        private $removeFromIndexesCallback
+        private readonly Map $storage,
+        private readonly Map $expirations,
+        private readonly Map $tagIndex,
+        private readonly mixed $removeFromIndexesCallback,
+        private readonly ExpirationProvider $expirationProvider
     ) {
     }
 
     /**
-     * Sets a cache item with associated tags.
+     * Sets a cache item with associated tags and proper TTL handling.
      *
-     * This method follows the established pattern of validating inputs,
-     * storing the value, and then updating tag indices. It maintains
-     * consistency with other driver implementations.
+     * @param string $key The cache key
+     * @param mixed $value The value to cache
+     * @param iterable<string|Tag> $tags Tags to associate with the cache item
+     * @param \DateTimeInterface|null $expiration Optional expiration time
      *
-     * @param string $key The cache key to set
-     * @param mixed $value The value to store
-     * @param array<string|Tag> $tags Array of tags (strings or Tag objects)
-     * @param \DateInterval|int|null $ttl Time to live for the cache item
-     *
-     * @return bool True if the item was successfully stored, false otherwise
-     *
-     * @example
-     * ```php
-     * $success = $tagOps->setWithTags('user:123', $userData, ['user', 'profile'], 3600);
-     * $success = $tagOps->setWithTags('post:456', $post, [new Tag('post'), new Tag('blog')]);
-     * ```
+     * @return bool true if the item was successfully stored
      */
-    public function setWithTags(string $key, mixed $value, array $tags, \DateInterval|int|null $ttl = null): bool
+    public function setWithTags(string $key, mixed $value, iterable $tags, ?\DateTimeInterface $expiration = null): bool
     {
         $this->validateKey($key);
         $this->validateValue($value);
 
-        // Validate and normalize tags using shared trait
-        $normalizedTags = $this->validateAndNormalizeTags($tags);
+        $normalizedTags = $this->normalizeTags($tags);
+        if (empty($normalizedTags)) {
+            return false; // No tags provided
+        }
 
-        // Calculate expiration time
-        $expiration = $this->calculateExpiration($ttl);
+        $this->validateTags($normalizedTags);
+
+        // Calculate expiration using ExpirationProvider
+        $finalExpiration = $expiration ?? $this->expirationProvider->calculateExpiration(
+            $this->expirationProvider->getTtlForOperation('setWithTags')
+        );
 
         // Store the value
-        $this->storage[$key] = $value;
+        $this->storage->put($key, $value);
 
         // Set expiration if provided
-        if ($expiration) {
-            $this->expirations[$key] = $expiration->getTimestamp();
-        } else {
-            unset($this->expirations[$key]);
+        if (null !== $finalExpiration) {
+            $this->expirations->put($key, $finalExpiration->getTimestamp());
         }
 
-        // Update tag indices
+        // Associate with tags
         foreach ($normalizedTags as $tag) {
-            $tagString = (string) $tag;
-            if (!isset($this->tagIndex[$tagString])) {
-                $this->tagIndex[$tagString] = [];
-            }
-
-            // Avoid duplicates in tag index
-            if (!in_array($key, $this->tagIndex[$tagString], true)) {
-                $this->tagIndex[$tagString][] = $key;
-            }
+            $this->addTagAssociation((string) $tag, $key);
         }
 
         return true;
     }
 
     /**
-     * Invalidates all cache items associated with the given tags.
+     * Retrieves cache items associated with any of the specified tags.
      *
-     * This method efficiently collects all keys associated with the specified
-     * tags and removes them from both storage and indices, maintaining
-     * data consistency.
+     * @param iterable<string|Tag> $tags Tags to search for
      *
-     * @param array<string|Tag> $tags Array of tags to invalidate
-     *
-     * @return bool True if tags were successfully invalidated, false otherwise
-     *
-     * @example
-     * ```php
-     * $success = $tagOps->invalidateTags(['user', 'profile']);
-     * $success = $tagOps->invalidateTags([new Tag('post'), new Tag('blog')]);
-     * ```
+     * @return iterable<string, mixed> Array of key-value pairs for items with the specified tags
      */
-    public function invalidateTags(array $tags): bool
+    public function getByTags(iterable $tags): iterable
     {
-        // Validate and normalize tags
-        $normalizedTags = $this->validateAndNormalizeTags($tags);
+        $normalizedTags = $this->normalizeTags($tags);
+        if (empty($normalizedTags)) {
+            return [];
+        }
 
-        $keysToDelete = [];
+        $this->validateTags($normalizedTags);
 
-        // Collect all keys associated with the tags
+        $allKeys = new TreeSet();
+
+        // Collect all keys from all tags
         foreach ($normalizedTags as $tag) {
-            $tagString = (string) $tag;
-            if (isset($this->tagIndex[$tagString])) {
-                $keysToDelete = array_merge($keysToDelete, $this->tagIndex[$tagString]);
-                // Remove the tag index completely
-                unset($this->tagIndex[$tagString]);
+            $tagName = (string) $tag;
+            if ($this->tagIndex->containsKey($tagName)) {
+                $keysSet = $this->tagIndex->get($tagName);
+                if ($keysSet instanceof TreeSet) {
+                    foreach ($keysSet->getItems() as $taggedKey) {
+                        if (!$this->isExpired($taggedKey)) {
+                            $allKeys->add($taggedKey);
+                        }
+                    }
+                }
             }
         }
 
-        // Remove duplicates
-        $keysToDelete = array_unique($keysToDelete);
-
-        // Delete all associated keys
-        foreach ($keysToDelete as $key) {
-            unset($this->storage[$key], $this->expirations[$key]);
-            // Remove from other indices (topics, etc.)
-            ($this->removeFromIndexesCallback)($key);
+        // Get values for all found keys
+        $result = [];
+        foreach ($allKeys->getItems() as $key) {
+            if ($this->storage->containsKey($key)) {
+                $result[$key] = $this->storage->get($key);
+            }
         }
 
-        return true;
+        return $result;
     }
 
     /**
-     * Retrieves all cache items associated with the given tags.
+     * Invalidates all cache items associated with the specified tags.
      *
-     * This method efficiently collects keys from multiple tags and returns
-     * their values, filtering out expired entries in the process.
+     * @param iterable<string|Tag> $tags Tags to invalidate
      *
-     * @param array<string|Tag> $tags Array of tags to search for
-     *
-     * @return array<string, mixed> Array of cache items indexed by their keys
-     *
-     * @example
-     * ```php
-     * $userItems = $tagOps->getByTags(['user']);
-     * $blogPosts = $tagOps->getByTags([new Tag('post'), new Tag('blog')]);
-     * ```
+     * @return bool true if the invalidation was successful
      */
-    public function getByTags(array $tags): array
+    public function invalidateTags(iterable $tags): bool
     {
-        // Validate and normalize tags
-        $normalizedTags = $this->validateAndNormalizeTags($tags);
-
-        $keys = [];
-
-        // Collect all keys associated with the tags
-        foreach ($normalizedTags as $tag) {
-            $tagString = (string) $tag;
-            if (isset($this->tagIndex[$tagString])) {
-                $keys = array_merge($keys, $this->tagIndex[$tagString]);
-            }
+        $normalizedTags = $this->normalizeTags($tags);
+        if (empty($normalizedTags)) {
+            return true; // No tags to invalidate
         }
 
-        // Remove duplicates
-        $uniqueKeys = array_unique($keys);
+        $this->validateTags($normalizedTags);
 
-        $results = [];
+        $keysToDelete = new TreeSet();
 
-        // Retrieve values for all keys, checking expiration
-        foreach ($uniqueKeys as $key) {
-            if (isset($this->storage[$key])) {
-                // Check if expired
-                if (isset($this->expirations[$key]) && $this->expirations[$key] < time()) {
-                    // Clean up expired entry
-                    unset($this->storage[$key], $this->expirations[$key]);
-                    ($this->removeFromIndexesCallback)($key);
-                    continue;
+        // Collect all keys from all tags
+        foreach ($normalizedTags as $tag) {
+            $tagName = (string) $tag;
+            if ($this->tagIndex->containsKey($tagName)) {
+                $keysSet = $this->tagIndex->get($tagName);
+                if ($keysSet instanceof TreeSet) {
+                    foreach ($keysSet->getItems() as $key) {
+                        $keysToDelete->add($key);
+                    }
                 }
 
-                $results[$key] = $this->storage[$key];
+                // Clear the tag index
+                $this->tagIndex->remove($tagName);
             }
         }
 
-        return $results;
-    }
+        // Delete all tagged keys using the callback
+        foreach ($keysToDelete->getItems() as $key) {
+            if ($this->removeFromIndexesCallback) {
+                call_user_func($this->removeFromIndexesCallback, $key);
+            }
+        }
 
-    /**
-     * Gets all tags currently in use.
-     *
-     * This method returns all tag strings that currently have associated
-     * cache items, providing visibility into the tag ecosystem.
-     *
-     * @return array<string> Array of unique tag strings currently in use
-     */
-    public function getTags(): array
-    {
-        return array_keys($this->tagIndex);
+        return true;
     }
 
     /**
      * Gets all keys associated with a specific tag.
      *
-     * This method is useful for debugging and administrative purposes,
-     * allowing inspection of tag-to-key relationships.
+     * @param string|Tag $tag The tag to search for
      *
-     * @param Tag $tag The tag to search for
-     *
-     * @return array<string> Array of keys associated with the tag
+     * @return array<string> List of keys associated with the tag
      */
-    public function getTaggedKeys(Tag $tag): array
+    public function getTaggedKeys(string|Tag $tag): array
     {
-        $tagString = (string) $tag;
+        $tagName = $tag instanceof Tag ? (string) $tag : $tag;
 
-        return $this->tagIndex[$tagString] ?? [];
+        if (!$this->tagIndex->containsKey($tagName)) {
+            return [];
+        }
+
+        $keysSet = $this->tagIndex->get($tagName);
+        if (!$keysSet instanceof TreeSet) {
+            return [];
+        }
+
+        // Filter out expired keys
+        $validKeys = [];
+        foreach ($keysSet->getItems() as $key) {
+            if (!$this->isExpired($key)) {
+                $validKeys[] = $key;
+            }
+        }
+
+        return $validKeys;
     }
 
     /**
-     * Removes a key from the tag index when the key is deleted.
+     * Gets all available tags in the cache.
      *
-     * This method is called internally when keys are removed to maintain
-     * index consistency and prevent memory leaks.
-     *
-     * @param string $key The key to remove from tag indices
+     * @return iterable<Tag> List of all Tag objects
      */
-    public function removeKeyFromTagIndex(string $key): void
+    public function getTags(): iterable
     {
-        foreach ($this->tagIndex as $tag => &$keys) {
-            if (($index = array_search($key, $keys, true)) !== false) {
-                unset($keys[$index]);
-                // Reindex array to maintain sequential indices
-                $keys = array_values($keys);
+        $tags = [];
+        foreach ($this->tagIndex->keys() as $tagName) {
+            $tags[] = new Tag($tagName);
+        }
 
-                // Remove empty tag indices
-                if (empty($keys)) {
-                    unset($this->tagIndex[$tag]);
+        return $tags;
+    }
+
+    /**
+     * Checks if a tag exists in the cache.
+     *
+     * @param string|Tag $tag The tag to check
+     *
+     * @return bool true if the tag exists
+     */
+    public function hasTag(string|Tag $tag): bool
+    {
+        $tagName = $tag instanceof Tag ? (string) $tag : $tag;
+
+        return $this->tagIndex->containsKey($tagName);
+    }
+
+    /**
+     * Gets the count of keys associated with a tag.
+     *
+     * @param string|Tag $tag The tag to count
+     *
+     * @return int Number of keys associated with the tag
+     */
+    public function getTaggedKeysCount(string|Tag $tag): int
+    {
+        $tagName = $tag instanceof Tag ? (string) $tag : $tag;
+
+        if (!$this->tagIndex->containsKey($tagName)) {
+            return 0;
+        }
+
+        $keysSet = $this->tagIndex->get($tagName);
+        if (!$keysSet instanceof TreeSet) {
+            return 0;
+        }
+
+        return $keysSet->size();
+    }
+
+    /**
+     * Adds a tag association for a key.
+     *
+     * @param string $tag The tag name
+     * @param string $key The cache key
+     */
+    public function addTagAssociation(string $tag, string $key): void
+    {
+        if (!$this->tagIndex->containsKey($tag)) {
+            $this->tagIndex->put($tag, new TreeSet());
+        }
+
+        $keysSet = $this->tagIndex->get($tag);
+        if ($keysSet instanceof TreeSet) {
+            $keysSet->add($key);
+        }
+    }
+
+    /**
+     * Removes a tag association for a key.
+     *
+     * @param string $tag The tag name
+     * @param string $key The cache key
+     */
+    public function removeTagAssociation(string $tag, string $key): void
+    {
+        if ($this->tagIndex->containsKey($tag)) {
+            $keysSet = $this->tagIndex->get($tag);
+            if ($keysSet instanceof TreeSet) {
+                $keysSet->remove($key);
+
+                // Remove empty tag index
+                if ($keysSet->isEmpty()) {
+                    $this->tagIndex->remove($tag);
                 }
             }
         }
     }
 
     /**
-     * Gets statistics about tag usage.
+     * Gets all keys tagged with the provided tags using array format.
      *
-     * @return array{total_tags: int, total_tagged_keys: int, average_keys_per_tag: float}
+     * @param iterable<string|Tag> $tags
+     *
+     * @return array<string> List of keys
      */
-    public function getTagStatistics(): array
+    public function getKeysByTag(iterable $tags): array
     {
-        $totalTags = count($this->tagIndex);
-        $totalTaggedKeys = 0;
+        $keys = new TreeSet();
 
-        foreach ($this->tagIndex as $keys) {
-            $totalTaggedKeys += count($keys);
+        foreach ($tags as $tag) {
+            $tagStr = (string) $tag;
+            if ($this->tagIndex->containsKey($tagStr)) {
+                $keysSet = $this->tagIndex->get($tagStr);
+                if ($keysSet instanceof TreeSet) {
+                    foreach ($keysSet->getItems() as $key) {
+                        if (!$this->isExpired($key)) {
+                            $keys->add($key);
+                        }
+                    }
+                }
+            }
         }
 
-        $averageKeysPerTag = $totalTags > 0 ? $totalTaggedKeys / $totalTags : 0;
+        return $keys->getItems();
+    }
 
-        return [
-            'total_tags' => $totalTags,
-            'total_tagged_keys' => $totalTaggedKeys,
-            'average_keys_per_tag' => round($averageKeysPerTag, 2),
-        ];
+    // ========================================================================
+    // Private Helper Methods
+    // ========================================================================
+
+    /**
+     * Normalizes tags to Tag objects.
+     *
+     * @param iterable<string|Tag> $tags
+     *
+     * @return array<Tag>
+     */
+    private function normalizeTags(iterable $tags): array
+    {
+        $normalized = [];
+
+        foreach ($tags as $tag) {
+            if (is_string($tag)) {
+                $normalized[] = new Tag($tag);
+            } elseif ($tag instanceof Tag) {
+                $normalized[] = $tag;
+            }
+        }
+
+        return $normalized;
+    }
+
+    /**
+     * Checks if a key is expired.
+     */
+    private function isExpired(string $key): bool
+    {
+        if (!$this->expirations->containsKey($key)) {
+            return false;
+        }
+
+        $expiration = $this->expirations->get($key);
+
+        return is_int($expiration) && $expiration < time();
     }
 }

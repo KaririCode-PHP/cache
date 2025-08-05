@@ -4,31 +4,35 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Driver\Apcu\Operation;
 
+use KaririCode\Cache\Contract\Provider\ExpirationProvider;
 use KaririCode\Cache\Driver\Apcu\Component\ApcuErrorHandler;
 use KaririCode\Cache\Driver\Apcu\Config\ApcuConfig;
 use KaririCode\Cache\Exception\InvalidArgumentException;
 use KaririCode\Cache\Validation\Trait\CacheKeyValidationTrait;
-use KaririCode\Cache\Validation\Trait\ExpirationManagementTrait;
 use KaririCode\Cache\Validation\Trait\TagValidationTrait;
 use KaririCode\Cache\ValueObject\Tag;
 
 /**
  * Manages tag-based cache invalidation for APCu.
  * SRP: This class is only responsible for tag operations.
+ * Uses ExpirationProvider for TTL management - follows Strategy Pattern.
  */
 final class ApcuTagOperations
 {
     use CacheKeyValidationTrait;
     use TagValidationTrait;
-    use ExpirationManagementTrait;
 
     public function __construct(
         private ApcuConfig $config,
         private ApcuErrorHandler $errorHandler,
-        private ApcuCrudOperations $crudOperations
+        private ApcuCrudOperations $crudOperations,
+        private ExpirationProvider $expirationProvider
     ) {
     }
 
+    /**
+     * @param array<Tag> $tags
+     */
     public function setWithTags(
         string $key,
         mixed $value,
@@ -36,15 +40,22 @@ final class ApcuTagOperations
         ?\DateTimeInterface $expiration = null
     ): bool {
         $this->validateKey($key);
-        $normalizedTags = $this->validateAndNormalizeTags($tags); // MUDANÇA
+        $this->validateTags($tags);
+
+        $finalExpiration = $expiration ?? $this->expirationProvider->calculateExpiration(
+            $this->expirationProvider->getTtlForKey($key)
+        );
 
         return (bool) $this->errorHandler->executeWithRetry(
-            fn () => $this->performSetWithTags($key, $value, $normalizedTags, $expiration),
+            fn () => $this->performSetWithTags($key, $value, $tags, $finalExpiration),
             'setWithTags',
             $key
         );
     }
 
+    /**
+     * @param array<Tag> $tags
+     */
     public function invalidateTags(array $tags): bool
     {
         $this->validateTags($tags);
@@ -62,27 +73,19 @@ final class ApcuTagOperations
         );
     }
 
-    public function getTaggedKeys(string $tag): array
-    {
-        $this->validateSingleTag($tag);
-
-        $result = $this->errorHandler->executeWithRetry(
-            fn () => $this->performGetTaggedKeys($tag),
-            'getTaggedKeys',
-            $tag
-        );
-
-        return is_array($result) ? $result : [];
-    }
-
     /**
+     * @param array<Tag> $tags
+     *
      * @return array<string>
      */
-    public function getAllTags(): array
+    public function getByTags(array $tags): array
     {
+        $this->validateTags($tags);
+
         $result = $this->errorHandler->executeWithRetry(
-            fn () => $this->performGetAllTags(),
-            'getAllTags'
+            fn () => $this->performGetByTags($tags),
+            'getByTags',
+            implode(',', array_map(fn (Tag $tag) => (string) $tag, $tags))
         );
 
         return is_array($result) ? $result : [];
@@ -93,16 +96,16 @@ final class ApcuTagOperations
      */
     private function performSetWithTags(string $key, mixed $value, array $tags, ?\DateTimeInterface $expiration): bool
     {
-        // To maintain consistency, delegate the SET operation to the appropriate handler.
+        // First, store the main cache item
         if (!$this->crudOperations->set($key, $value, $expiration)) {
             return false;
         }
 
         $fullKey = $this->config->keyPrefix . $key;
 
+        // Then, update tag indexes
         foreach ($tags as $tag) {
-            $tagName = (string) $tag;
-            $tagKey = $this->config->getTagIndexPrefix() . $tagName;
+            $tagKey = $this->config->getTagIndexPrefix() . (string) $tag;
 
             $success = false;
             $taggedKeys = apcu_fetch($tagKey, $success);
@@ -113,7 +116,13 @@ final class ApcuTagOperations
 
             if (!in_array($fullKey, $taggedKeys, true)) {
                 $taggedKeys[] = $fullKey;
-                apcu_store($tagKey, $taggedKeys);
+
+                // Set tag expiration with buffer to ensure tags outlive the cached item
+                $tagTtl = $expiration ?
+                    max(0, $expiration->getTimestamp() - time()) + 3600 : // 1 hour buffer
+                    3600; // Default 1 hour for tags
+
+                apcu_store($tagKey, $taggedKeys, $tagTtl);
             }
         }
 
@@ -127,9 +136,9 @@ final class ApcuTagOperations
     {
         $keysToDelete = [];
 
+        // Collect all keys associated with the tags
         foreach ($tags as $tag) {
-            $tagName = (string) $tag;
-            $tagKey = $this->config->getTagIndexPrefix() . $tagName;
+            $tagKey = $this->config->getTagIndexPrefix() . (string) $tag;
 
             $success = false;
             $taggedKeys = apcu_fetch($tagKey, $success);
@@ -137,6 +146,7 @@ final class ApcuTagOperations
             if ($success && is_array($taggedKeys)) {
                 $keysToDelete = array_merge($keysToDelete, $taggedKeys);
             }
+
             // Delete the tag index
             apcu_delete($tagKey);
         }
@@ -147,91 +157,48 @@ final class ApcuTagOperations
             return true;
         }
 
-        // Delete the associated cache items
+        // Delete all tagged keys
         $failures = apcu_delete($keysToDelete);
 
-        // Clean up references to deleted keys from other tag indices
-        $this->cleanupTagIndices($keysToDelete);
-
-        if (!is_array($failures)) {
-            return false;
-        }
-
-        return empty($failures);
+        return !is_array($failures) || empty($failures);
     }
 
     /**
+     * @param array<Tag> $tags
+     *
      * @return array<string>
      */
-    private function performGetTaggedKeys(string $tag): array
+    private function performGetByTags(array $tags): array
     {
-        $tagKey = $this->config->getTagIndexPrefix() . $tag;
-
-        $success = false;
-        $taggedKeys = apcu_fetch($tagKey, $success);
-
-        if (!$success || !is_array($taggedKeys)) {
+        if (empty($tags)) {
             return [];
         }
 
-        return array_map(
-            fn ($key) => substr($key, strlen($this->config->keyPrefix)),
-            $taggedKeys
-        );
-    }
+        $keySets = [];
 
-    /**
-     * @return array<string>
-     */
-    private function performGetAllTags(): array
-    {
-        $tags = [];
-        $pattern = '#^' . preg_quote($this->config->getTagIndexPrefix()) . '#';
-        $iterator = new \APCUIterator($pattern);
-
-        foreach ($iterator as $item) {
-            if (is_array($item) && isset($item['key'])) {
-                $tag = substr(
-                    (string) $item['key'],
-                    strlen($this->config->getTagIndexPrefix())
-                );
-                $tags[] = $tag;
-            }
-        }
-
-        return $tags;
-    }
-
-    /**
-     * @param array<string> $deletedKeys
-     */
-    private function cleanupTagIndices(array $deletedKeys): void
-    {
-        $pattern = '#^' . preg_quote($this->config->getTagIndexPrefix()) . '#';
-        $iterator = new \APCUIterator($pattern);
-
-        foreach ($iterator as $tagItem) {
-            if (!is_array($tagItem) || !isset($tagItem['key'])) {
-                continue;
-            }
-
-            $tagKey = (string) $tagItem['key'];
+        foreach ($tags as $tag) {
+            $tagKey = $this->config->getTagIndexPrefix() . (string) $tag;
 
             $success = false;
             $taggedKeys = apcu_fetch($tagKey, $success);
 
             if (!$success || !is_array($taggedKeys)) {
-                continue;
+                return []; // If any tag has no keys, intersection will be empty
             }
 
-            $updatedKeys = array_diff($taggedKeys, $deletedKeys);
-
-            if (empty($updatedKeys)) {
-                apcu_delete($tagKey);
-            } elseif (count($updatedKeys) < count($taggedKeys)) {
-                apcu_store($tagKey, array_values($updatedKeys));
-            }
+            $keySets[] = $taggedKeys;
         }
+
+        // Find intersection of all tag key sets
+        $intersectionKeys = array_intersect(...$keySets);
+
+        // Remove prefix from keys to return original cache keys
+        $prefixLength = strlen($this->config->keyPrefix);
+
+        return array_map(
+            fn ($key) => substr($key, $prefixLength),
+            $intersectionKeys
+        );
     }
 
     private function validateSingleTag(string $tag): void

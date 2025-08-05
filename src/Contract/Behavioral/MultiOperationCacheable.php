@@ -34,11 +34,10 @@ interface MultiOperationCacheable extends Cacheable
      * Persists a set of key => value pairs in the cache.
      *
      * @param iterable<string, mixed> $values the key-value pairs to store
-     * @param \DateInterval|int|null $ttl the time-to-live for the cached items
      *
      * @return bool true on success, false on failure
      */
-    public function setMultiple(iterable $values, \DateInterval|int|null $ttl = null): bool;
+    public function setMultiple(iterable $values): bool;
 
     /**
      * Deletes multiple cache items in a single operation.

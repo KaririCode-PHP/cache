@@ -1,81 +1,91 @@
 <?php
 
-// config/cache.php
 declare(strict_types=1);
 
 use function KaririCode\Dotenv\env;
 
 /**
- * Improved cache configuration that maximizes the use of KaririCode\Configurator
- * features while maintaining clean separation of concerns.
+ * KaririCode Cache Configuration
  *
- * This configuration file demonstrates:
- * - Environment variable support with defaults
- * - Hierarchical configuration structure
- * - Feature toggles
- * - Driver-specific optimizations
- * - Security and observability settings
+ * Follows SOLID principles with clean separation of concerns.
+ * Uses environment variables with sensible defaults.
  */
-
 return [
     // =============================================================================
     // CORE CACHE SETTINGS
     // =============================================================================
 
     'default' => env('CACHE_DEFAULT_STORE', 'layered'),
+    'serializer' => env('CACHE_SERIALIZER', 'igbinary'),
+
+    // =============================================================================
+    // EXPIRATION PROVIDER CONFIGURATION (Strategy Pattern)
+    // =============================================================================
+    'expiration' => [
+        'provider' => \KaririCode\Cache\Provider\ConfigurableExpirationProvider::class,
+        'default_ttl' => (int) env('CACHE_DEFAULT_TTL', 3600),
+
+        // Operation-specific TTLs
+        'operation_ttls' => [
+            'set' => (int) env('CACHE_SET_TTL', 3600),
+            'setMultiple' => (int) env('CACHE_SET_MULTIPLE_TTL', 3600),
+            'add' => (int) env('CACHE_ADD_TTL', 3600),
+            'increment' => (int) env('CACHE_INCREMENT_TTL', 7200),
+            'decrement' => (int) env('CACHE_DECREMENT_TTL', 7200),
+            'setWithTags' => (int) env('CACHE_TAGGED_TTL', 1800),
+            'compareAndSwap' => (int) env('CACHE_CAS_TTL', 1800),
+        ],
+
+        // Key pattern-based TTLs
+        'key_pattern_ttls' => [
+            'session:*' => (int) env('SESSION_TTL', 7200),
+            'api:*' => (int) env('API_CACHE_TTL', 1800),
+            'user:*' => (int) env('USER_CACHE_TTL', 900),
+            'temp:*' => (int) env('TEMP_CACHE_TTL', 300),
+            'config:*' => (int) env('CONFIG_CACHE_TTL', 86400),
+            'counter:*' => (int) env('COUNTER_CACHE_TTL', 86400),
+        ],
+    ],
 
     // =============================================================================
     // CACHE STORES CONFIGURATION
     // =============================================================================
-
     'stores' => [
-        // High-performance layered cache for production
+        // Production layered cache with ExpirationProvider
         'layered' => [
             'driver' => 'layered',
             'layers' => [
-                // L1: APCu for ultra-fast local access
                 [
                     'driver' => 'apcu',
                     'priority' => 5,
                     'config' => [
                         'key_prefix' => env('CACHE_APCU_PREFIX', 'l1:'),
+                        'expiration_provider' => null, // Will be injected by factory
                     ],
                 ],
-
-                // L2: Redis for distributed caching
                 [
                     'driver' => 'redis',
                     'priority' => 10,
                     'config' => [
                         'host' => env('REDIS_HOST', 'localhost'),
                         'port' => (int) env('REDIS_PORT', 6379),
-                        'password' => env('REDIS_PASSWORD', null),
-                        'database' => (int) env('REDIS_CACHE_DB', 1),
                         'key_prefix' => env('CACHE_REDIS_PREFIX', 'l2:'),
-                        'tag_prefix' => env('CACHE_REDIS_TAG_PREFIX', 'tag:'),
-                        'topic_prefix' => env('CACHE_REDIS_TOPIC_PREFIX', 'topic:'),
-                        'persistent' => env('REDIS_PERSISTENT', true),
-                        'compression' => env('REDIS_COMPRESSION', true),
-                        'timeout' => (float) env('REDIS_TIMEOUT', 2.0),
-                        'read_timeout' => (float) env('REDIS_READ_TIMEOUT', 2.0),
+                        'expiration_provider' => null, // Will be injected by factory
                     ],
                 ],
-
-                // L3: Filesystem for persistence and fallback
                 [
                     'driver' => 'filesystem',
                     'priority' => 90,
                     'config' => [
                         'directory' => env('CACHE_FILESYSTEM_DIR', storage_path('cache')),
                         'key_prefix' => env('CACHE_FILESYSTEM_PREFIX', 'l3_'),
-                        'max_size' => (int) env('CACHE_FILESYSTEM_MAX_SIZE', 104857600), // 100MB
-                        'cleanup_probability' => (float) env('CACHE_CLEANUP_PROBABILITY', 0.01),
+                        'expiration_provider' => null, // Will be injected by factory
                     ],
                 ],
             ],
         ],
 
-        // Dedicated Redis store for specific use cases
+        // Dedicated Redis store
         'redis' => [
             'driver' => 'redis',
             'config' => [
@@ -83,117 +93,88 @@ return [
                 'port' => (int) env('REDIS_PORT', 6379),
                 'password' => env('REDIS_PASSWORD', null),
                 'database' => (int) env('REDIS_CACHE_DB', 1),
-                'username' => env('REDIS_USERNAME', null),
                 'key_prefix' => env('CACHE_REDIS_PREFIX', 'cache:'),
                 'tag_prefix' => env('CACHE_REDIS_TAG_PREFIX', 'tag:'),
                 'topic_prefix' => env('CACHE_REDIS_TOPIC_PREFIX', 'topic:'),
                 'persistent' => env('REDIS_PERSISTENT', true),
-                'persistent_id' => env('REDIS_PERSISTENT_ID', 'kariricode_cache'),
                 'compression' => env('REDIS_COMPRESSION', true),
                 'timeout' => (float) env('REDIS_TIMEOUT', 2.0),
                 'read_timeout' => (float) env('REDIS_READ_TIMEOUT', 2.0),
             ],
         ],
 
-        // High-performance Memcached store
+        // High-performance APCu store
+        'apcu' => [
+            'driver' => 'apcu',
+            'config' => [
+                'key_prefix' => env('CACHE_APCU_PREFIX', 'apcu:'),
+                'tag_prefix' => env('CACHE_APCU_TAG_PREFIX', 'tag:'),
+                'topic_prefix' => env('CACHE_APCU_TOPIC_PREFIX', 'topic:'),
+                'enable_statistics' => env('APCU_ENABLE_STATISTICS', true),
+                'cleanup_probability' => (float) env('APCU_CLEANUP_PROBABILITY', 0.01),
+            ],
+        ],
+
+        // Memcached store
         'memcached' => [
             'driver' => 'memcached',
             'config' => [
                 'servers' => [
                     [
-                        env('MEMCACHED_HOST', 'localhost'),
-                        (int) env('MEMCACHED_PORT', 11211),
-                        (int) env('MEMCACHED_WEIGHT', 100),
+                        'host' => env('MEMCACHED_HOST', 'localhost'),
+                        'port' => (int) env('MEMCACHED_PORT', 11211),
+                        'weight' => (int) env('MEMCACHED_WEIGHT', 100),
                     ],
                 ],
                 'persistent_id' => env('MEMCACHED_PERSISTENT_ID', 'kariricode_cache'),
-                'username' => env('MEMCACHED_USERNAME', null),
-                'password' => env('MEMCACHED_PASSWORD', null),
+                'key_prefix' => env('CACHE_MEMCACHED_PREFIX', 'cache:'),
                 'compression' => env('MEMCACHED_COMPRESSION', true),
                 'serializer' => env('MEMCACHED_SERIALIZER', 'igbinary'),
-                'key_prefix' => env('CACHE_MEMCACHED_PREFIX', 'cache:'),
-                'connect_timeout' => (int) env('MEMCACHED_CONNECT_TIMEOUT', 1),
-                'poll_timeout' => (int) env('MEMCACHED_POLL_TIMEOUT', 1),
-                'recv_timeout' => (int) env('MEMCACHED_RECV_TIMEOUT', 1),
-                'send_timeout' => (int) env('MEMCACHED_SEND_TIMEOUT', 1),
-                'options' => [
-                    // Additional Memcached options can be set here
-                ],
+                'binary_protocol' => env('MEMCACHED_BINARY_PROTOCOL', true),
+                'consistent_hashing' => env('MEMCACHED_CONSISTENT_HASHING', true),
             ],
         ],
 
-        // Filesystem cache for development and fallback
+        // Filesystem store
         'filesystem' => [
             'driver' => 'filesystem',
             'config' => [
                 'directory' => env('CACHE_FILESYSTEM_DIR', storage_path('cache')),
                 'key_prefix' => env('CACHE_FILESYSTEM_PREFIX', 'fs_'),
-                'max_size' => (int) env('CACHE_FILESYSTEM_MAX_SIZE', 104857600), // 100MB
+                'max_size' => (int) env('CACHE_FILESYSTEM_MAX_SIZE', 104857600),
                 'cleanup_probability' => (float) env('CACHE_CLEANUP_PROBABILITY', 0.01),
+                'use_locking' => env('FILESYSTEM_FILE_LOCKING', true),
+                'use_compression' => env('FILESYSTEM_COMPRESSION', false),
+                'directory_levels' => (int) env('FILESYSTEM_DIR_LEVELS', 2),
             ],
         ],
 
-        // APCu for ultra-fast local caching
-        'apcu' => [
-            'driver' => 'apcu',
-            'config' => [
-                'key_prefix' => env('CACHE_APCU_PREFIX', 'apcu:'),
-            ],
-        ],
-
-        // In-memory array cache for testing
+        // Array store (for testing)
         'array' => [
             'driver' => 'array',
-            'config' => [],
-        ],
-
-        // Session-specific cache configuration
-        'sessions' => [
-            'driver' => 'redis',
             'config' => [
-                'host' => env('SESSION_REDIS_HOST', env('REDIS_HOST', 'localhost')),
-                'port' => (int) env('SESSION_REDIS_PORT', env('REDIS_PORT', 6379)),
-                'password' => env('SESSION_REDIS_PASSWORD', env('REDIS_PASSWORD', null)),
-                'database' => (int) env('SESSION_REDIS_DB', 2),
-                'key_prefix' => env('SESSION_CACHE_PREFIX', 'sess:'),
-                'persistent' => true,
-                'compression' => false, // Sessions are usually small
-                'timeout' => 1.0,
-            ],
-        ],
-
-        // API response cache
-        'api_responses' => [
-            'driver' => 'layered',
-            'layers' => [
-                [
-                    'driver' => 'apcu',
-                    'priority' => 5,
-                    'config' => [
-                        'key_prefix' => 'api:l1:',
-                    ],
-                ],
-                [
-                    'driver' => 'redis',
-                    'priority' => 15,
-                    'config' => [
-                        'host' => env('REDIS_HOST', 'localhost'),
-                        'port' => (int) env('REDIS_PORT', 6379),
-                        'database' => (int) env('API_CACHE_REDIS_DB', 3),
-                        'key_prefix' => 'api:l2:',
-                        'compression' => true,
-                        'timeout' => 1.0,
-                    ],
-                ],
+                'default_ttl' => 3600,
             ],
         ],
     ],
 
     // =============================================================================
-    // SERIALIZATION CONFIGURATION
+    // SERIALIZERS CONFIGURATION
     // =============================================================================
 
-    'serializer' => env('CACHE_SERIALIZER', 'native'), // native, igbinary, json, compressed, compressed_igbinary
+    'serializers' => [
+        'native' => \KaririCode\Cache\Serializer\NativeSerializer::class,
+        'igbinary' => \KaririCode\Cache\Serializer\IgbinarySerializer::class,
+        'json' => \KaririCode\Cache\Serializer\JsonSerializer::class,
+        'compressed' => [
+            'class' => \KaririCode\Cache\Serializer\CompressingSerializer::class,
+            'inner' => 'igbinary',
+        ],
+        'compressed_native' => [
+            'class' => \KaririCode\Cache\Serializer\CompressingSerializer::class,
+            'inner' => 'native',
+        ],
+    ],
 
     // =============================================================================
     // FEATURE TOGGLES
@@ -206,6 +187,7 @@ return [
         'events_enabled' => env('CACHE_EVENTS_ENABLED', true),
         'psr14_events_enabled' => env('CACHE_PSR14_EVENTS_ENABLED', false),
         'strict_validation' => env('CACHE_STRICT_VALIDATION', true),
+        'compression_enabled' => env('CACHE_COMPRESSION_ENABLED', true),
     ],
 
     // =============================================================================
@@ -213,7 +195,6 @@ return [
     // =============================================================================
 
     'defaults' => [
-        'ttl' => (int) env('CACHE_DEFAULT_TTL', 3600), // 1 hour
         'key_prefix' => env('CACHE_DEFAULT_PREFIX', ''),
         'namespace_separator' => env('CACHE_NAMESPACE_SEPARATOR', ':'),
     ],
@@ -231,7 +212,7 @@ return [
         'enable_geo_location' => env('CACHE_ENABLE_GEO_LOCATION', false),
         'retention_days' => (int) env('CACHE_AUDIT_RETENTION_DAYS', 30),
         'max_key_length' => (int) env('CACHE_MAX_KEY_LENGTH', 250),
-        'max_value_size' => (int) env('CACHE_MAX_VALUE_SIZE', 1048576), // 1MB
+        'max_value_size' => (int) env('CACHE_MAX_VALUE_SIZE', 1048576),
     ],
 
     // =============================================================================
@@ -242,9 +223,9 @@ return [
         'enable_performance_tracking' => env('CACHE_PERFORMANCE_TRACKING', true),
         'enable_security_monitoring' => env('CACHE_SECURITY_MONITORING', false),
         'max_events' => (int) env('CACHE_MAX_EVENTS', 1000),
-        'slow_threshold' => (float) env('CACHE_SLOW_THRESHOLD', 0.1), // 100ms
+        'slow_threshold' => (float) env('CACHE_SLOW_THRESHOLD', 0.1),
         'enable_debug_logging' => env('CACHE_DEBUG_LOGGING', false),
-        'metrics_collection_interval' => (int) env('CACHE_METRICS_INTERVAL', 60), // seconds
+        'metrics_collection_interval' => (int) env('CACHE_METRICS_INTERVAL', 60),
     ],
 
     // =============================================================================
@@ -257,18 +238,18 @@ return [
             'features' => [
                 'metrics_enabled' => true,
                 'events_enabled' => true,
-                'strict_validation' => false, // More lenient for development
+                'strict_validation' => false,
             ],
             'observability' => [
                 'enable_debug_logging' => true,
-                'slow_threshold' => 0.01, // More sensitive in development
+                'slow_threshold' => 0.01,
             ],
         ],
 
         'testing' => [
             'default' => 'array',
             'features' => [
-                'stampede_protection' => false, // Simplify for tests
+                'stampede_protection' => false,
                 'metrics_enabled' => false,
                 'events_enabled' => false,
             ],
@@ -296,88 +277,9 @@ return [
             ],
             'observability' => [
                 'enable_debug_logging' => false,
-                'slow_threshold' => 0.2, // Less sensitive in production
+                'slow_threshold' => 0.2,
             ],
         ],
-    ],
-
-    // =============================================================================
-    // SPECIALIZED CACHE CONFIGURATIONS
-    // =============================================================================
-
-    'specialized' => [
-
-        // Rate limiting cache
-        'rate_limiting' => [
-            'store' => 'redis',
-            'prefix' => 'rate_limit:',
-            'default_window' => 3600, // 1 hour
-            'default_limit' => 1000,
-        ],
-
-        // API response cache
-        'api_responses' => [
-            'store' => 'api_responses',
-            'prefix' => 'api:',
-            'default_ttl' => 1800, // 30 minutes
-            'max_response_size' => 1048576, // 1MB
-            'compress_responses' => true,
-            'cache_headers' => true,
-            'vary_on_headers' => ['Accept', 'Accept-Language', 'Authorization'],
-        ],
-
-        // Session cache
-        'sessions' => [
-            'store' => 'sessions',
-            'prefix' => 'session:',
-            'default_ttl' => 7200, // 2 hours
-        ],
-
-        // File cache for compiled views/templates
-        'compiled' => [
-            'store' => 'filesystem',
-            'prefix' => 'compiled:',
-            'default_ttl' => 86400, // 24 hours
-        ],
-    ],
-
-
-    // =============================================================================
-    // SERIALIZATION CONFIGURATION
-    // =============================================================================
-
-    /**
-     * Define a lista de serializadores disponíveis e como construí-los.
-     * Isso permite adicionar novos serializadores sem alterar o código do CacheBuilder.
-     */
-    'serializers' => [
-        'native' => \KaririCode\Cache\Serializer\NativeSerializer::class,
-        'igbinary' => \KaririCode\Cache\Serializer\IgbinarySerializer::class,
-        'json' => \KaririCode\Cache\Serializer\JsonSerializer::class,
-        // Exemplo de um serializador decorado (Decorator Pattern)
-        'compressed' => [
-            'class' => \KaririCode\Cache\Serializer\CompressingSerializer::class,
-            'inner' => 'native', // O serializador que será comprimido
-        ],
-    ],
-
-    /**
-     * Define o serializador padrão a ser usado.
-     * O valor deve corresponder a uma das chaves no array 'serializers' acima.
-     */
-    'serializer' => env('CACHE_SERIALIZER', 'native'),
-
-    // =============================================================================
-    // FEATURE TOGGLES
-    // =============================================================================
-
-    'features' => [
-        'stampede_protection' => env('CACHE_STAMPEDE_PROTECTION', true),
-        'metrics_enabled' => env('CACHE_METRICS_ENABLED', true),
-        'sliding_expiration' => env('CACHE_SLIDING_EXPIRATION', false),
-        'events_enabled' => env('CACHE_EVENTS_ENABLED', true),
-        'psr14_events_enabled' => env('CACHE_PSR14_EVENTS_ENABLED', false),
-        'strict_validation' => env('CACHE_STRICT_VALIDATION', true),
     ],
 
     // =============================================================================
@@ -403,6 +305,11 @@ return [
             'file_locking' => env('FILESYSTEM_FILE_LOCKING', true),
             'directory_levels' => (int) env('FILESYSTEM_DIR_LEVELS', 2),
         ],
+
+        'apcu' => [
+            'enable_serializer' => env('APCU_ENABLE_SERIALIZER', true),
+            'slam_defense' => env('APCU_SLAM_DEFENSE', true),
+        ],
     ],
 
     // =============================================================================
@@ -411,14 +318,15 @@ return [
 
     'health_checks' => [
         'enabled' => env('CACHE_HEALTH_CHECKS', true),
-        'interval' => (int) env('CACHE_HEALTH_CHECK_INTERVAL', 300), // 5 minutes
-        'timeout' => (int) env('CACHE_HEALTH_CHECK_TIMEOUT', 5), // 5 seconds
+        'interval' => (int) env('CACHE_HEALTH_CHECK_INTERVAL', 300),
+        'timeout' => (int) env('CACHE_HEALTH_CHECK_TIMEOUT', 5),
         'stores_to_check' => array_filter(
             explode(',', env('CACHE_HEALTH_CHECK_STORES', 'redis,memcached'))
         ),
+        'failure_threshold' => (int) env('CACHE_HEALTH_FAILURE_THRESHOLD', 3),
+        'recovery_threshold' => (int) env('CACHE_HEALTH_RECOVERY_THRESHOLD', 2),
     ],
 ];
-
 
 /**
  * Helper function for storage path
@@ -426,7 +334,7 @@ return [
 if (!function_exists('storage_path')) {
     function storage_path(string $path = ''): string
     {
-        $basePath =  __DIR__ . '/../storage';
+        $basePath = __DIR__ . '/../storage';
         return rtrim($basePath, '/') . ($path ? '/' . ltrim($path, '/') : '');
     }
 }

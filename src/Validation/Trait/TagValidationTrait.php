@@ -13,7 +13,7 @@ use KaririCode\Cache\ValueObject\Tag;
  */
 trait TagValidationTrait
 {
-    protected function validateAndNormalizeTags(array $tags): array
+    protected function normalizeTags(array $tags): array
     {
         return TagNormalizer::normalize($tags);
     }

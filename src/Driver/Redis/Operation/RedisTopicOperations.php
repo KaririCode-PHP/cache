@@ -80,6 +80,48 @@ final class RedisTopicOperations
     }
 
     /**
+     * Gets all topics a cache item is subscribed to.
+     *
+     * @param string $key the unique cache key
+     *
+     * @return array<string> a list of topic names
+     */
+    public function getSubscribedTopics(string $key): array
+    {
+        $this->validateKey($key);
+
+        $result = $this->errorHandler->executeWithRetry(
+            fn () => $this->performGetSubscribedTopics($key),
+            $this->connectionManager,
+            'getSubscribedTopics',
+            $key
+        );
+
+        return is_array($result) ? $result : [];
+    }
+
+    /**
+     * Gets all cache items subscribed to a specific topic.
+     *
+     * @param string $topic the topic to search for
+     *
+     * @return array<string> a list of cache keys
+     */
+    public function getSubscribersForTopic(string $topic): array
+    {
+        $this->validateTopicStrings([$topic]);
+
+        $result = $this->errorHandler->executeWithRetry(
+            fn () => $this->performGetSubscribersForTopic($topic),
+            $this->connectionManager,
+            'getSubscribersForTopic',
+            $topic
+        );
+
+        return is_array($result) ? $result : [];
+    }
+
+    /**
      * Internal logic for the subscription operation.
      *
      * @param string $key the key to subscribe
@@ -121,7 +163,9 @@ final class RedisTopicOperations
 
             if (!is_array($keysToDelete) || empty($keysToDelete)) {
                 // Only remove topic index keys if there are no data keys to delete.
-                $this->redis->del($topicKeys);
+                if (!empty($topicKeys)) {
+                    $this->redis->del($topicKeys);
+                }
 
                 return true;
             }
@@ -134,6 +178,54 @@ final class RedisTopicOperations
             return is_array($results) && !empty($results);
         } catch (\RedisException $e) {
             throw CacheException::operationFailed('invalidateTopics', implode(',', $topicStrings), $e);
+        }
+    }
+
+    /**
+     * @return array<string>
+     */
+    private function performGetSubscribersForTopic(string $topic): array
+    {
+        try {
+            $topicKey = $this->config->topicPrefix . $topic;
+            $members = $this->redis->sMembers($topicKey);
+
+            if (!is_array($members)) {
+                return [];
+            }
+
+            // Remove the cache prefix from each key before returning
+            $prefixLength = strlen($this->config->keyPrefix);
+
+            return array_map(fn ($key) => substr($key, $prefixLength), $members);
+        } catch (\RedisException $e) {
+            throw CacheException::operationFailed('getSubscribersForTopic', $topic, $e);
+        }
+    }
+
+    /**
+     * @return array<string>
+     */
+    private function performGetSubscribedTopics(string $key): array
+    {
+        try {
+            $fullKey = $this->config->keyPrefix . $key;
+            $subscribedTopics = [];
+            $iterator = null;
+
+            // Use SCAN to avoid blocking the server with KEYS *
+            while ($topicKeys = $this->redis->scan($iterator, $this->config->topicPrefix . '*')) {
+                foreach ($topicKeys as $topicKey) {
+                    if ($this->redis->sIsMember($topicKey, $fullKey)) {
+                        // Remove prefix to return the clean topic name
+                        $subscribedTopics[] = substr($topicKey, strlen($this->config->topicPrefix));
+                    }
+                }
+            }
+
+            return $subscribedTopics;
+        } catch (\RedisException $e) {
+            throw CacheException::operationFailed('getSubscribedTopics', $key, $e);
         }
     }
 }

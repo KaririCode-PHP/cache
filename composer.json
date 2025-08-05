@@ -32,7 +32,8 @@
     "kariricode/configurator": "1.0.0",
     "kariricode/dotenv": "1.1.2",
     "kariricode/contract": "2.8.3",
-    "kariricode/logging": "1.1.0"
+    "kariricode/logging": "1.1.0",
+    "kariricode/data-structure": "^1.1"
   },
   "autoload": {
     "psr-4": {
