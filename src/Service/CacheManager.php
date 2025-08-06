@@ -244,11 +244,7 @@ final class CacheManager implements Cache, MultiOperationCacheable
     {
         $config = $this->configuration->getExpirationProvider();
 
-        return new ConfigurableExpirationProvider(
-            defaultTtl: $config->defaultTtl,
-            operationTtls: $config->operationTtls,
-            keyPatternTtls: $config->keyPatternTtls
-        );
+        return ConfigurableExpirationProvider::fromConfig($config);
     }
 
     private function configureDriverManager(): void

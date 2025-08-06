@@ -231,13 +231,15 @@ return [
     |
     */
     'features' => [
+        'debug_mode' => env('CACHE_DEBUG_MODE', false),
         'stampede_protection' => env('CACHE_STAMPEDE_PROTECTION', true),
         'metrics_enabled' => env('CACHE_METRICS_ENABLED', true),
         'events_enabled' => env('CACHE_EVENTS_ENABLED', true),
         'strict_validation' => env('CACHE_STRICT_VALIDATION', true),
         'compression_enabled' => env('CACHE_COMPRESSION_ENABLED', true),
         'async_operations' => env('CACHE_ASYNC_OPERATIONS', false),
-        'debug_mode' => env('CACHE_DEBUG_MODE', false),
+        'encryption_enabled' => env('CACHE_ENCRYPTION_ENABLED', false),
+        'encryption_key' => env('CACHE_ENCRYPTION_KEY'),
     ],
 
     /*
@@ -343,42 +345,5 @@ if (!function_exists('storage_path')) {
     {
         $basePath = dirname(__DIR__) . '/storage';
         return rtrim($basePath, '/') . ($path ? '/' . ltrim($path, '/') : '');
-    }
-}
-
-/**
- * Helper function for env variables (if not already defined).
- */
-if (!function_exists('env')) {
-    function env(string $key, mixed $default = null): mixed
-    {
-        $value = $_ENV[$key] ?? $_SERVER[$key] ?? getenv($key);
-
-        if ($value === false) {
-            return $default;
-        }
-
-        // Convert string boolean values
-        switch (strtolower($value)) {
-            case 'true':
-            case '(true)':
-                return true;
-            case 'false':
-            case '(false)':
-                return false;
-            case 'empty':
-            case '(empty)':
-                return '';
-            case 'null':
-            case '(null)':
-                return null;
-        }
-
-        // Handle quoted strings
-        if (preg_match('/^"(.*)"$/', $value, $matches)) {
-            return $matches[1];
-        }
-
-        return $value;
     }
 }

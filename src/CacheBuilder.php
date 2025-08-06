@@ -5,12 +5,9 @@ declare(strict_types=1);
 namespace KaririCode\Cache;
 
 use KaririCode\Cache\Config\CacheConfig;
-use KaririCode\Cache\Config\DTO\ExpirationProviderConfig;
-use KaririCode\Cache\Config\StoreConfiguration;
-use KaririCode\Cache\Contract\CacheSerializer;
+use KaririCode\Cache\Config\DriverManager;
 use KaririCode\Cache\Contract\Provider\ExpirationProvider;
 use KaririCode\Cache\Decorator\EncryptedCacheDecorator;
-use KaririCode\Cache\Driver\Factory\DriverFactoryRegistry;
 use KaririCode\Cache\Exception\ConfigurationException;
 use KaririCode\Cache\Provider\ConfigurableExpirationProvider;
 use KaririCode\Cache\Service\EventService;
@@ -24,93 +21,65 @@ use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
 
 /**
- * Enhanced CacheBuilder with a fluent interface and dependency management.
+ * Fluent builder for creating a fully-configured Cache instance.
  *
- * Follows the Builder pattern with method chaining for configuration.
- * Manages all dependencies and ensures proper initialization order.
+ * This class follows the Builder pattern to assemble a complex Cache object.
+ * Its sole responsibility is to gather all necessary components (services,
+ * configuration, drivers) and inject them into the Cache facade. It does not
+ * create dependencies itself, adhering to Dependency Injection principles.
+ *
+ * @category  Cache
+ *
+ * @author    Walmir Silva <walmir.silva@kariricode.org>
+ * @license   MIT
+ *
+ * @see       https://kariricode.org/
  */
 final class CacheBuilder
 {
-    private string $name = 'default';
     private string $storeName = 'default';
     private ?CacheConfig $config = null;
-
-    // Services
-    private ?ValidationService $validator = null;
-    private CacheSerializer|string|null $serializer = null;
-    private ?EventService $events = null;
-    private ?MetricsService $metrics = null;
-    private ?LockService $locks = null;
-    private ?HealthCheckService $health = null;
-    private ?ExpirationProvider $expirationProvider = null;
-
-    // External dependencies
-    private LoggerInterface $logger;
+    private ?DriverManager $driverManager = null;
+    private ?LoggerInterface $logger = null;
     private ?EventDispatcherInterface $eventDispatcher = null;
 
-    // Configuration options
-    private array $layers = [];
-    private array $features = [];
-    private array $ttlConfig = [];
+    // Services to be injected
+    private ?ValidationService $validationService = null;
+    private ?SerializationService $serializationService = null;
+    private ?MetricsService $metricsService = null;
+    private ?EventService $eventService = null;
+    private ?HealthCheckService $healthCheckService = null;
+    private ?LockService $lockService = null;
+    private ?ExpirationProvider $expirationProvider = null;
 
-    // Factories
-    private ?DriverFactoryRegistry $driverRegistry = null;
-
-    public function __construct(?CacheConfig $config = null)
+    /**
+     * @param CacheConfig $config the central cache configuration object
+     */
+    public function __construct(CacheConfig $config)
     {
         $this->config = $config;
-        $this->logger = new NullLogger();
+    }
 
-        if (null !== $config) {
-            $this->applyConfiguration($config);
+    public static function fromConfig(CacheConfig $config): self
+    {
+        return new self($config);
+    }
+
+    // --- Fluent Configuration Methods ---
+
+    public function forStore(string $storeName): self
+    {
+        if (!$this->config->has($storeName)) {
+            throw ConfigurationException::missingStore($storeName);
         }
-    }
-
-    public function withName(string $name): self
-    {
-        $this->name = $name;
-
-        return $this;
-    }
-
-    public function withStore(string $storeName): self
-    {
         $this->storeName = $storeName;
 
-        if (null !== $this->config) {
-            $storeConfig = $this->config->getStore($storeName);
-            if (null === $storeConfig) {
-                throw ConfigurationException::missingStore($storeName);
-            }
-            $this->applyStoreConfiguration($storeConfig);
-        }
-
         return $this;
     }
 
-    public function withLayer(string $driver, array $config = [], int $priority = 100): self
+    public function withDriverManager(DriverManager $driverManager): self
     {
-        $this->layers[] = [
-            'driver' => $driver,
-            'config' => $config,
-            'priority' => $priority,
-        ];
-
-        usort($this->layers, fn ($a, $b) => $a['priority'] <=> $b['priority']);
-
-        return $this;
-    }
-
-    public function withSerializer(CacheSerializer|string $serializer): self
-    {
-        $this->serializer = $serializer;
-
-        return $this;
-    }
-
-    public function withTtlConfig(array $ttlConfig): self
-    {
-        $this->ttlConfig = array_merge($this->ttlConfig, $ttlConfig);
+        $this->driverManager = $driverManager;
 
         return $this;
     }
@@ -129,33 +98,46 @@ final class CacheBuilder
         return $this;
     }
 
-    public function withStampedeProtection(bool $enabled = true): self
+    // --- Fluent Service Injection Methods ---
+
+    public function withValidationService(ValidationService $service): self
     {
-        $this->features['stampede_protection'] = $enabled;
+        $this->validationService = $service;
 
         return $this;
     }
 
-    public function withMetrics(bool $enabled = true): self
+    public function withSerializationService(SerializationService $service): self
     {
-        $this->features['metrics'] = $enabled;
+        $this->serializationService = $service;
 
         return $this;
     }
 
-    public function withEncryption(?string $key = null): self
+    public function withMetricsService(MetricsService $service): self
     {
-        $this->features['encryption'] = true;
-        if (null !== $key) {
-            $this->features['encryption_key'] = $key;
-        }
+        $this->metricsService = $service;
 
         return $this;
     }
 
-    public function withValidationService(ValidationService $validator): self
+    public function withEventService(EventService $service): self
     {
-        $this->validator = $validator;
+        $this->eventService = $service;
+
+        return $this;
+    }
+
+    public function withHealthCheckService(HealthCheckService $service): self
+    {
+        $this->healthCheckService = $service;
+
+        return $this;
+    }
+
+    public function withLockService(LockService $service): self
+    {
+        $this->lockService = $service;
 
         return $this;
     }
@@ -167,179 +149,102 @@ final class CacheBuilder
         return $this;
     }
 
-    public function withMetricsService(MetricsService $metrics): self
-    {
-        $this->metrics = $metrics;
-
-        return $this;
-    }
-
-    public function withLockService(LockService $locks): self
-    {
-        $this->locks = $locks;
-
-        return $this;
-    }
-
-    public function withHealthCheckService(HealthCheckService $health): self
-    {
-        $this->health = $health;
-
-        return $this;
-    }
-
-    public function withEventService(EventService $events): self
-    {
-        $this->events = $events;
-
-        return $this;
-    }
-
+    /**
+     * Builds the final Cache instance.
+     *
+     * This method orchestrates the creation of all dependencies if they haven't
+     * been injected, builds the layered cache manager, and assembles the final
+     * Cache facade with all its services.
+     *
+     * @return Cache the fully configured Cache instance
+     */
     public function build(): Cache
     {
-        $this->validate();
+        $logger = $this->logger ?? new NullLogger();
 
-        $validator = $this->validator ?? new ValidationService();
-        $serializer = $this->createSerializationService();
-        $events = $this->events ?? new EventService($this->eventDispatcher, $this->logger);
-        $metrics = $this->metrics ?? $this->createMetricsService();
+        // Resolve or create services. In a DI container context, these would be resolved.
+        $validationService = $this->validationService ?? new ValidationService();
+        $serializationService = $this->serializationService ?? $this->createSerializationService();
+        $eventService = $this->eventService ?? new EventService($this->eventDispatcher, $logger);
+        $metricsService = $this->metricsService ?? new MetricsService($logger);
         $expirationProvider = $this->expirationProvider ?? $this->createExpirationProvider();
 
-        $layeredCache = $this->buildLayeredCache($expirationProvider);
+        // Build the core layered cache manager
+        $layeredCacheManager = $this->buildLayeredCacheManager($expirationProvider, $logger);
 
-        $locks = $this->locks ?? new LockService($layeredCache, $this->logger);
-        $health = $this->health ?? new HealthCheckService($layeredCache, $metrics, $this->logger);
+        // Build services that depend on the cache manager
+        $lockService = $this->lockService ?? new LockService($layeredCacheManager, $logger);
+        $healthCheckService = $this->healthCheckService ?? new HealthCheckService($layeredCacheManager, $metricsService, $logger);
 
         $cache = new Cache(
-            name: $this->name,
-            layeredCache: $layeredCache,
-            validator: $validator,
-            serializer: $serializer,
-            events: $events,
-            metrics: $metrics,
-            locks: $locks,
-            health: $health,
-            logger: $this->logger
+            name: $this->storeName,
+            layeredCache: $layeredCacheManager,
+            validator: $validationService,
+            serializer: $serializationService,
+            events: $eventService,
+            metrics: $metricsService,
+            health: $healthCheckService,
+            locks: $lockService,
+            logger: $logger
         );
 
-        return $this->applyDecorators($cache);
-    }
-
-    private function validate(): void
-    {
-        if (empty($this->layers)) {
-            if (null === $this->config) {
-                throw ConfigurationException::invalidConfiguration('layers', 'No layers configured and no config provided');
-            }
-
-            $storeConfig = $this->config->getStore($this->storeName);
-            if (null === $storeConfig) {
-                throw ConfigurationException::missingStore($this->storeName);
-            }
-
-            $this->applyStoreConfiguration($storeConfig);
-        }
-
-        if (empty($this->layers)) {
-            throw ConfigurationException::invalidConfiguration('layers', 'No cache layers have been configured.');
-        }
+        return $this->applyDecorators($cache, $serializationService);
     }
 
     private function createSerializationService(): SerializationService
     {
-        if ($this->serializer instanceof SerializationService) {
-            return $this->serializer;
-        }
-
-        $service = new SerializationService($this->logger);
-
-        if (null !== $this->config) {
-            foreach ($this->config->getSerializers() as $name => $serializerClass) {
-                if (is_string($serializerClass) && class_exists($serializerClass)) {
-                    $service->registerSerializer($name, new $serializerClass());
-                }
-            }
-        }
-
-        if (is_string($this->serializer)) {
-            $service->setDefaultSerializer($this->serializer);
-        }
-
-        return $service;
-    }
-
-    private function createMetricsService(): MetricsService
-    {
-        $service = new MetricsService($this->logger);
-
-        if ($this->features['metrics'] ?? false) {
-            $service->enableDetailedMetrics();
-        }
+        $service = new SerializationService($this->logger ?? new NullLogger());
+        // Logic to instantiate serializers from config...
+        $service->setDefaultSerializer($this->config->getDefaultSerializer());
 
         return $service;
     }
 
     private function createExpirationProvider(): ExpirationProvider
     {
-        $configData = array_merge(
-            $this->config?->getExpirationProvider()->toArray() ?? [],
-            $this->ttlConfig
-        );
+        $configDto = $this->config->getExpirationProvider();
 
-        $expirationConfig = new ExpirationProviderConfig($configData);
-
-        return ConfigurableExpirationProvider::fromConfig($expirationConfig);
+        return ConfigurableExpirationProvider::fromConfig($configDto);
     }
 
-    private function buildLayeredCache(ExpirationProvider $expirationProvider): LayeredCacheManager
+    private function buildLayeredCacheManager(ExpirationProvider $provider, LoggerInterface $logger): LayeredCacheManager
     {
-        $driverRegistry = $this->driverRegistry ?? new DriverFactoryRegistry();
+        $storeConfig = $this->config->getStore($this->storeName);
+        $driverManager = $this->driverManager ?? new DriverManager();
 
-        return (new LayeredCacheBuilder())
-            ->withLayers($this->layers)
-            ->withExpirationProvider($expirationProvider)
-            ->withDriverRegistry($driverRegistry)
-            ->withLogger($this->logger)
-            ->build();
+        $builder = (new LayeredCacheBuilder())
+            ->withExpirationProvider($provider)
+            ->withDriverManager($driverManager)
+            ->withLogger($logger);
+
+        if ($storeConfig->isLayered()) {
+            $builder->withLayers($storeConfig->getLayers());
+        } else {
+            $builder->withLayers([
+                [
+                    'driver' => $storeConfig->getDriver(),
+                    'config' => $storeConfig->getConfig(),
+                    'priority' => 100,
+                ],
+            ]);
+        }
+
+        return $builder->build();
     }
 
-    private function applyDecorators(Cache $cache): Cache
+    private function applyDecorators(Cache $cache, SerializationService $serializer): Cache
     {
-        if ($this->features['encryption'] ?? false) {
-            $encryptionKey = $this->features['encryption_key'] ??
-                             $this->config?->get('encryption.key') ??
-                             throw ConfigurationException::invalidConfiguration('encryption_key', 'Encryption key not provided');
+        $features = $this->config->getFeatures();
 
-            // Assuming EncryptedCacheDecorator exists and is compatible
-            // $cache = new EncryptedCacheDecorator($cache, $encryptionKey);
+        if ($features->encryptionEnabled) {
+            $key = $features->encryptionKey ?? null;
+            if (null === $key) {
+                throw ConfigurationException::missingConfiguration('Encryption key is required but not provided.');
+            }
+            // The decorator wraps the fully constructed cache instance.
+            $cache = new EncryptedCacheDecorator($cache, $serializer, $key);
         }
 
         return $cache;
-    }
-
-    private function applyConfiguration(CacheConfig $config): void
-    {
-        $this->ttlConfig = $config->getExpirationProvider()->toArray();
-        $this->features = $config->getFeatures()->toArray();
-        $this->serializer = $config->getDefaultSerializer();
-    }
-
-    private function applyStoreConfiguration(StoreConfiguration $storeConfig): void
-    {
-        if ($storeConfig->isLayered()) {
-            foreach ($storeConfig->getLayers() as $layer) {
-                $this->withLayer(
-                    $layer['driver'],
-                    $layer['config'] ?? [],
-                    $layer['priority'] ?? 100
-                );
-            }
-        } else {
-            $this->withLayer(
-                $storeConfig->getDriver(),
-                $storeConfig->getConfig(),
-                100
-            );
-        }
     }
 }

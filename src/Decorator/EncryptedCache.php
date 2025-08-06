@@ -4,31 +4,50 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Decorator;
 
-use KaririCode\Cache\Contract\Cache;
+use KaririCode\Cache\Builder\CacheOperationBuilder;
+use KaririCode\Cache\Cache;
+use KaririCode\Cache\Contract\AdvancedCache;
+use KaririCode\Cache\Contract\Behavioral\TopicSubscribable;
+use KaririCode\Cache\Contract\CacheCapabilities;
+use KaririCode\Cache\Contract\TaggableCache;
 use KaririCode\Cache\Exception\CacheException;
 use KaririCode\Cache\Exception\InvalidArgumentException;
 use KaririCode\Cache\Exception\SecurityException;
 use KaririCode\Cache\Metrics\CacheMetrics;
+use KaririCode\Cache\Service\SerializationService;
 
 /**
- * Cache decorator with encryption capabilities.
+ * Decorator that adds a layer of transparent encryption to a Cache instance.
  *
- * This decorator encrypts values before sending them to the cache and
- * decrypts them upon retrieval, following the Decorator Pattern.
- * This demonstrates Composition over Inheritance and Separation of Concerns.
+ * This class follows the Decorator pattern, wrapping a Cache object to encrypt
+ * all outgoing values and decrypt all incoming values. It is a true drop-in
+ * replacement, implementing the same interfaces as the Cache facade.
  *
- * NOTE: Atomic operations (increment, decrement, etc.) are unsupported
- * as atomicity cannot be guaranteed with the encrypt-decrypt cycle.
- * This class follows the Fail Fast principle by throwing an exception
- * when these methods are called.
+ * NOTE: Atomic operations (increment, decrement) are unsupported as atomicity
+ * cannot be guaranteed with the encrypt-decrypt cycle. This class follows the
+ * Fail-Fast principle by throwing an exception when these methods are called.
+ *
+ * @category  Cache
+ *
+ * @author    Walmir Silva <walmir.silva@kariricode.org>
+ * @license   MIT
+ *
+ * @see       https://kariricode.org/
  */
-final class EncryptedCache implements Cache
+final class EncryptedCacheDecorator implements AdvancedCache, TaggableCache, TopicSubscribable
 {
     private readonly int $ivLength;
     private readonly int $tagLength;
 
+    /**
+     * @param Cache $cache the cache instance to decorate
+     * @param SerializationService $serializer the central serialization service
+     * @param string $encryptionKey the 32-byte encryption key for AES-256-GCM
+     * @param string $cipher the encryption cipher to use
+     */
     public function __construct(
         private readonly Cache $cache,
+        private readonly SerializationService $serializer,
         private readonly string $encryptionKey,
         private readonly string $cipher = 'AES-256-GCM'
     ) {
@@ -42,8 +61,10 @@ final class EncryptedCache implements Cache
         }
 
         $this->ivLength = $ivLength;
-        $this->tagLength = 16;
+        $this->tagLength = 16; // Standard for GCM
     }
+
+    // --- Encrypted Operations ---
 
     public function get(string $key, mixed $default = null): mixed
     {
@@ -56,27 +77,17 @@ final class EncryptedCache implements Cache
         try {
             return $this->decrypt($encryptedValue);
         } catch (\Exception) {
+            // If decryption fails, treat it as a miss.
             return $default;
         }
     }
 
-    public function set(string $key, mixed $value, \DateInterval|int|null $ttl = null): bool
+    public function set(string $key, mixed $value): bool
     {
         try {
             $encryptedValue = $this->encrypt($value);
 
-            return $this->cache->set($key, $encryptedValue, $ttl);
-        } catch (\Exception) {
-            return false;
-        }
-    }
-
-    public function setWithTags(string $key, mixed $value, array $tags, \DateInterval|int|null $ttl = null): bool
-    {
-        try {
-            $encryptedValue = $this->encrypt($value);
-
-            return $this->cache->setWithTags($key, $encryptedValue, $tags, $ttl);
+            return $this->cache->set($key, $encryptedValue);
         } catch (\Exception) {
             return false;
         }
@@ -102,7 +113,7 @@ final class EncryptedCache implements Cache
         return $result;
     }
 
-    public function setMultiple(iterable $values, \DateInterval|int|null $ttl = null): bool
+    public function setMultiple(iterable $values): bool
     {
         try {
             $encryptedValues = [];
@@ -110,91 +121,24 @@ final class EncryptedCache implements Cache
                 $encryptedValues[$key] = $this->encrypt($value);
             }
 
-            return $this->cache->setMultiple($encryptedValues, $ttl);
+            return $this->cache->setMultiple($encryptedValues);
         } catch (\Exception) {
             return false;
         }
     }
 
-    public function warm(array $data, \DateInterval|int|null $ttl = null): void
+    public function setWithTags(string $key, mixed $value, iterable $tags = []): bool
     {
         try {
-            $encryptedData = [];
-            foreach ($data as $key => $value) {
-                $encryptedData[$key] = $this->encrypt($value);
-            }
-            $this->cache->warm($encryptedData, $ttl);
+            $encryptedValue = $this->encrypt($value);
+
+            return $this->cache->setWithTags($key, $encryptedValue, $tags);
         } catch (\Exception) {
-            // Log error but avoid throwing exception during a warm-up.
+            return false;
         }
     }
 
-    // ========================================================================
-    // Delegated Methods
-    // ========================================================================
-
-    public function delete(string $key): bool
-    {
-        return $this->cache->delete($key);
-    }
-
-    public function clear(): bool
-    {
-        return $this->cache->clear();
-    }
-
-    public function deleteMultiple(iterable $keys): bool
-    {
-        return $this->cache->deleteMultiple($keys);
-    }
-
-    public function has(string $key): bool
-    {
-        return $this->cache->has($key);
-    }
-
-    public function getName(): string
-    {
-        return $this->cache->getName() . ' (Encrypted)';
-    }
-
-    public function isHealthy(): bool
-    {
-        return $this->cache->isHealthy();
-    }
-
-    public function maintenance(array $options = []): bool
-    {
-        return $this->cache->maintenance($options);
-    }
-
-    public function getMetrics(): CacheMetrics
-    {
-        return $this->cache->getMetrics();
-    }
-
-    public function getWithCallback(string $key, ?callable $callback = null, \DateInterval|int|null $ttl = null, array $tags = []): mixed
-    {
-        $value = $this->get($key);
-        if (null !== $value) {
-            return $value;
-        }
-        if ($callback) {
-            $value = $callback();
-            $this->setWithTags($key, $value, $tags, $ttl);
-
-            return $value;
-        }
-
-        return null;
-    }
-
-    public function invalidateTags(array $tags): bool
-    {
-        return $this->cache->invalidateTags($tags);
-    }
-
-    public function getByTags(array $tags): array
+    public function getByTags(iterable $tags): iterable
     {
         $encryptedItems = $this->cache->getByTags($tags);
         $decryptedItems = [];
@@ -211,22 +155,49 @@ final class EncryptedCache implements Cache
         return $decryptedItems;
     }
 
-    public function getTags(): array
+    // --- Delegated Methods (No value manipulation) ---
+
+    public function delete(string $key): bool
+    {
+        return $this->cache->delete($key);
+    }
+
+    public function clear(): bool
+    {
+        return $this->cache->clear();
+    }
+
+    public function has(string $key): bool
+    {
+        return $this->cache->has($key);
+    }
+
+    public function deleteMultiple(iterable $keys): bool
+    {
+        return $this->cache->deleteMultiple($keys);
+    }
+
+    public function invalidateTags(iterable $tags): bool
+    {
+        return $this->cache->invalidateTags($tags);
+    }
+
+    public function getTags(): iterable
     {
         return $this->cache->getTags();
     }
 
-    public function subscribeTo(string $key, array $topics): void
+    public function subscribeTo(string $key, iterable $topics): void
     {
         $this->cache->subscribeTo($key, $topics);
     }
 
-    public function unsubscribeFrom(string $key, array $topics): void
+    public function unsubscribeFrom(string $key, iterable $topics): void
     {
         $this->cache->unsubscribeFrom($key, $topics);
     }
 
-    public function invalidateTopics(array $topics): bool
+    public function invalidateTopics(iterable $topics): bool
     {
         return $this->cache->invalidateTopics($topics);
     }
@@ -241,9 +212,39 @@ final class EncryptedCache implements Cache
         return $this->cache->getSubscribersForTopic($topic);
     }
 
-    // ========================================================================
-    // Unsupported Atomic Operations
-    // ========================================================================
+    public function getName(): string
+    {
+        return $this->cache->getName() . ' (Encrypted)';
+    }
+
+    public function isHealthy(): bool
+    {
+        return $this->cache->isHealthy();
+    }
+
+    public function getMetrics(): CacheMetrics
+    {
+        return $this->cache->getMetrics();
+    }
+
+    public function getCapabilities(): array
+    {
+        // Remove atomic capability as it's not supported by this decorator.
+        $capabilities = $this->cache->getCapabilities();
+
+        return array_diff($capabilities, [CacheCapabilities::ATOMIC_OPERATIONS]);
+    }
+
+    // --- Fluent Builder (Delegated) ---
+
+    public function with(): CacheOperationBuilder
+    {
+        // The builder itself is not decorated, as encryption is a global setting.
+        // A more advanced implementation could return a decorated builder.
+        return $this->cache->with();
+    }
+
+    // --- Unsupported Atomic Operations ---
 
     private function createUnsupportedException(string $operation): CacheException
     {
@@ -254,33 +255,33 @@ final class EncryptedCache implements Cache
         );
     }
 
-    public function increment(string $key, int $step = 1, int $initialValue = 0, \DateInterval|int|null $ttl = null): int
+    public function increment(string $key, int $step = 1, int $initialValue = 0): int
     {
         throw $this->createUnsupportedException('increment');
     }
 
-    public function decrement(string $key, int $step = 1, int $initialValue = 0, \DateInterval|int|null $ttl = null): int
+    public function decrement(string $key, int $step = 1, int $initialValue = 0): int
     {
         throw $this->createUnsupportedException('decrement');
     }
 
-    public function add(string $key, mixed $value, \DateInterval|int|null $ttl = null): bool
+    public function add(string $key, mixed $value): bool
     {
+        // This could be emulated, but it would not be atomic.
+        // Fail-fast is safer.
         throw $this->createUnsupportedException('add');
     }
 
-    public function compareAndSwap(string $key, mixed $expected, mixed $value, \DateInterval|int|null $ttl = null): bool
+    public function compareAndSwap(string $key, mixed $expected, mixed $value): bool
     {
         throw $this->createUnsupportedException('compareAndSwap');
     }
 
-    // ========================================================================
-    // Encryption & Decryption Logic
-    // ========================================================================
+    // --- Private Encryption & Decryption Logic ---
 
     private function encrypt(mixed $value): string
     {
-        $serialized = serialize($value);
+        $serialized = $this->serializer->serialize($value);
         $iv = openssl_random_pseudo_bytes($this->ivLength);
 
         $tag = '';
@@ -291,7 +292,7 @@ final class EncryptedCache implements Cache
             OPENSSL_RAW_DATA,
             $iv,
             $tag,
-            '',
+            '', // AAD is not used here for simplicity
             $this->tagLength
         );
 
@@ -320,6 +321,6 @@ final class EncryptedCache implements Cache
             throw SecurityException::decryptionFailed('data', new \RuntimeException('Decryption failed. Data may be corrupt or the key is wrong.'));
         }
 
-        return unserialize($decrypted);
+        return $this->serializer->unserialize($decrypted);
     }
 }

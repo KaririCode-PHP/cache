@@ -501,7 +501,7 @@ final class LayeredCacheManager implements LayeredCache
         $breaker = $this->circuitBreakers[$priority];
         if (CircuitBreakerState::STATE_OPEN === $breaker->state) {
             if (time() - ($breaker->lastFailureTimestamp ?? 0) > self::CIRCUIT_BREAKER_TIMEOUT) {
-                $this->circuitBreakers[$priority] = $breaker->halfOpenCircuit();
+                $this->circuitBreakers[$priority] = $breaker->halfOpen();
                 $this->logger->info('Circuit breaker is now half-open.', ['priority' => $priority]);
 
                 return true;
@@ -517,7 +517,7 @@ final class LayeredCacheManager implements LayeredCache
     {
         $breaker = $this->circuitBreakers[$priority]->recordFailure();
         if ($breaker->failures >= self::MAX_FAILURES && CircuitBreakerState::STATE_CLOSED === $breaker->state) {
-            $breaker = $breaker->openCircuit();
+            $breaker = $breaker->open();
             $this->logger->critical('Circuit breaker opened for cache layer.', [
                 'priority' => $priority, 'layer' => get_class($this->layers[$priority]),
             ]);
