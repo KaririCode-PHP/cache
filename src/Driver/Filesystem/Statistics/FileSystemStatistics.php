@@ -4,16 +4,27 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Driver\Filesystem\Statistics;
 
+use KaririCode\Cache\Contract\DriverStats;
 use KaririCode\Cache\Contract\Filesystem\DirectoryManager;
 use KaririCode\Cache\Contract\Filesystem\FileManager;
-use KaririCode\Cache\Contract\Filesystem\FileSystemStatistics as FileSystemStatisticsContract;
+use KaririCode\Cache\Service\DTO\HealthCheckResult;
 use Psr\Log\LoggerInterface;
 
 /**
- * Statistics collector following SRP.
- * Responsible ONLY for collecting and providing statistics.
+ * Statistics collector for the FilesystemDriver.
+ *
+ * This class is solely responsible for collecting and providing statistics about
+ * the filesystem cache, such as size, file count, and operation metrics.
+ * It implements the DriverStats interface for consistency with other drivers.
+ *
+ * @category  Cache
+ *
+ * @author    Walmir Silva <walmir.silva@kariricode.org>
+ * @license   MIT
+ *
+ * @see       https://kariricode.org/
  */
-final class FileSystemStatistics implements FileSystemStatisticsContract
+final class FileSystemStatistics implements DriverStats
 {
     /** @var array<string, int> */
     private array $operationCounts = [];
@@ -24,124 +35,113 @@ final class FileSystemStatistics implements FileSystemStatisticsContract
     private float $startTime;
 
     public function __construct(
-        private DirectoryManager $directoryManager,
-        private FileManager $fileManager,
-        private LoggerInterface $logger
+        private readonly DirectoryManager $directoryManager,
+        private readonly FileManager $fileManager,
+        private readonly LoggerInterface $logger
     ) {
         $this->startTime = microtime(true);
-        $this->initializeCounters();
     }
 
-    /**
-     * @return array{
-     * directory_size: int,
-     * file_count: int,
-     * uptime: float,
-     * operation_counts: array<string, int>,
-     * average_operation_times: array<string, float>,
-     * disk_free_space?: int|float|false,
-     * disk_total_space?: int|float|false,
-     * error?: string
-     * }
-     */
-    public function getStats(): array
+    // --- DriverStats Interface Methods ---
+
+    public function getDriverName(): string
+    {
+        return 'Filesystem';
+    }
+
+    public function getDriverVersion(): ?string
+    {
+        return '2.0.0'; // Example version
+    }
+
+    public function getMemoryUsage(): ?int
+    {
+        // Memory usage is not directly applicable to the filesystem driver in the same way as in-memory caches.
+        // We can return the total directory size as a representation of its "footprint".
+        return $this->directoryManager->getSize();
+    }
+
+    public function getItemCount(): ?int
+    {
+        return $this->directoryManager->getFileCount();
+    }
+
+    public function getRawStats(): array
     {
         try {
             $baseStats = [
                 'directory_size' => $this->directoryManager->getSize(),
                 'file_count' => $this->directoryManager->getFileCount(),
-                'uptime' => microtime(true) - $this->startTime,
+                'uptime_seconds' => microtime(true) - $this->startTime,
                 'operation_counts' => $this->operationCounts,
-                'average_operation_times' => $this->calculateAverageOperationTimes(),
+                'average_operation_times_ms' => $this->calculateAverageOperationTimes(),
             ];
 
             if (function_exists('disk_free_space') && function_exists('disk_total_space')) {
-                $baseStats['disk_free_space'] = disk_free_space($this->directoryManager->getBaseDirectory());
-                $baseStats['disk_total_space'] = disk_total_space($this->directoryManager->getBaseDirectory());
+                $baseDir = $this->directoryManager->getBaseDirectory();
+                $baseStats['disk_free_space_bytes'] = disk_free_space($baseDir);
+                $baseStats['disk_total_space_bytes'] = disk_total_space($baseDir);
             }
 
             return $baseStats;
         } catch (\Throwable $e) {
-            $this->logger->error('Failed to collect statistics', ['error' => $e->getMessage()]);
+            $this->logger->error('Failed to collect filesystem statistics', ['error' => $e->getMessage()]);
 
-            // Correção: Retorna a mesma estrutura do `try`, com valores padrão em caso de erro.
-            return [
-                'directory_size' => 0,
-                'file_count' => 0,
-                'uptime' => microtime(true) - $this->startTime,
-                'operation_counts' => $this->operationCounts,
-                'average_operation_times' => $this->calculateAverageOperationTimes(),
-                'error' => $e->getMessage(),
-            ];
+            return ['error' => $e->getMessage()];
         }
     }
 
-    /**
-     * @return array{
-     * status: string,
-     * write_success?: bool,
-     * read_success?: bool,
-     * delete_success?: bool,
-     * latency_ms?: float,
-     * directory_writable?: bool,
-     * error?: string
-     * }
-     */
-    public function healthCheck(): array
-    {
-        try {
-            $testKey = 'health_check_' . uniqid('', true);
-            $tempFile = sys_get_temp_dir() . '/' . $testKey;
-            $startTime = microtime(true);
-
-            $writeSuccess = $this->fileManager->writeSecurely($tempFile, 'health_check_data');
-            $readData = $this->fileManager->readSecurely($tempFile);
-            $readSuccess = 'health_check_data' === $readData;
-            $deleteSuccess = $this->fileManager->deleteFile($tempFile);
-            $latency = microtime(true) - $startTime;
-
-            return [
-                'status' => $writeSuccess && $readSuccess && $deleteSuccess ? 'healthy' : 'unhealthy',
-                'write_success' => $writeSuccess,
-                'read_success' => $readSuccess,
-                'delete_success' => $deleteSuccess,
-                'latency_ms' => round($latency * 1000, 2),
-                'directory_writable' => $this->directoryManager->isWritable(sys_get_temp_dir()),
-            ];
-        } catch (\Throwable $e) {
-            return [
-                'status' => 'unhealthy',
-                'error' => $e->getMessage(),
-            ];
-        }
-    }
+    // --- Public Methods for Operation Recording ---
 
     public function recordOperation(string $operation, float $duration): void
     {
-        if (!isset($this->operationCounts[$operation])) {
-            $this->initializeCountersForOperation($operation);
-        }
-
-        ++$this->operationCounts[$operation];
+        $this->operationCounts[$operation] = ($this->operationCounts[$operation] ?? 0) + 1;
         $this->operationTimes[$operation][] = $duration;
 
-        if (count($this->operationTimes[$operation]) > 100) {
-            $this->operationTimes[$operation] = array_slice($this->operationTimes[$operation], -100);
+        // To save memory, keep only the last 1000 duration records per operation.
+        if (count($this->operationTimes[$operation]) > 1000) {
+            array_shift($this->operationTimes[$operation]);
         }
     }
 
-    private function initializeCounters(): void
-    {
-        $operations = ['get', 'set', 'has', 'delete', 'clear'];
-        foreach ($operations as $operation) {
-            $this->initializeCountersForOperation($operation);
-        }
-    }
+    // --- Health Check (Should be moved to a dedicated HealthCheckService) ---
 
-    private function initializeCountersForOperation(string $operation): void
+    public function healthCheck(): HealthCheckResult
     {
-        $this->operationCounts[$operation] = 0;
-        $this->operationTimes[$operation] = [];
+        $startTime = microtime(true);
+        try {
+            $baseDir = $this->directoryManager->getBaseDirectory();
+            if (!$this->directoryManager->isWritable($baseDir)) {
+                throw new \RuntimeException("Directory is not writable: {$baseDir}");
+            }
+
+            $testKey = 'health_check_' . uniqid('', true);
+            $tempFile = $baseDir . DIRECTORY_SEPARATOR . $testKey;
+
+            $writeSuccess = $this->fileManager->writeSecurely($tempFile, 'ok');
+            $readData = $this->fileManager->readSecurely($tempFile);
+            $readSuccess = 'ok' === $readData;
+            $deleteSuccess = $this->fileManager->deleteFile($tempFile);
+
+            $isHealthy = $writeSuccess && $readSuccess && $deleteSuccess;
+            $message = $isHealthy ? 'OK' : 'Read/Write/Delete test failed.';
+
+            return new HealthCheckResult(
+                'Filesystem I/O',
+                $isHealthy,
+                $message,
+                round((microtime(true) - $startTime) * 1000, 2),
+                time()
+            );
+        } catch (\Throwable $e) {
+            return new HealthCheckResult(
+                'Filesystem I/O',
+                false,
+                $e->getMessage(),
+                round((microtime(true) - $startTime) * 1000, 2),
+                time()
+            );
+        }
     }
 
     /**
@@ -152,7 +152,7 @@ final class FileSystemStatistics implements FileSystemStatisticsContract
         $averages = [];
         foreach ($this->operationTimes as $operation => $times) {
             if (!empty($times)) {
-                $averages[$operation] = array_sum($times) / count($times);
+                $averages[$operation] = (array_sum($times) / count($times)) * 1000; // in ms
             } else {
                 $averages[$operation] = 0.0;
             }

@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace KaririCode\Cache\Driver\Array\Storage;
 
 use KaririCode\Cache\Contract\DriverStats;
-use KaririCode\Cache\Driver\Array\Operation\ArrayStorageInterface;
 use KaririCode\Cache\ValueObject\MetricsSnapshot;
 
 /**
@@ -23,7 +22,7 @@ use KaririCode\Cache\ValueObject\MetricsSnapshot;
  * @see       https://kariricode.org/
  * @see       ArrayStorageInterface for the contract
  */
-final class ArrayStorage implements ArrayStorageInterface, DriverStats
+final class ArrayStorage implements DriverStats
 {
     /** @var array<string, mixed> Main cache storage */
     private array $storage = [];
@@ -433,6 +432,22 @@ final class ArrayStorage implements ArrayStorageInterface, DriverStats
                 }
             }
         }
+    }
+
+    public function clear(): void
+    {
+        $this->storage = [];
+        $this->expirations = [];
+        $this->tagIndex = [];
+        $this->keyTags = [];
+        $this->topicIndex = [];
+        $this->keyTopics = [];
+        $this->tagExpirations = [];
+        $this->topicExpirations = [];
+        $this->operationCounts = [];
+        $this->peakMemoryUsage = 0;
+        $this->createdAt = microtime(true);
+        $this->initializeCounters();
     }
 
     // ========================================================================

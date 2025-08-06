@@ -5,21 +5,34 @@ declare(strict_types=1);
 namespace KaririCode\Cache\Driver\Filesystem\File;
 
 use KaririCode\Cache\Contract\Filesystem\FileManager as FileManagerContract;
-use KaririCode\Cache\Exception\CacheException;
+use KaririCode\Cache\Driver\Filesystem\Config\FilesystemConfig;
 use Psr\Log\LoggerInterface;
 
 /**
  * Thread-safe file manager with atomic operations.
- * This class is responsible only for file I/O operations, following the SRP.
+ *
+ * This class is solely responsible for secure file I/O operations, adhering
+ * to the Single Responsibility Principle. It is configured via the central
+ * FilesystemConfig DTO to ensure consistent behavior (e.g., file locking, permissions).
+ *
+ * @category  Cache
+ *
+ * @author    Walmir Silva <walmir.silva@kariricode.org>
+ * @license   MIT
+ *
+ * @see       https://kariricode.org/
  */
 final class FileManager implements FileManagerContract
 {
-    private const LOCK_TIMEOUT = 30;
-    private const FILE_PERMISSIONS = 0644;
+    private const LOCK_TIMEOUT = 30; // seconds
 
+    /**
+     * @param FilesystemConfig $config the configuration DTO for the filesystem driver
+     * @param LoggerInterface $logger a PSR-3 logger instance
+     */
     public function __construct(
-        private LoggerInterface $logger,
-        private bool $useLocking = true
+        private readonly FilesystemConfig $config,
+        private readonly LoggerInterface $logger
     ) {
     }
 
@@ -35,14 +48,9 @@ final class FileManager implements FileManagerContract
         }
 
         try {
-            if ($this->useLocking) {
-                $wouldBlock = false;
-                if (!flock($handle, LOCK_SH | LOCK_NB, $wouldBlock)) {
-                    if ($wouldBlock) {
-                        throw CacheException::lockTimeout($filename, self::LOCK_TIMEOUT);
-                    }
-
-                    return null;
+            if ($this->config->useLocking) {
+                if (!flock($handle, LOCK_SH)) {
+                    return null; // Failed to acquire shared lock
                 }
             }
 
@@ -50,7 +58,7 @@ final class FileManager implements FileManagerContract
 
             return false !== $content ? $content : null;
         } finally {
-            if ($this->useLocking) {
+            if ($this->config->useLocking) {
                 flock($handle, LOCK_UN);
             }
             fclose($handle);
@@ -59,7 +67,7 @@ final class FileManager implements FileManagerContract
 
     public function writeSecurely(string $filename, string $data): bool
     {
-        $tempFile = $filename . '.tmp.' . uniqid('', true) . '.pid' . getmypid();
+        $tempFile = $filename . '.tmp.' . bin2hex(random_bytes(6));
         $handle = $this->openFileForWriting($tempFile);
 
         if (false === $handle) {
@@ -67,14 +75,9 @@ final class FileManager implements FileManagerContract
         }
 
         try {
-            if ($this->useLocking) {
-                $wouldBlock = false;
-                if (!flock($handle, LOCK_EX | LOCK_NB, $wouldBlock)) {
-                    if ($wouldBlock) {
-                        throw CacheException::lockTimeout($filename, self::LOCK_TIMEOUT);
-                    }
-
-                    return false;
+            if ($this->config->useLocking) {
+                if (!flock($handle, LOCK_EX)) {
+                    return false; // Failed to acquire exclusive lock
                 }
             }
 
@@ -88,7 +91,7 @@ final class FileManager implements FileManagerContract
 
             return $this->atomicMove($tempFile, $filename);
         } finally {
-            if ($this->useLocking) {
+            if ($this->config->useLocking) {
                 flock($handle, LOCK_UN);
             }
             fclose($handle);
@@ -162,7 +165,8 @@ final class FileManager implements FileManagerContract
     {
         try {
             if (rename($source, $destination)) {
-                @chmod($destination, self::FILE_PERMISSIONS);
+                // Apply permissions from the central configuration.
+                @chmod($destination, $this->config->filePermissions);
 
                 return true;
             }

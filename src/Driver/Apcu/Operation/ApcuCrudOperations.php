@@ -10,20 +10,14 @@ use KaririCode\Cache\Driver\Apcu\Component\ApcuMonitoringService;
 use KaririCode\Cache\Driver\Apcu\Config\ApcuConfig;
 use KaririCode\Cache\Exception\CacheException;
 use KaririCode\Cache\Serializer\Trait\SerializationTrait;
-use KaririCode\Cache\Validation\Trait\CacheKeyValidationTrait;
-use KaririCode\Cache\Validation\Trait\CacheValueValidationTrait;
+use KaririCode\Cache\Service\ValidationService; // Assuming a future refactor to use ValidationService
 
 /**
- * Handles basic CRUD cache operations for ApcuDriver with ExpirationProvider support.
+ * Handles basic CRUD cache operations for the ApcuDriver.
  *
  * This class is responsible ONLY for get, set, has, delete, and clear operations,
- * following the Single Responsibility Principle. It uses ExpirationProvider
- * for TTL management following the Strategy Pattern.
- *
- * Design Patterns Applied:
- * - Strategy Pattern: ExpirationProvider for TTL management
- * - Single Responsibility: Handles only CRUD operations
- * - Dependency Injection: All dependencies injected via constructor
+ * adhering to the Single Responsibility Principle. It internally uses the
+ * ExpirationProvider to calculate TTLs, following the Strategy Pattern.
  *
  * @category  Cache
  *
@@ -35,16 +29,14 @@ use KaririCode\Cache\Validation\Trait\CacheValueValidationTrait;
 final class ApcuCrudOperations
 {
     use SerializationTrait;
-    use CacheKeyValidationTrait;
-    use CacheValueValidationTrait;
+
+    private readonly ValidationService $validator;
 
     /**
-     * Constructor applying Dependency Injection pattern.
-     *
-     * @param ApcuConfig $config Configuration settings for APCu
-     * @param ApcuErrorHandler $errorHandler Error handling and retry logic
-     * @param ApcuMonitoringService $monitoringService Performance monitoring
-     * @param ExpirationProvider $expirationProvider Strategy for TTL management
+     * @param ApcuConfig $config configuration settings for APCu
+     * @param ApcuErrorHandler $errorHandler error handling and retry logic
+     * @param ApcuMonitoringService $monitoringService performance monitoring
+     * @param ExpirationProvider $expirationProvider strategy for TTL management
      */
     public function __construct(
         private readonly ApcuConfig $config,
@@ -52,20 +44,22 @@ final class ApcuCrudOperations
         private readonly ApcuMonitoringService $monitoringService,
         private readonly ExpirationProvider $expirationProvider
     ) {
+        // In a future refactor, this could be injected instead of instantiated.
+        $this->validator = new ValidationService();
     }
 
     /**
      * Retrieves a cache item from APCu.
      *
-     * @param string $key The cache key to retrieve
+     * @param string $key the cache key to retrieve
      *
      * @throws CacheException if the operation fails
      *
-     * @return mixed The cached value or null if not found
+     * @return mixed the cached value or null if not found
      */
     public function get(string $key): mixed
     {
-        $this->validateKey($key);
+        $this->validator->validateKey($key);
 
         return $this->errorHandler->executeWithRetry(
             fn () => $this->performGet($key),
@@ -75,25 +69,22 @@ final class ApcuCrudOperations
     }
 
     /**
-     * Stores a cache item in APCu with TTL support.
+     * Stores a cache item in APCu, calculating the TTL internally.
      *
-     * @param string $key The cache key
-     * @param mixed $value The value to cache
-     * @param \DateTimeInterface|null $expiration Optional expiration time
+     * @param string $key the cache key
+     * @param mixed $value the value to cache
      *
      * @throws CacheException if the operation fails
      *
      * @return bool true if the item was successfully stored
      */
-    public function set(string $key, mixed $value, ?\DateTimeInterface $expiration = null): bool
+    public function set(string $key, mixed $value): bool
     {
-        $this->validateKey($key);
-        $this->validateValue($value);
+        $this->validator->validateKey($key);
+        $this->validator->validateValue($value);
 
-        // Calculate expiration using ExpirationProvider if not provided
-        $finalExpiration = $expiration ?? $this->expirationProvider->calculateExpiration(
-            $this->expirationProvider->getTtlForKey($key)
-        );
+        // Calculate expiration using the provider's strategy.
+        $finalExpiration = $this->expirationProvider->calculateExpiration(null, $key, 'set');
 
         return (bool) $this->errorHandler->executeWithRetry(
             fn () => $this->performSet($key, $value, $finalExpiration),
@@ -105,7 +96,7 @@ final class ApcuCrudOperations
     /**
      * Checks if a cache item exists in APCu.
      *
-     * @param string $key The cache key to check
+     * @param string $key the cache key to check
      *
      * @throws CacheException if the operation fails
      *
@@ -113,7 +104,7 @@ final class ApcuCrudOperations
      */
     public function has(string $key): bool
     {
-        $this->validateKey($key);
+        $this->validator->validateKey($key);
 
         return (bool) $this->errorHandler->executeWithRetry(
             fn () => apcu_exists($this->config->keyPrefix . $key),
@@ -125,7 +116,7 @@ final class ApcuCrudOperations
     /**
      * Deletes a cache item from APCu.
      *
-     * @param string $key The cache key to delete
+     * @param string $key the cache key to delete
      *
      * @throws CacheException if the operation fails
      *
@@ -133,7 +124,7 @@ final class ApcuCrudOperations
      */
     public function delete(string $key): bool
     {
-        $this->validateKey($key);
+        $this->validator->validateKey($key);
 
         return (bool) $this->errorHandler->executeWithRetry(
             fn () => $this->performDelete($key),
@@ -188,7 +179,7 @@ final class ApcuCrudOperations
         $fullKey = $this->config->keyPrefix . $key;
         $serialized = $this->serialize($value);
 
-        // Calculate TTL in seconds
+        // Calculate TTL in seconds from the DateTime object.
         $ttl = $expiration ? max(0, $expiration->getTimestamp() - time()) : 0;
 
         $success = apcu_store($fullKey, $serialized, $ttl);
@@ -209,11 +200,11 @@ final class ApcuCrudOperations
     {
         $fullKey = $this->config->keyPrefix . $key;
 
-        // apcu_delete returns false if key doesn't exist, but we consider that success
-        $result = apcu_delete($fullKey);
+        // apcu_delete returns false if key doesn't exist, but for a clear
+        // cache operation, we consider that a success.
+        apcu_delete($fullKey);
 
-        // Record as successful operation regardless of whether key existed
-        $this->monitoringService->recordWrite();
+        $this->monitoringService->recordDelete();
 
         return true;
     }

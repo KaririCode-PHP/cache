@@ -61,11 +61,10 @@ interface DirectoryManager
     /* Creates a subdirectory path for a given cache key.
      *
      * @param string $key the cache key
-     * @param int $levels The number of directory levels to create
      *
      * @return string the full path for the cache file
      */
-    public function createSubdirectoryPath(string $key, int $levels = 2): string;
+    public function createSubdirectoryPath(string $key): string;
 
     /**
      * Gets a list of all cache files.

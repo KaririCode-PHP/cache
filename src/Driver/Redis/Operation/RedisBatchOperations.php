@@ -9,35 +9,51 @@ use KaririCode\Cache\Driver\Redis\Component\RedisConnectionManager;
 use KaririCode\Cache\Driver\Redis\Component\RedisErrorHandler;
 use KaririCode\Cache\Driver\Redis\Config\RedisConfig;
 use KaririCode\Cache\Serializer\Trait\SerializationTrait;
-use KaririCode\Cache\Validation\Trait\CacheKeyValidationTrait;
-use KaririCode\Cache\Validation\Trait\CacheValueValidationTrait;
+use KaririCode\Cache\Service\ValidationService;
 
 /**
- * Handles batch operations for Redis (multi-key operations).
- * SRP: This class is only responsible for multi-key operations.
- * Uses ExpirationProvider for TTL management - follows Strategy Pattern.
+ * Handles batch operations (get/set/delete multiple) for the RedisDriver.
+ *
+ * This class is solely responsible for multi-key operations, adhering to SRP.
+ * It internally uses the ExpirationProvider to calculate the appropriate TTL
+ * for batch-set operations and leverages Redis pipelines for efficiency.
+ *
+ * @category  Cache
+ *
+ * @author    Walmir Silva <walmir.silva@kariricode.org>
+ * @license   MIT
+ *
+ * @see       https://kariricode.org/
  */
 final class RedisBatchOperations
 {
     use SerializationTrait;
-    use CacheKeyValidationTrait;
-    use CacheValueValidationTrait;
 
-    private const MAX_BATCH_SIZE = 1000;
+    private readonly ValidationService $validator;
 
+    /**
+     * @param \Redis $redis the Redis client instance
+     * @param RedisConfig $config configuration settings
+     * @param RedisErrorHandler $errorHandler error handling and retry logic
+     * @param RedisConnectionManager $connectionManager connection health management
+     * @param ExpirationProvider $expirationProvider TTL calculation strategy
+     */
     public function __construct(
-        private \Redis $redis,
-        private RedisConfig $config,
-        private RedisErrorHandler $errorHandler,
-        private RedisConnectionManager $connectionManager,
+        private readonly \Redis $redis,
+        private readonly RedisConfig $config,
+        private readonly RedisErrorHandler $errorHandler,
+        private readonly RedisConnectionManager $connectionManager,
         private readonly ExpirationProvider $expirationProvider
     ) {
+        $this->validator = new ValidationService();
     }
 
     /**
-     * @param iterable<string> $keys
+     * Retrieves multiple items from the cache.
      *
-     * @return iterable<string, mixed>
+     * @param iterable<string> $keys a list of keys to retrieve
+     *
+     * @return iterable<string, mixed> a map of keys to their values
      */
     public function getMultiple(iterable $keys): iterable
     {
@@ -45,8 +61,7 @@ final class RedisBatchOperations
         if (empty($keyArray)) {
             return [];
         }
-
-        $this->validateKeys($keyArray);
+        $this->validator->validateKeys($keyArray);
 
         return $this->errorHandler->executeWithRetry(
             fn () => $this->performGetMultiple($keyArray),
@@ -56,20 +71,21 @@ final class RedisBatchOperations
     }
 
     /**
-     * @param iterable<string, mixed> $values
+     * Stores multiple items in the cache, calculating the TTL internally.
+     *
+     * @param iterable<string, mixed> $values a map of keys to their values
+     *
+     * @return bool true on success
      */
-    public function setMultiple(iterable $values, ?\DateTimeInterface $expiration = null): bool
+    public function setMultiple(iterable $values): bool
     {
         $valueArray = $this->normalizeToArray($values);
         if (empty($valueArray)) {
             return true;
         }
+        $this->validator->validateMultipleValues($valueArray);
 
-        $this->validateMultipleValues($valueArray);
-
-        $finalExpiration = $expiration ?? $this->expirationProvider->calculateExpiration(
-            $this->expirationProvider->getTtlForOperation('setMultiple')
-        );
+        $finalExpiration = $this->expirationProvider->calculateExpiration(null, null, 'setMultiple');
 
         return (bool) $this->errorHandler->executeWithRetry(
             fn () => $this->performSetMultiple($valueArray, $finalExpiration),
@@ -79,7 +95,11 @@ final class RedisBatchOperations
     }
 
     /**
-     * @param iterable<string> $keys
+     * Deletes multiple items from the cache.
+     *
+     * @param iterable<string> $keys a list of keys to delete
+     *
+     * @return bool true on success
      */
     public function deleteMultiple(iterable $keys): bool
     {
@@ -87,8 +107,7 @@ final class RedisBatchOperations
         if (empty($keyArray)) {
             return true;
         }
-
-        $this->validateKeys($keyArray);
+        $this->validator->validateKeys($keyArray);
 
         return (bool) $this->errorHandler->executeWithRetry(
             fn () => $this->performDeleteMultiple($keyArray),
@@ -115,7 +134,7 @@ final class RedisBatchOperations
         foreach ($keys as $index => $originalKey) {
             $value = $values[$index] ?? false;
             if (false !== $value) {
-                $result[$originalKey] = $value;
+                $result[$originalKey] = $this->unserialize($value);
             }
         }
 
@@ -152,7 +171,6 @@ final class RedisBatchOperations
     private function performDeleteMultiple(array $keys): bool
     {
         $prefixedKeys = array_map(fn (string $key) => $this->config->keyPrefix . $key, $keys);
-
         $deletedCount = $this->redis->del($prefixedKeys);
 
         return $deletedCount >= 0;
@@ -165,31 +183,6 @@ final class RedisBatchOperations
      */
     private function normalizeToArray(iterable $iterable): array
     {
-        if (is_array($iterable)) {
-            return $iterable;
-        }
-
-        return iterator_to_array($iterable);
-    }
-
-    /**
-     * @param array<string> $keys
-     */
-    private function validateKeys(array $keys): void
-    {
-        foreach ($keys as $key) {
-            $this->validateKey($key);
-        }
-    }
-
-    /**
-     * @param array<string, mixed> $values
-     */
-    private function validateMultipleValues(array $values): void
-    {
-        foreach ($values as $key => $value) {
-            $this->validateKey((string) $key);
-            $this->validateValue($value);
-        }
+        return is_array($iterable) ? $iterable : iterator_to_array($iterable);
     }
 }
