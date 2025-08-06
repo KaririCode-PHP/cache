@@ -7,78 +7,39 @@ namespace KaririCode\Cache\Config\DTO;
 use KaririCode\Contract\ImmutableValue;
 
 /**
- * DTO for cache features configuration with validation and defaults.
+ * Feature Configuration DTO.
  */
 final class FeatureConfig implements ImmutableValue
 {
-    public function __construct(
-        public readonly bool $stampedeProtection = true,
-        public readonly bool $metricsEnabled = true,
-        public readonly bool $slidingExpiration = false,
-        public readonly bool $eventsEnabled = true,
-        public readonly bool $psr14EventsEnabled = false,
-        public readonly bool $strictValidation = true
-    ) {
-    }
+    public readonly bool $stampedeProtection;
+    public readonly bool $metricsEnabled;
+    public readonly bool $eventsEnabled;
+    public readonly bool $strictValidation;
+    public readonly bool $compressionEnabled;
+    public readonly bool $asyncOperations;
+    public readonly bool $debugMode;
 
-    /**
-     * Create from configuration array with validation.
-     */
-    public static function fromArray(array $features): self
+    public function __construct(array $config = [])
     {
-        return new self(
-            stampedeProtection: (bool) ($features['stampede_protection'] ?? true),
-            metricsEnabled: (bool) ($features['metrics_enabled'] ?? true),
-            slidingExpiration: (bool) ($features['sliding_expiration'] ?? false),
-            eventsEnabled: (bool) ($features['events_enabled'] ?? true),
-            psr14EventsEnabled: (bool) ($features['psr14_events_enabled'] ?? false),
-            strictValidation: (bool) ($features['strict_validation'] ?? true)
-        );
+        $this->stampedeProtection = $config['stampede_protection'] ?? true;
+        $this->metricsEnabled = $config['metrics_enabled'] ?? true;
+        $this->eventsEnabled = $config['events_enabled'] ?? true;
+        $this->strictValidation = $config['strict_validation'] ?? true;
+        $this->compressionEnabled = $config['compression_enabled'] ?? true;
+        $this->asyncOperations = $config['async_operations'] ?? false;
+        $this->debugMode = $config['debug_mode'] ?? false;
     }
 
-    /**
-     * Convert to array for compatibility.
-     *
-     * @return array<string, bool>
-     */
     public function toArray(): array
     {
         return [
             'stampede_protection' => $this->stampedeProtection,
             'metrics_enabled' => $this->metricsEnabled,
-            'sliding_expiration' => $this->slidingExpiration,
             'events_enabled' => $this->eventsEnabled,
-            'psr14_events_enabled' => $this->psr14EventsEnabled,
             'strict_validation' => $this->strictValidation,
-        ];
-    }
-
-    /**
-     * Check if any monitoring features are enabled.
-     */
-    public function hasMonitoringEnabled(): bool
-    {
-        return $this->metricsEnabled || $this->eventsEnabled || $this->psr14EventsEnabled;
-    }
-
-    /**
-     * Check if any validation features are enabled.
-     */
-    public function hasValidationEnabled(): bool
-    {
-        return $this->strictValidation;
-    }
-
-    /**
-     * Get performance-related features.
-     *
-     * @return array<string, bool>
-     */
-    public function getPerformanceFeatures(): array
-    {
-        return [
-            'stampede_protection' => $this->stampedeProtection,
-            'sliding_expiration' => $this->slidingExpiration,
+            'compression_enabled' => $this->compressionEnabled,
+            'async_operations' => $this->asyncOperations,
+            'debug_mode' => $this->debugMode,
         ];
     }
 }

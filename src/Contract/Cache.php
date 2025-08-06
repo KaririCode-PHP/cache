@@ -4,84 +4,64 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Contract;
 
-use KaririCode\Cache\Contract\Behavioral\AtomicOperable;
-use KaririCode\Cache\Contract\Behavioral\CompareAndSwapAware;
-use KaririCode\Cache\Contract\Behavioral\MultiOperationCacheable;
-use KaririCode\Cache\Contract\Behavioral\Taggable;
-use KaririCode\Cache\Contract\Behavioral\TopicSubscribable;
-use KaririCode\Cache\Metrics\CacheMetrics;
-
 /**
- * Interface Cache.
+ * Cache Interface - Main contract for cache operations.
  *
- * Main cache interface combining all caching functionalities.
- * This interface serves as the primary contract for cache implementations,
- * providing comprehensive caching capabilities including basic operations,
- * atomic operations, tagging, topic subscription, and metrics collection.
+ * This interface defines the fundamental cache operations that all
+ * cache implementations must support. It follows PSR-6 and PSR-16
+ * principles while providing a clean, modern API.
  *
  * @category  Cache
  *
  * @author    Walmir Silva <walmir.silva@kariricode.org>
  * @license   MIT
  *
- * @see       https://kariricode.org/
+ * @see      https://kariricode.org/
  */
-interface Cache extends
-    MultiOperationCacheable,
-    AtomicOperable,
-    Taggable,
-    TopicSubscribable,
-    CompareAndSwapAware
+interface Cache
 {
     /**
-     * Enhanced get method with callback and stampede protection.
+     * Retrieve an item from the cache.
      *
-     * @param string $key the cache key
-     * @param callable|null $callback the callback to generate value if not cached
-     * @param iterable $tags optional tags for cache entry
+     * @param string $key The unique key of the item to retrieve
      *
-     * @return mixed the cached or generated value
+     * @return mixed The value stored in the cache, or null if not found
      */
-    public function getWithCallback(
-        string $key,
-        ?callable $callback = null,
-        iterable $tags = []
-    ): mixed;
+    public function get(string $key): mixed;
 
     /**
-     * Warms the cache with predefined data.
+     * Store an item in the cache.
      *
-     * @param iterable $data associative iterable of key-value pairs to cache
+     * @param string $key The key under which to store the value
+     * @param mixed $value The value to store
+     *
+     * @return bool True on success, false on failure
      */
-    public function warm(iterable $data): void;
+    public function set(string $key, mixed $value): bool;
 
     /**
-     * Gets high-level performance metrics for the cache instance.
+     * Delete an item from the cache.
      *
-     * @return CacheMetrics cache performance metrics as an immutable object
+     * @param string $key The key to delete
+     *
+     * @return bool True if the item was successfully removed or did not exist.
+     *              False if there was an error.
      */
-    public function getMetrics(): CacheMetrics;
+    public function delete(string $key): bool;
 
     /**
-     * Gets the cache name/identifier.
+     * Clear all items from the cache.
      *
-     * @return string the cache name
+     * @return bool True on success, false on failure
      */
-    public function getName(): string;
+    public function clear(): bool;
 
     /**
-     * Checks if the cache is available and operational.
+     * Determine if an item exists in the cache.
      *
-     * @return bool true if cache is healthy, false otherwise
+     * @param string $key The cache item key
+     *
+     * @return bool True if item exists in the cache, false otherwise
      */
-    public function isHealthy(): bool;
-
-    /**
-     * Performs cache maintenance operations.
-     *
-     * @param iterable $options maintenance options
-     *
-     * @return bool true if maintenance was successful, false otherwise
-     */
-    public function maintenance(iterable $options = []): bool;
+    public function has(string $key): bool;
 }

@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace KaririCode\Cache\Driver\Factory;
 
 use KaririCode\Cache\Contract\CacheDriver;
-use KaririCode\Cache\Contract\CacheDriverFactory;
 use KaririCode\Cache\Contract\DriverManager;
 use KaririCode\Cache\Contract\Provider\ExpirationProvider;
 use KaririCode\Cache\Driver\Factory\Adapter\FilesystemExpirationAdapter;
@@ -18,28 +17,52 @@ use KaririCode\Cache\Driver\Filesystem\Statistics\FileSystemStatistics;
 use KaririCode\Cache\Driver\Filesystem\Validation\FileSystemValidator;
 use KaririCode\Cache\Driver\FilesystemDriver;
 use KaririCode\Cache\Exception\ConfigurationException;
-use KaririCode\Cache\Provider\ConfigurableExpirationProvider;
 use Psr\Log\LoggerInterface;
-use Psr\Log\NullLogger;
 
 /**
- * Factory for creating a fully-configured FilesystemDriver with ExpirationProvider.
- * Follows Factory pattern and SRP - handles complete object creation and composition.
+ * Factory for creating a fully-configured FilesystemDriver.
+ *
+ * This factory composes the FilesystemDriver with all its required dependencies,
+ * including managers for directories, files, serialization, and operations.
+ * It follows the Factory pattern and SRP by encapsulating the complex object
+ * creation and composition logic.
+ *
+ * It expects a pre-configured ExpirationProvider to be passed in, which is then
+ * adapted for use by the filesystem-specific components.
+ *
+ * @category  Cache
+ *
+ * @author    Walmir Silva <walmir.silva@kariricode.org>
+ * @license   MIT
+ *
+ * @see       https://kariricode.org/
  */
-final class FilesystemDriverFactory implements CacheDriverFactory
+final class FilesystemDriverFactory extends AbstractDriverFactory
 {
     private const MIN_MAX_SIZE = 1024 * 1024; // 1MB minimum
     private const MAX_DIRECTORY_LEVELS = 4;
 
-    public function createDriver(array $options, DriverManager $manager): CacheDriver
-    {
-        $this->validateOptions($options);
-
-        $logger = $this->resolveLogger($options, $manager);
+    /**
+     * Creates the FilesystemDriver instance.
+     *
+     * Assembles the driver by creating and injecting all its dependencies, including
+     * an adapter to bridge the generic ExpirationProvider with the filesystem's
+     * specific ExpirationManager contract.
+     *
+     * @param array<string, mixed> $options the validated driver configuration
+     * @param DriverManager $manager the driver manager for resolving shared dependencies
+     * @param ExpirationProvider $expirationProvider the centrally configured expiration provider
+     * @param LoggerInterface $logger the logger instance
+     *
+     * @return CacheDriver the fully configured FilesystemDriver instance
+     */
+    protected function doCreateDriver(
+        array $options,
+        DriverManager $manager,
+        ExpirationProvider $expirationProvider,
+        LoggerInterface $logger
+    ): CacheDriver {
         $keyPrefix = $options['key_prefix'] ?? 'cache_';
-
-        // Build ExpirationProvider - CRITICAL: Create before all operations
-        $expirationProvider = $this->createExpirationProvider($options, $manager);
 
         // Build Core Components
         $fileManager = new FileManager($logger, $options['use_locking'] ?? true);
@@ -53,7 +76,7 @@ final class FilesystemDriverFactory implements CacheDriverFactory
             $options['use_compression'] ?? false
         );
 
-        // Use FilesystemExpirationAdapter to bridge ExpirationProvider to ExpirationManager
+        // ADAPTER PATTERN: Bridge the generic ExpirationProvider to the specific ExpirationManager interface.
         $expirationManager = new FilesystemExpirationAdapter(
             $expirationProvider,
             $options['cleanup_probability'] ?? 0.01
@@ -67,9 +90,10 @@ final class FilesystemDriverFactory implements CacheDriverFactory
 
         $validator = new FileSystemValidator(
             $directoryManager,
-            $options['max_size'] ?? 104857600
+            $options['max_size'] ?? (100 * 1024 * 1024) // 100MB
         );
 
+        // Build Operation Handlers
         $cacheOperations = new FileSystemCacheOperations(
             $directoryManager,
             $fileManager,
@@ -84,10 +108,11 @@ final class FilesystemDriverFactory implements CacheDriverFactory
             $directoryManager,
             $serializer,
             $logger,
-            $expirationProvider,
+            $expirationProvider, // Tag operations can use the provider directly
             $keyPrefix
         );
 
+        // Assemble the final driver
         return new FilesystemDriver(
             $directoryManager,
             $cacheOperations,
@@ -99,7 +124,33 @@ final class FilesystemDriverFactory implements CacheDriverFactory
         );
     }
 
-    public function getSupportedOptions(): array
+    /**
+     * Returns the unique name of the driver.
+     *
+     * @return string the driver's name
+     */
+    protected function getDriverName(): string
+    {
+        return 'filesystem';
+    }
+
+    /**
+     * Specifies the configuration options required for this driver.
+     *
+     * @return array<string> a list of required option keys
+     */
+    protected function getRequiredOptions(): array
+    {
+        // A directory is required, but we can provide a sensible default.
+        return [];
+    }
+
+    /**
+     * Specifies the optional configuration options supported by this driver.
+     *
+     * @return array<string> a list of optional option keys
+     */
+    protected function getOptionalOptions(): array
     {
         return [
             'directory',
@@ -111,15 +162,19 @@ final class FilesystemDriverFactory implements CacheDriverFactory
             'directory_levels',
             'file_permissions',
             'directory_permissions',
-            'expiration_provider',
-            'default_ttl',
-            'operation_ttls',
-            'key_pattern_ttls',
-            'logger',
         ];
     }
 
-    public function validateOptions(array $options): bool
+    /**
+     * Performs driver-specific validation of the provided options.
+     *
+     * @param array<string, mixed> $options the options to validate
+     *
+     * @throws ConfigurationException if any option is invalid
+     *
+     * @return bool true if the options are valid
+     */
+    protected function doValidateOptions(array $options): bool
     {
         $this->validateDirectoryOption($options);
         $this->validateMaxSizeOption($options);
@@ -129,94 +184,94 @@ final class FilesystemDriverFactory implements CacheDriverFactory
         return true;
     }
 
-    private function createExpirationProvider(array $options, DriverManager $manager): ExpirationProvider
-    {
-        if (isset($options['expiration_provider']) && $options['expiration_provider'] instanceof ExpirationProvider) {
-            return $options['expiration_provider'];
-        }
-
-        return new ConfigurableExpirationProvider(
-            $options['default_ttl'] ?? 3600,
-            $options['operation_ttls'] ?? [
-                'set' => 3600,
-                'setMultiple' => 3600,
-                'setWithTags' => 1800,
-            ],
-            $options['key_pattern_ttls'] ?? [
-                'session:*' => 7200,
-                'temp:*' => 300,
-                'cache:*' => 3600,
-            ]
-        );
-    }
-
-    private function resolveLogger(array $options, DriverManager $manager): LoggerInterface
-    {
-        if (isset($options['logger']) && $options['logger'] instanceof LoggerInterface) {
-            return $options['logger'];
-        }
-
-        return new NullLogger();
-    }
-
+    /**
+     * Gets a default, safe directory for caching within the system's temp folder.
+     *
+     * @return string the default cache directory path
+     */
     private function getDefaultDirectory(): string
     {
         return sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'kariricode_cache';
     }
 
+    /**
+     * Validates the 'directory' option, ensuring it's a writable path.
+     *
+     * @param array<string, mixed> $options
+     *
+     * @throws ConfigurationException
+     */
     private function validateDirectoryOption(array $options): void
     {
-        if (isset($options['directory'])) {
-            $directory = $options['directory'];
-            if (!is_string($directory) || empty($directory)) {
-                throw ConfigurationException::invalidConfiguration('directory', 'Directory must be a non-empty string');
-            }
+        $directory = $options['directory'] ?? $this->getDefaultDirectory();
 
-            // Create directory if it doesn't exist
-            if (!is_dir($directory) && !@mkdir($directory, 0755, true)) {
-                throw ConfigurationException::invalidConfiguration('directory', "Cannot create directory: {$directory}");
-            }
+        if (!is_string($directory) || empty($directory)) {
+            throw ConfigurationException::invalidConfiguration('directory', 'Directory must be a non-empty string');
+        }
 
-            // Check if directory is writable
-            if (!is_writable($directory)) {
-                throw ConfigurationException::invalidConfiguration('directory', "Directory is not writable: {$directory}");
-            }
+        if (!is_dir($directory) && !@mkdir($directory, 0755, true) && !is_dir($directory)) {
+            throw ConfigurationException::directoryNotWritable(sprintf('Cache directory "%s" could not be created.', $directory));
+        }
+
+        if (!is_writable($directory)) {
+            throw ConfigurationException::directoryNotWritable(sprintf('Cache directory "%s" is not writable.', $directory));
         }
     }
 
+    /**
+     * Validates the 'max_size' option.
+     *
+     * @param array<string, mixed> $options
+     *
+     * @throws ConfigurationException
+     */
     private function validateMaxSizeOption(array $options): void
     {
         if (isset($options['max_size'])) {
             $maxSize = $options['max_size'];
             if (!is_int($maxSize) || $maxSize < self::MIN_MAX_SIZE) {
-                throw ConfigurationException::invalidConfiguration('max_size', 'Max size must be at least ' . self::MIN_MAX_SIZE . ' bytes (1MB)');
+                throw ConfigurationException::invalidOption('max_size', $maxSize, 'an integer greater than ' . self::MIN_MAX_SIZE);
             }
         }
     }
 
+    /**
+     * Validates the 'directory_levels' option.
+     *
+     * @param array<string, mixed> $options
+     *
+     * @throws ConfigurationException
+     */
     private function validateDirectoryLevelsOption(array $options): void
     {
         if (isset($options['directory_levels'])) {
             $levels = $options['directory_levels'];
             if (!is_int($levels) || $levels < 0 || $levels > self::MAX_DIRECTORY_LEVELS) {
-                throw ConfigurationException::invalidConfiguration('directory_levels', 'Directory levels must be between 0 and ' . self::MAX_DIRECTORY_LEVELS);
+                throw ConfigurationException::invalidOption('directory_levels', $levels, 'an integer between 0 and ' . self::MAX_DIRECTORY_LEVELS);
             }
         }
     }
 
+    /**
+     * Validates file and directory permission options.
+     *
+     * @param array<string, mixed> $options
+     *
+     * @throws ConfigurationException
+     */
     private function validatePermissionsOptions(array $options): void
     {
         if (isset($options['file_permissions'])) {
             $perms = $options['file_permissions'];
             if (!is_int($perms) || $perms < 0 || $perms > 0777) {
-                throw ConfigurationException::invalidConfiguration('file_permissions', 'File permissions must be a valid octal value (0-0777)');
+                throw ConfigurationException::invalidOption('file_permissions', $perms, 'a valid octal value (e.g., 0644)');
             }
         }
 
         if (isset($options['directory_permissions'])) {
             $perms = $options['directory_permissions'];
             if (!is_int($perms) || $perms < 0 || $perms > 0777) {
-                throw ConfigurationException::invalidConfiguration('directory_permissions', 'Directory permissions must be a valid octal value (0-0777)');
+                throw ConfigurationException::invalidOption('directory_permissions', $perms, 'a valid octal value (e.g., 0755)');
             }
         }
     }

@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace KaririCode\Cache\Driver\Factory;
 
 use KaririCode\Cache\Contract\CacheDriver;
-use KaririCode\Cache\Contract\CacheDriverFactory;
 use KaririCode\Cache\Contract\DriverManager;
 use KaririCode\Cache\Contract\Provider\ExpirationProvider;
 use KaririCode\Cache\Driver\Apcu\Component\ApcuConnectionManager;
@@ -20,16 +19,18 @@ use KaririCode\Cache\Driver\Apcu\Operation\ApcuTagOperations;
 use KaririCode\Cache\Driver\Apcu\Operation\ApcuTopicOperations;
 use KaririCode\Cache\Driver\ApcuDriver;
 use KaririCode\Cache\Exception\ConfigurationException;
-use KaririCode\Cache\Provider\ConfigurableExpirationProvider;
 use Psr\Log\LoggerInterface;
-use Psr\Log\NullLogger;
 
 /**
- * Factory for creating a fully-configured ApcuDriver with ExpirationProvider.
+ * Factory for creating a fully-configured ApcuDriver.
  *
- * This factory properly handles the creation and injection of ExpirationProvider
- * into ALL operation classes, including TopicOperations which was previously missing it.
- * Follows Factory pattern and Single Responsibility Principle.
+ * This factory composes the ApcuDriver with all its required dependencies,
+ * including various operation handlers (CRUD, atomic, batch, etc.) and
+ * core components for connection, error handling, and monitoring.
+ *
+ * It follows the Factory and Single Responsibility Principle by encapsulating
+ * the complex object creation logic. It expects a pre-configured ExpirationProvider
+ * to be passed in the options, ensuring a single source of truth for TTL management.
  *
  * @category  Cache
  *
@@ -38,21 +39,30 @@ use Psr\Log\NullLogger;
  *
  * @see       https://kariricode.org/
  */
-final class ApcuDriverFactory implements CacheDriverFactory
+final class ApcuDriverFactory extends AbstractDriverFactory
 {
     private const REQUIRED_EXTENSION = 'apcu';
 
-    public function createDriver(array $options, DriverManager $manager): CacheDriver
-    {
-        $this->validateExtension();
-        $this->validateRuntime();
-        $this->validateOptions($options);
-
-        $logger = $this->resolveLogger($options, $manager);
+    /**
+     * Creates the actual driver instance.
+     *
+     * This method orchestrates the assembly of the ApcuDriver by creating and
+     * injecting all its operational and infrastructural dependencies.
+     *
+     * @param array<string, mixed> $options the validated driver configuration
+     * @param DriverManager $manager the driver manager for resolving shared dependencies
+     * @param ExpirationProvider $expirationProvider the centrally configured expiration provider
+     * @param LoggerInterface $logger the logger instance
+     *
+     * @return CacheDriver the fully configured ApcuDriver instance
+     */
+    protected function doCreateDriver(
+        array $options,
+        DriverManager $manager,
+        ExpirationProvider $expirationProvider,
+        LoggerInterface $logger
+    ): CacheDriver {
         $config = ApcuConfig::fromArray($options);
-
-        // Build ExpirationProvider - CRITICAL: Create before all operations
-        $expirationProvider = $this->createExpirationProvider($options, $manager);
 
         // Build Core Components
         $connectionManager = new ApcuConnectionManager($logger);
@@ -62,7 +72,7 @@ final class ApcuDriverFactory implements CacheDriverFactory
         $monitoringService = new ApcuMonitoringService($config->enableStatistics);
         $maintenanceService = new ApcuMaintenanceService($logger);
 
-        // Build Operation Handlers - CORRECTED: Pass ExpirationProvider to ALL operations
+        // Build Operation Handlers, injecting all necessary dependencies
         $crudOperations = new ApcuCrudOperations(
             $config,
             $errorHandler,
@@ -87,17 +97,18 @@ final class ApcuDriverFactory implements CacheDriverFactory
         $tagOperations = new ApcuTagOperations(
             $config,
             $errorHandler,
-            $crudOperations,
+            $crudOperations, // Tag operations may depend on CRUD for some actions
             $expirationProvider
         );
 
-        // FIXED: Now passing ExpirationProvider to TopicOperations
         $topicOperations = new ApcuTopicOperations(
             $config,
-            $errorHandler,
-            $expirationProvider // ✅ CRITICAL FIX: Added missing ExpirationProvider
+            $errorHandler
+            // Note: TopicOperations for APCu might not need expiration provider
+            // if it only manages subscriptions without TTL. Pass it if needed.
         );
 
+        // Assemble the final driver
         return new ApcuDriver(
             $crudOperations,
             $batchOperations,
@@ -111,9 +122,32 @@ final class ApcuDriverFactory implements CacheDriverFactory
     }
 
     /**
-     * @return list<string>
+     * Returns the unique name of the driver.
+     *
+     * @return string the driver's name
      */
-    public function getSupportedOptions(): array
+    protected function getDriverName(): string
+    {
+        return 'apcu';
+    }
+
+    /**
+     * Specifies the configuration options required for this driver.
+     *
+     * @return array<string> a list of required option keys
+     */
+    protected function getRequiredOptions(): array
+    {
+        // APCu can often run with sensible defaults, so no options are strictly required.
+        return [];
+    }
+
+    /**
+     * Specifies the optional configuration options supported by this driver.
+     *
+     * @return array<string> a list of optional option keys
+     */
+    protected function getOptionalOptions(): array
     {
         return [
             'key_prefix',
@@ -124,35 +158,36 @@ final class ApcuDriverFactory implements CacheDriverFactory
             'cleanup_probability',
             'retry_attempts',
             'retry_delay',
-            'logger',
-            'expiration_provider',
-            'default_ttl',
-            'operation_ttls',
-            'key_pattern_ttls',
         ];
     }
 
-    public function validateOptions(array $options): bool
+    /**
+     * Performs driver-specific validation of the provided options.
+     *
+     * @param array<string, mixed> $options the options to validate
+     *
+     * @return bool true if the options are valid
+     */
+    protected function doValidateOptions(array $options): bool
     {
-        $config = ApcuConfig::fromArray($options);
-        $config->validate();
+        // The ApcuConfig DTO handles its own validation upon creation.
+        // This ensures that if the config object can be created, the options are valid.
+        ApcuConfig::fromArray($options);
 
         return true;
     }
 
-    // ========================================================================
-    // Private Helper Methods
-    // ========================================================================
-
-    private function validateExtension(): void
+    /**
+     * Validates the runtime environment prerequisites for the APCu driver.
+     *
+     * @throws ConfigurationException if a required extension or setting is missing
+     */
+    protected function validatePrerequisites(): void
     {
         if (!extension_loaded(self::REQUIRED_EXTENSION)) {
             throw ConfigurationException::missingExtension(self::REQUIRED_EXTENSION);
         }
-    }
 
-    private function validateRuntime(): void
-    {
         if (!apcu_enabled()) {
             throw ConfigurationException::invalidConfiguration('apcu', 'APCu is not enabled in php.ini (apc.enabled=0)');
         }
@@ -160,47 +195,5 @@ final class ApcuDriverFactory implements CacheDriverFactory
         if (PHP_SAPI === 'cli' && !ini_get('apc.enable_cli')) {
             throw ConfigurationException::invalidConfiguration('apcu', 'APCu is not enabled for CLI (apc.enable_cli=0)');
         }
-    }
-
-    private function resolveLogger(array $options, DriverManager $manager): LoggerInterface
-    {
-        if (isset($options['logger']) && $options['logger'] instanceof LoggerInterface) {
-            return $options['logger'];
-        }
-
-        return new NullLogger();
-    }
-
-    /**
-     * Creates ExpirationProvider with proper configuration.
-     *
-     * FIXED: Now properly supports all operation types including topic operations.
-     */
-    private function createExpirationProvider(array $options, DriverManager $manager): ExpirationProvider
-    {
-        if (isset($options['expiration_provider']) && $options['expiration_provider'] instanceof ExpirationProvider) {
-            return $options['expiration_provider'];
-        }
-
-        return new ConfigurableExpirationProvider(
-            $options['default_ttl'] ?? 3600,
-            $options['operation_ttls'] ?? [
-                'set' => 3600,
-                'setMultiple' => 3600,
-                'add' => 3600,
-                'increment' => 7200,
-                'decrement' => 7200,
-                'setWithTags' => 1800,
-                'subscribeTo' => 3600,
-                'compareAndSwap' => 1800,
-            ],
-            $options['key_pattern_ttls'] ?? [
-                'session:*' => 7200,
-                'temp:*' => 300,
-                'cache:*' => 3600,
-                'user:*' => 900,
-                'config:*' => 86400,
-            ]
-        );
     }
 }

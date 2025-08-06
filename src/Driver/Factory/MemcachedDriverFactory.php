@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace KaririCode\Cache\Driver\Factory;
 
 use KaririCode\Cache\Contract\CacheDriver;
-use KaririCode\Cache\Contract\CacheDriverFactory;
 use KaririCode\Cache\Contract\DriverManager;
 use KaririCode\Cache\Contract\Provider\ExpirationProvider;
 use KaririCode\Cache\Driver\Memcached\Component\MemcachedConnectionManager;
@@ -18,40 +17,59 @@ use KaririCode\Cache\Driver\Memcached\Operation\MemcachedCrudOperations;
 use KaririCode\Cache\Driver\Memcached\Operation\MemcachedTagOperations;
 use KaririCode\Cache\Driver\MemcachedDriver;
 use KaririCode\Cache\Exception\ConfigurationException;
-use KaririCode\Cache\Provider\ConfigurableExpirationProvider;
 use Psr\Log\LoggerInterface;
-use Psr\Log\NullLogger;
 
 /**
- * Factory for creating a fully-configured MemcachedDriver with ExpirationProvider.
- * Follows Factory pattern and SRP - handles complete object creation and composition.
+ * Factory for creating a fully-configured MemcachedDriver.
+ *
+ * This factory composes the MemcachedDriver with all its required dependencies.
+ * It handles the instantiation and configuration of the underlying Memcached
+ * client and all specialized operation handlers.
+ *
+ * It adheres to the AbstractDriverFactory contract, expecting a pre-configured
+ * ExpirationProvider to be passed in, ensuring consistent TTL management.
+ *
+ * @category  Cache
+ *
+ * @author    Walmir Silva <walmir.silva@kariricode.org>
+ * @license   MIT
+ *
+ * @see       https://kariricode.org/
  */
-final class MemcachedDriverFactory implements CacheDriverFactory
+final class MemcachedDriverFactory extends AbstractDriverFactory
 {
     private const REQUIRED_EXTENSION = 'memcached';
-    private const MIN_PORT = 1;
-    private const MAX_PORT = 65535;
 
-    public function createDriver(array $options, DriverManager $manager): CacheDriver
-    {
-        $this->validateExtension();
-        $this->validateOptions($options);
-
-        $logger = $this->resolveLogger($options, $manager);
+    /**
+     * Creates the MemcachedDriver instance.
+     *
+     * Assembles the MemcachedDriver by creating and injecting all its dependencies,
+     * including the Memcached client, connection manager, and operation handlers.
+     *
+     * @param array<string, mixed> $options the validated driver configuration
+     * @param DriverManager $manager the driver manager for resolving shared dependencies
+     * @param ExpirationProvider $expirationProvider the centrally configured expiration provider
+     * @param LoggerInterface $logger the logger instance
+     *
+     * @return CacheDriver the fully configured MemcachedDriver instance
+     */
+    protected function doCreateDriver(
+        array $options,
+        DriverManager $manager,
+        ExpirationProvider $expirationProvider,
+        LoggerInterface $logger
+    ): CacheDriver {
         $config = MemcachedConfig::fromArray($options);
-
-        // Build ExpirationProvider - CRITICAL: Create before all operations
-        $expirationProvider = $this->createExpirationProvider($options, $manager);
 
         // Build Core Components
         $memcached = $this->createMemcachedInstance($config);
         $connectionManager = new MemcachedConnectionManager($memcached, $config, $logger);
         $connectionManager->ensureConnection();
 
-        $errorHandler = new MemcachedErrorHandler($logger, $config->retryAttempts, $config->retryDelay);
+        $errorHandler = new MemcachedErrorHandler($logger);
         $monitoringService = new MemcachedMonitoringService($memcached, $logger);
 
-        // Build Operation Handlers - CORRECTED: Pass ExpirationProvider to ALL operations
+        // Build Operation Handlers, injecting the ExpirationProvider
         $crudOperations = new MemcachedCrudOperations(
             $memcached,
             $config,
@@ -88,6 +106,7 @@ final class MemcachedDriverFactory implements CacheDriverFactory
             $expirationProvider
         );
 
+        // Assemble the final driver
         return new MemcachedDriver(
             $crudOperations,
             $batchOperations,
@@ -99,149 +118,97 @@ final class MemcachedDriverFactory implements CacheDriverFactory
         );
     }
 
-    public function getSupportedOptions(): array
+    /**
+     * Returns the unique name of the driver.
+     *
+     * @return string the driver's name
+     */
+    protected function getDriverName(): string
+    {
+        return 'memcached';
+    }
+
+    /**
+     * Specifies the configuration options required for this driver.
+     *
+     * @return array<string> a list of required option keys
+     */
+    protected function getRequiredOptions(): array
+    {
+        // A server list is technically required but can be defaulted.
+        return [];
+    }
+
+    /**
+     * Specifies the optional configuration options supported by this driver.
+     *
+     * @return array<string> a list of optional option keys
+     */
+    protected function getOptionalOptions(): array
     {
         return [
             'servers', 'persistent_id', 'username', 'password',
-            'compression', 'serializer', 'binary_protocol',
-            'consistent_hashing', 'connect_timeout', 'poll_timeout',
-            'recv_timeout', 'send_timeout', 'tcp_nodelay',
-            'retry_attempts', 'retry_delay', 'key_prefix',
-            'expiration_provider', 'default_ttl', 'operation_ttls',
-            'key_pattern_ttls', 'logger',
+            'compression', 'serializer', 'key_prefix', 'options',
+            'connect_timeout', 'poll_timeout', 'recv_timeout', 'send_timeout',
+            'sasl_auth',
         ];
     }
 
-    public function validateOptions(array $options): bool
+    /**
+     * Performs driver-specific validation of the provided options.
+     *
+     * @param array<string, mixed> $options the options to validate
+     *
+     * @return bool true if the options are valid
+     */
+    protected function doValidateOptions(array $options): bool
     {
-        $this->validateServerOptions($options);
-        $this->validatePortOptions($options);
-        $this->validateTimeoutOptions($options);
-        $this->validateSerializerOption($options);
-        $this->validateAuthenticationOptions($options);
+        // Validation is handled by the MemcachedConfig DTO.
+        MemcachedConfig::fromArray($options);
 
         return true;
     }
 
-    private function validateExtension(): void
+    /**
+     * Validates the runtime environment prerequisites for the Memcached driver.
+     *
+     * @throws ConfigurationException if the required 'memcached' extension is not loaded
+     */
+    protected function validatePrerequisites(): void
     {
         if (!extension_loaded(self::REQUIRED_EXTENSION)) {
             throw ConfigurationException::missingExtension(self::REQUIRED_EXTENSION);
         }
     }
 
+    /**
+     * Creates and configures a new \Memcached instance based on the config DTO.
+     *
+     * @param MemcachedConfig $config the configuration DTO
+     *
+     * @return \Memcached the configured client instance
+     */
     private function createMemcachedInstance(MemcachedConfig $config): \Memcached
     {
         $memcached = new \Memcached($config->persistentId ?? '');
 
-        // Configure Memcached options
+        // Apply all configuration options from the DTO
         $memcached->setOption(\Memcached::OPT_COMPRESSION, $config->compression);
         $memcached->setOption(\Memcached::OPT_SERIALIZER, $config->getSerializerOption());
-        $memcached->setOption(\Memcached::OPT_BINARY_PROTOCOL, $config->binaryProtocol);
-        $memcached->setOption(\Memcached::OPT_DISTRIBUTION, \Memcached::DISTRIBUTION_CONSISTENT);
-        $memcached->setOption(\Memcached::OPT_LIBKETAMA_COMPATIBLE, true);
-
-        if ($config->tcpNoDelay) {
-            $memcached->setOption(\Memcached::OPT_TCP_NODELAY, true);
-        }
-
-        // Configure timeouts
+        $memcached->setOption(\Memcached::OPT_PREFIX_KEY, $config->keyPrefix);
         $memcached->setOption(\Memcached::OPT_CONNECT_TIMEOUT, $config->connectTimeout);
         $memcached->setOption(\Memcached::OPT_POLL_TIMEOUT, $config->pollTimeout);
         $memcached->setOption(\Memcached::OPT_RECV_TIMEOUT, $config->recvTimeout);
         $memcached->setOption(\Memcached::OPT_SEND_TIMEOUT, $config->sendTimeout);
 
+        foreach ($config->options as $key => $value) {
+            $memcached->setOption($key, $value);
+        }
+
+        if ($config->saslAuth && $config->username && $config->password) {
+            $memcached->setSaslAuthData($config->username, $config->password);
+        }
+
         return $memcached;
-    }
-
-    private function createExpirationProvider(array $options, DriverManager $manager): ExpirationProvider
-    {
-        if (isset($options['expiration_provider']) && $options['expiration_provider'] instanceof ExpirationProvider) {
-            return $options['expiration_provider'];
-        }
-
-        return new ConfigurableExpirationProvider(
-            $options['default_ttl'] ?? 3600,
-            $options['operation_ttls'] ?? [
-                'set' => 3600,
-                'setMultiple' => 3600,
-                'add' => 3600,
-                'increment' => 7200,
-                'decrement' => 7200,
-                'setWithTags' => 1800,
-                'compareAndSwap' => 1800,
-            ],
-            $options['key_pattern_ttls'] ?? [
-                'session:*' => 7200,
-                'api:*' => 1800,
-                'temp:*' => 300,
-                'user:*' => 900,
-            ]
-        );
-    }
-
-    private function resolveLogger(array $options, DriverManager $manager): LoggerInterface
-    {
-        if (isset($options['logger']) && $options['logger'] instanceof LoggerInterface) {
-            return $options['logger'];
-        }
-
-        return new NullLogger();
-    }
-
-    private function validateServerOptions(array $options): void
-    {
-        if (isset($options['servers']) && !is_array($options['servers'])) {
-            throw ConfigurationException::invalidConfiguration('servers', 'Servers must be an array');
-        }
-    }
-
-    private function validatePortOptions(array $options): void
-    {
-        if (isset($options['servers']) && is_array($options['servers'])) {
-            foreach ($options['servers'] as $server) {
-                if (isset($server['port'])) {
-                    $port = $server['port'];
-                    if (!is_int($port) || $port < self::MIN_PORT || $port > self::MAX_PORT) {
-                        throw ConfigurationException::invalidConfiguration('port', 'Port must be between ' . self::MIN_PORT . ' and ' . self::MAX_PORT);
-                    }
-                }
-            }
-        }
-    }
-
-    private function validateTimeoutOptions(array $options): void
-    {
-        $timeoutOptions = ['connect_timeout', 'poll_timeout', 'recv_timeout', 'send_timeout'];
-        foreach ($timeoutOptions as $option) {
-            if (isset($options[$option])) {
-                $value = $options[$option];
-                if (!is_int($value) || $value < 1) {
-                    throw ConfigurationException::invalidConfiguration($option, ucfirst($option) . ' must be a positive integer (milliseconds)');
-                }
-            }
-        }
-    }
-
-    private function validateSerializerOption(array $options): void
-    {
-        if (isset($options['serializer'])) {
-            $valid = ['php', 'igbinary', 'json'];
-            if (!is_string($options['serializer']) || !in_array($options['serializer'], $valid, true)) {
-                throw ConfigurationException::invalidConfiguration('serializer', 'Serializer must be one of: ' . implode(', ', $valid));
-            }
-        }
-    }
-
-    private function validateAuthenticationOptions(array $options): void
-    {
-        if (!empty($options['sasl_auth'])) {
-            if (empty($options['username']) || !is_string($options['username'])) {
-                throw ConfigurationException::invalidConfiguration('username', 'Username is required when SASL authentication is enabled');
-            }
-            if (empty($options['password']) || !is_string($options['password'])) {
-                throw ConfigurationException::invalidConfiguration('password', 'Password is required when SASL authentication is enabled');
-            }
-        }
     }
 }

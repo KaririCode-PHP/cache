@@ -7,13 +7,34 @@ namespace KaririCode\Cache\Config;
 use KaririCode\Cache\Contract\CacheDriver;
 use KaririCode\Cache\Contract\CacheDriverFactory;
 use KaririCode\Cache\Contract\CacheSerializer;
-use KaririCode\Cache\Contract\CacheTransactionManager;
 use KaririCode\Cache\Contract\DriverManager as DriverManagerContract;
+use KaririCode\Cache\Driver\Factory\ApcuDriverFactory;
+use KaririCode\Cache\Driver\Factory\ArrayDriverFactory;
+use KaririCode\Cache\Driver\Factory\FilesystemDriverFactory;
+use KaririCode\Cache\Driver\Factory\LayeredDriverFactory;
+use KaririCode\Cache\Driver\Factory\MemcachedDriverFactory;
+use KaririCode\Cache\Driver\Factory\RedisDriverFactory;
 use KaririCode\Cache\Exception\ConfigurationException;
 use KaririCode\Cache\Serializer\NativeSerializer;
 
 /**
- * Complete implementation of DriverManager.
+ * Driver Manager - Factory Pattern for Cache Drivers.
+ *
+ * This class manages the creation and configuration of cache drivers,
+ * maintaining a registry of driver factories and providing a unified
+ * interface for driver instantiation.
+ *
+ * Design Patterns:
+ * - Factory Pattern: Creates drivers through registered factories
+ * - Registry Pattern: Maintains driver factory registry
+ * - Strategy Pattern: Different drivers for different needs
+ *
+ * @category  Cache
+ *
+ * @author    Walmir Silva <walmir.silva@kariricode.org>
+ * @license   MIT
+ *
+ * @see      https://kariricode.org/
  */
 final class DriverManager implements DriverManagerContract
 {
@@ -24,7 +45,6 @@ final class DriverManager implements DriverManagerContract
     private array $driverOptions = [];
 
     private ?CacheSerializer $serializer = null;
-    private ?CacheTransactionManager $transactionManager = null;
 
     public function __construct()
     {
@@ -37,6 +57,7 @@ final class DriverManager implements DriverManagerContract
         if (!is_subclass_of($factoryClass, CacheDriverFactory::class)) {
             throw ConfigurationException::invalidFactory($driver, $factoryClass, CacheDriverFactory::class);
         }
+
         $this->factories[$driver] = $factoryClass;
     }
 
@@ -62,7 +83,6 @@ final class DriverManager implements DriverManagerContract
 
         $mergedOptions = array_merge($this->getDriverOptions($driver), $options);
 
-        // Validate options
         if (!$factory->validateOptions($mergedOptions)) {
             throw ConfigurationException::invalidConfiguration($driver, 'Invalid driver options');
         }
@@ -80,16 +100,6 @@ final class DriverManager implements DriverManagerContract
         return $this->serializer;
     }
 
-    public function setTransactionManager(CacheTransactionManager $transactionManager): void
-    {
-        $this->transactionManager = $transactionManager;
-    }
-
-    public function getTransactionManager(): ?CacheTransactionManager
-    {
-        return $this->transactionManager;
-    }
-
     /**
      * @return array<string>
      */
@@ -103,14 +113,31 @@ final class DriverManager implements DriverManagerContract
         return isset($this->factories[$driver]);
     }
 
+    /**
+     * Get supported options for a specific driver.
+     */
+    public function getSupportedOptions(string $driver): array
+    {
+        if (!isset($this->factories[$driver])) {
+            throw ConfigurationException::missingDriver($driver);
+        }
+
+        $factoryClass = $this->factories[$driver];
+        /** @var CacheDriverFactory $factory */
+        $factory = new $factoryClass();
+
+        return $factory->getSupportedOptions();
+    }
+
     private function registerDefaultFactories(): void
     {
         $defaultFactories = [
-            'redis' => 'KaririCode\Cache\Driver\Factory\RedisDriverFactory',
-            'memcached' => 'KaririCode\Cache\Driver\Factory\MemcachedDriverFactory',
-            'apcu' => 'KaririCode\Cache\Driver\Factory\ApcuDriverFactory',
-            'filesystem' => 'KaririCode\Cache\Driver\Factory\FilesystemDriverFactory',
-            'array' => 'KaririCode\Cache\Driver\Factory\ArrayDriverFactory',
+            'redis' => RedisDriverFactory::class,
+            'memcached' => MemcachedDriverFactory::class,
+            'apcu' => ApcuDriverFactory::class,
+            'filesystem' => FilesystemDriverFactory::class,
+            'array' => ArrayDriverFactory::class,
+            'layered' => LayeredDriverFactory::class,
         ];
 
         foreach ($defaultFactories as $name => $factory) {

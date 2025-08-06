@@ -21,18 +21,21 @@ namespace KaririCode\Cache\Contract;
 interface DriverManager
 {
     /**
+     * Creates a cache driver instance.
+     *
+     * @param string $driver the name of the driver
+     * @param array $options the configuration options for the driver
+     *
+     * @return CacheDriver the created cache driver instance
+     */
+    public function createDriver(string $driver, array $options = []): CacheDriver;
+
+    /**
      * Gets the serializer instance.
      *
      * @return CacheSerializer|null the cache serializer instance or null if not set
      */
     public function getSerializer(): ?CacheSerializer;
-
-    /**
-     * Gets the transaction manager instance.
-     *
-     * @return CacheTransactionManager|null the transaction manager instance or null if not set
-     */
-    public function getTransactionManager(): ?CacheTransactionManager;
 
     /**
      * Gets driver-specific options.

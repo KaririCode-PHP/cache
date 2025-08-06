@@ -5,43 +5,68 @@ declare(strict_types=1);
 namespace KaririCode\Cache\Driver\Factory;
 
 use KaririCode\Cache\Contract\CacheDriver;
-use KaririCode\Cache\Contract\CacheDriverFactory;
 use KaririCode\Cache\Contract\DriverManager;
 use KaririCode\Cache\Contract\Provider\ExpirationProvider;
 use KaririCode\Cache\Driver\LayeredDriver;
 use KaririCode\Cache\Exception\ConfigurationException;
-use KaririCode\Cache\Provider\ConfigurableExpirationProvider;
+use Psr\Log\LoggerInterface;
 
 /**
- * Factory for creating LayeredDriver with multiple cache layers.
- * Each layer can have different drivers (APCu -> Redis -> Filesystem).
+ * Factory for creating a LayeredDriver.
+ *
+ * This factory constructs a layered (or hierarchical) cache driver, which is
+ * composed of multiple underlying cache drivers. It orchestrates the creation of
+ * each layer's driver, ensuring that the centrally-configured ExpirationProvider
+ * is propagated to all of them for consistent TTL behavior.
+ *
+ * @category  Cache
+ *
+ * @author    Walmir Silva <walmir.silva@kariricode.org>
+ * @license   MIT
+ *
+ * @see       https://kariricode.org/
  */
-final class LayeredDriverFactory implements CacheDriverFactory
+final class LayeredDriverFactory extends AbstractDriverFactory
 {
-    public function createDriver(array $options, DriverManager $manager): CacheDriver
-    {
-        $this->validateOptions($options);
-
-        // Build ExpirationProvider - CRITICAL: Create before all layers
-        $expirationProvider = $this->createExpirationProvider($options, $manager);
-
+    /**
+     * Creates the LayeredDriver instance.
+     *
+     * This method iterates through the layer configurations, uses the DriverManager
+     * to create an instance of each sub-driver, and then assembles them into
+     * a single LayeredDriver.
+     *
+     * @param array<string, mixed> $options the validated driver configuration
+     * @param DriverManager $manager the driver manager for creating layer instances
+     * @param ExpirationProvider $expirationProvider the centrally configured expiration provider
+     * @param LoggerInterface $logger the logger instance
+     *
+     * @return CacheDriver the fully configured LayeredDriver instance
+     */
+    protected function doCreateDriver(
+        array $options,
+        DriverManager $manager,
+        ExpirationProvider $expirationProvider,
+        LoggerInterface $logger
+    ): CacheDriver {
         $layers = [];
         foreach ($options['layers'] ?? [] as $layerConfig) {
+            // IMPORTANT: Inject the received ExpirationProvider into each layer's configuration.
+            // This ensures all layers share the exact same TTL strategy.
             $driverOptions = array_merge(
                 $layerConfig['config'] ?? [],
                 ['expiration_provider' => $expirationProvider]
             );
 
-            $layer = $manager->createDriver($layerConfig['driver'], $driverOptions);
+            $layerDriver = $manager->createDriver($layerConfig['driver'], $driverOptions);
             $priority = $layerConfig['priority'] ?? 100;
 
             $layers[] = [
-                'driver' => $layer,
+                'driver' => $layerDriver,
                 'priority' => $priority,
             ];
         }
 
-        // Sort layers by priority (lower number = higher priority)
+        // Sort layers by priority (lower number = higher priority/faster cache)
         usort($layers, fn ($a, $b) => $a['priority'] <=> $b['priority']);
 
         return new LayeredDriver(
@@ -50,25 +75,39 @@ final class LayeredDriverFactory implements CacheDriverFactory
         );
     }
 
-    public function getSupportedOptions(): array
+    /**
+     * Returns the unique name of the driver.
+     *
+     * @return string the driver's name
+     */
+    protected function getDriverName(): string
     {
-        return [
-            'layers',
-            'expiration_provider',
-            'default_ttl',
-            'operation_ttls',
-            'key_pattern_ttls',
-        ];
+        return 'layered';
     }
 
-    public function validateOptions(array $options): bool
+    /**
+     * Specifies the configuration options required for this driver.
+     *
+     * @return array<string> a list of required option keys
+     */
+    protected function getRequiredOptions(): array
     {
-        if (!isset($options['layers']) || !is_array($options['layers'])) {
-            throw ConfigurationException::invalidConfiguration('layers', 'Layers configuration is required and must be an array');
-        }
+        return ['layers'];
+    }
 
+    /**
+     * Performs driver-specific validation of the provided options.
+     *
+     * @param array<string, mixed> $options the options to validate
+     *
+     * @throws ConfigurationException if the configuration is invalid
+     *
+     * @return bool true if the options are valid
+     */
+    protected function doValidateOptions(array $options): bool
+    {
         if (empty($options['layers'])) {
-            throw ConfigurationException::invalidConfiguration('layers', 'At least one layer must be configured');
+            throw ConfigurationException::invalidConfiguration('layers', 'At least one layer must be configured for a layered cache');
         }
 
         foreach ($options['layers'] as $index => $layer) {
@@ -76,36 +115,11 @@ final class LayeredDriverFactory implements CacheDriverFactory
                 throw ConfigurationException::invalidConfiguration("layers[{$index}]", 'Layer configuration must be an array');
             }
 
-            if (!isset($layer['driver']) || !is_string($layer['driver'])) {
-                throw ConfigurationException::invalidConfiguration("layers[{$index}].driver", 'Layer must have a valid driver name');
+            if (empty($layer['driver']) || !is_string($layer['driver'])) {
+                throw ConfigurationException::invalidConfiguration("layers[{$index}].driver", 'Each layer must specify a valid driver name');
             }
         }
 
         return true;
-    }
-
-    private function createExpirationProvider(array $options, DriverManager $manager): ExpirationProvider
-    {
-        if (isset($options['expiration_provider']) && $options['expiration_provider'] instanceof ExpirationProvider) {
-            return $options['expiration_provider'];
-        }
-
-        return new ConfigurableExpirationProvider(
-            $options['default_ttl'] ?? 3600,
-            $options['operation_ttls'] ?? [
-                'set' => 3600,
-                'setMultiple' => 3600,
-                'add' => 3600,
-                'increment' => 7200,
-                'decrement' => 7200,
-                'setWithTags' => 1800,
-            ],
-            $options['key_pattern_ttls'] ?? [
-                'session:*' => 7200,
-                'api:*' => 1800,
-                'temp:*' => 300,
-                'user:*' => 900,
-            ]
-        );
     }
 }

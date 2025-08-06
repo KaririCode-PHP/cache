@@ -16,11 +16,13 @@ final class ConfigurationException extends AbstractException
     private const CODE_FACTORY_NOT_FOUND = 1222;
     private const CODE_INVALID_FACTORY = 1223;
     private const CODE_MISSING_EXTENSION = 1224;
-    private const CODE_INVALID_OPTION = 1225;
-    private const CODE_DIRECTORY_NOT_WRITABLE = 1226;
-    private const CODE_INVALID_HOST = 1227;
-    private const CODE_INVALID_PORT = 1228;
-    private const CODE_CONNECTION_TIMEOUT = 1229;
+    private const CODE_MISSING_STORE = 1225;
+    private const CODE_MISSING_CONFIGURATION = 1226;
+    private const CODE_INVALID_OPTION = 1227;
+    private const CODE_DIRECTORY_NOT_WRITABLE = 1228;
+    private const CODE_INVALID_HOST = 1229;
+    private const CODE_INVALID_PORT = 1230;
+    private const CODE_CONNECTION_TIMEOUT = 1231;
 
     public static function missingDriver(string $driver): static
     {
@@ -64,6 +66,24 @@ final class ConfigurationException extends AbstractException
             self::CODE_MISSING_EXTENSION,
             'MISSING_EXTENSION',
             "Required PHP extension '{$extension}' is not loaded"
+        );
+    }
+
+    public static function missingStore(string $name): static
+    {
+        return static::createException(
+            self::CODE_MISSING_STORE,
+            'MISSING_STORE',
+            "Cache store '{$name}' is not configured"
+        );
+    }
+
+    public static function missingConfiguration(string $reason): static
+    {
+        return static::createException(
+            self::CODE_MISSING_CONFIGURATION,
+            'MISSING_CONFIGURATION',
+            $reason
         );
     }
 

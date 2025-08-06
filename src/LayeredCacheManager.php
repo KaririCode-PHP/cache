@@ -7,56 +7,51 @@ namespace KaririCode\Cache;
 use KaririCode\Cache\Contract\Behavioral\AtomicOperable;
 use KaririCode\Cache\Contract\Behavioral\CompareAndSwapAware;
 use KaririCode\Cache\Contract\Behavioral\Maintainable;
-use KaririCode\Cache\Contract\Behavioral\Taggable;
 use KaririCode\Cache\Contract\Behavioral\TaggablePool;
 use KaririCode\Cache\Contract\Behavioral\TopicSubscribable;
-use KaririCode\Cache\Contract\CacheItem as CacheItemContract;
-use KaririCode\Cache\Contract\CacheItemPool;
 use KaririCode\Cache\Contract\LayeredCache;
 use KaririCode\Cache\Item\CacheItem;
-use KaririCode\Cache\Validation\Trait\CacheKeyValidationTrait;
-use KaririCode\Cache\Validation\Trait\InputNormalizationTrait;
-use KaririCode\Cache\Validation\Trait\TagValidationTrait;
-use KaririCode\Cache\Validation\Trait\TopicValidationTrait;
-use KaririCode\Cache\ValueObject\Tag;
+use KaririCode\Cache\Service\ValidationService;
+use KaririCode\Cache\ValueObject\CircuitBreakerState;
 use Psr\Cache\CacheItemInterface;
+use Psr\Cache\CacheItemPoolInterface;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
 
+/**
+ * Manages a prioritized hierarchy of cache pools (layers).
+ *
+ * Implements advanced strategies like cache promotion (moving hot data to faster layers)
+ * and a Circuit Breaker pattern to automatically bypass failing layers, ensuring resilience.
+ */
 final class LayeredCacheManager implements LayeredCache
 {
-    use InputNormalizationTrait;
-    use CacheKeyValidationTrait;
-    use TagValidationTrait;
-    use TopicValidationTrait;
-
-    /** @var array<int, CacheItemPool> Ordered cache layers by priority */
+    /** @var array<int, CacheItemPoolInterface> */
     private array $layers = [];
 
-    /** @var array<int, array{failures: int, last_failure: float|null, state: string}> Circuit breaker state per layer */
+    /** @var array<int, CircuitBreakerState> */
     private array $circuitBreakers = [];
 
-    private readonly LoggerInterface $logger;
+    /** @var array<string, int> */
+    private array $hitCounts = [];
 
-    private const MAX_FAILURES_BEFORE_CIRCUIT_BREAK = 3;
-    private const CIRCUIT_BREAKER_TIMEOUT_SECONDS = 30;
+    private const MAX_FAILURES = 5;
+    private const CIRCUIT_BREAKER_TIMEOUT = 60; // seconds
+    private const PROMOTION_THRESHOLD = 3; // hits before promotion
 
-    public function __construct(?LoggerInterface $logger = null)
-    {
-        $this->logger = $logger ?? new NullLogger();
+    public function __construct(
+        private readonly LoggerInterface $logger = new NullLogger(),
+        private readonly ValidationService $validator = new ValidationService()
+    ) {
     }
 
-    public function addLayer(CacheItemPool $pool, int $priority = 100): void
+    // --- Layer Management ---
+
+    public function addLayer(CacheItemPoolInterface $pool, int $priority): void
     {
         $this->layers[$priority] = $pool;
-        $this->initializeCircuitBreaker($priority);
+        $this->circuitBreakers[$priority] = new CircuitBreakerState();
         ksort($this->layers);
-
-        $this->logger->debug('Cache layer added', [
-            'priority' => $priority,
-            'layer_type' => get_class($pool),
-            'total_layers' => count($this->layers),
-        ]);
     }
 
     public function getLayers(): array
@@ -64,10 +59,11 @@ final class LayeredCacheManager implements LayeredCache
         return $this->layers;
     }
 
+    // --- PSR-6 CacheItemPoolInterface Methods ---
+
     public function getItem(string $key): CacheItemInterface
     {
-        $this->validateKey($key);
-
+        $this->validator->validateKey($key);
         foreach ($this->layers as $priority => $layer) {
             if (!$this->isLayerAvailable($priority)) {
                 continue;
@@ -75,47 +71,49 @@ final class LayeredCacheManager implements LayeredCache
             try {
                 $item = $layer->getItem($key);
                 if ($item->isHit()) {
-                    $this->recordLayerSuccess($priority);
-                    $this->promoteToHigherLayers($key, $item, $priority);
-                    $this->logger->debug('Cache hit from layer', ['key' => $key, 'layer_priority' => $priority]);
+                    $this->recordSuccess($priority);
+                    $this->promoteToHigherLayers($item, $priority);
 
-                    return $item instanceof CacheItemContract ? $item : $this->adaptToCacheItem($item);
+                    return $item;
                 }
-            } catch (\Throwable $exception) {
-                $this->handleLayerFailure($priority, $exception, 'getItem', $key);
+            } catch (\Throwable $e) {
+                $this->handleFailure($priority, $e, 'getItem', $key);
             }
         }
 
-        return new CacheItem($key);
+        return new CacheItem($key, null, false);
     }
 
     public function getItems(iterable $keys = []): iterable
     {
-        $keys = $this->validateAndNormalizeKeys($keys);
+        $this->validator->validateKeys($keys);
         $result = [];
-        $remainingKeys = $keys;
+        $remainingKeys = array_flip($keys);
 
         foreach ($this->layers as $priority => $layer) {
-            if (empty($remainingKeys) || !$this->isLayerAvailable($priority)) {
+            if (empty($remainingKeys)) {
+                break;
+            }
+            if (!$this->isLayerAvailable($priority)) {
                 continue;
             }
             try {
-                $layerItems = $layer->getItems($remainingKeys);
-                foreach ($layerItems as $key => $item) {
+                $items = $layer->getItems(array_keys($remainingKeys));
+                foreach ($items as $item) {
                     if ($item->isHit()) {
-                        $result[$key] = $item instanceof CacheItemContract ? $item : $this->adaptToCacheItem($item);
-                        $remainingKeys = array_diff($remainingKeys, [$key]);
-                        $this->promoteToHigherLayers($key, $item, $priority);
+                        $key = $item->getKey();
+                        $result[$key] = $item;
+                        unset($remainingKeys[$key]);
+                        $this->promoteToHigherLayers($item, $priority);
                     }
                 }
-                $this->recordLayerSuccess($priority);
-            } catch (\Throwable $exception) {
-                $this->handleLayerFailure($priority, $exception, 'getItems', implode(',', $remainingKeys));
+                $this->recordSuccess($priority);
+            } catch (\Throwable $e) {
+                $this->handleFailure($priority, $e, 'getItems');
             }
         }
-
-        foreach ($remainingKeys as $key) {
-            $result[$key] = new CacheItem($key);
+        foreach (array_keys($remainingKeys) as $key) {
+            $result[$key] = new CacheItem($key, null, false);
         }
 
         return $result;
@@ -123,19 +121,19 @@ final class LayeredCacheManager implements LayeredCache
 
     public function hasItem(string $key): bool
     {
-        $this->validateKey($key);
+        $this->validator->validateKey($key);
         foreach ($this->layers as $priority => $layer) {
             if (!$this->isLayerAvailable($priority)) {
                 continue;
             }
             try {
                 if ($layer->hasItem($key)) {
-                    $this->recordLayerSuccess($priority);
+                    $this->recordSuccess($priority);
 
                     return true;
                 }
-            } catch (\Throwable $exception) {
-                $this->handleLayerFailure($priority, $exception, 'hasItem', $key);
+            } catch (\Throwable $e) {
+                $this->handleFailure($priority, $e, 'hasItem', $key);
             }
         }
 
@@ -144,158 +142,135 @@ final class LayeredCacheManager implements LayeredCache
 
     public function clear(): bool
     {
-        $success = true;
+        $overallSuccess = true;
         foreach ($this->layers as $priority => $layer) {
             if (!$this->isLayerAvailable($priority)) {
                 continue;
             }
             try {
                 if (!$layer->clear()) {
-                    $success = false;
+                    $overallSuccess = false;
                 } else {
-                    $this->recordLayerSuccess($priority);
+                    $this->recordSuccess($priority);
                 }
-            } catch (\Throwable $exception) {
-                $success = false;
-                $this->handleLayerFailure($priority, $exception, 'clear', 'all');
+            } catch (\Throwable $e) {
+                $this->handleFailure($priority, $e, 'clear');
+                $overallSuccess = false;
             }
         }
+        $this->hitCounts = [];
 
-        return $success;
+        return $overallSuccess;
     }
 
     public function deleteItem(string $key): bool
     {
-        $this->validateKey($key);
-        $success = true;
+        $this->validator->validateKey($key);
+        $overallSuccess = true;
         foreach ($this->layers as $priority => $layer) {
             if (!$this->isLayerAvailable($priority)) {
                 continue;
             }
             try {
                 if (!$layer->deleteItem($key)) {
-                    $success = false;
+                    $overallSuccess = false;
                 } else {
-                    $this->recordLayerSuccess($priority);
+                    $this->recordSuccess($priority);
                 }
-            } catch (\Throwable $exception) {
-                $success = false;
-                $this->handleLayerFailure($priority, $exception, 'deleteItem', $key);
+            } catch (\Throwable $e) {
+                $this->handleFailure($priority, $e, 'deleteItem', $key);
+                $overallSuccess = false;
             }
         }
+        unset($this->hitCounts[$key]);
 
-        return $success;
+        return $overallSuccess;
     }
 
-    public function deleteItems(iterable $keys): bool
+    public function deleteItems(array $keys): bool
     {
-        $keys = $this->validateAndNormalizeKeys($keys);
-        $success = true;
+        $this->validator->validateKeys($keys);
+        $overallSuccess = true;
         foreach ($this->layers as $priority => $layer) {
             if (!$this->isLayerAvailable($priority)) {
                 continue;
             }
             try {
                 if (!$layer->deleteItems($keys)) {
-                    $success = false;
+                    $overallSuccess = false;
                 } else {
-                    $this->recordLayerSuccess($priority);
+                    $this->recordSuccess($priority);
                 }
-            } catch (\Throwable $exception) {
-                $success = false;
-                $this->handleLayerFailure($priority, $exception, 'deleteItems', implode(',', $keys));
+            } catch (\Throwable $e) {
+                $this->handleFailure($priority, $e, 'deleteItems');
+                $overallSuccess = false;
             }
         }
+        foreach ($keys as $key) {
+            unset($this->hitCounts[$key]);
+        }
 
-        return $success;
+        return $overallSuccess;
     }
 
     public function save(CacheItemInterface $item): bool
     {
-        $success = true;
+        $overallSuccess = true;
         foreach ($this->layers as $priority => $layer) {
             if (!$this->isLayerAvailable($priority)) {
                 continue;
             }
             try {
                 if (!$layer->save(clone $item)) {
-                    $success = false;
+                    $overallSuccess = false;
                 } else {
-                    $this->recordLayerSuccess($priority);
+                    $this->recordSuccess($priority);
                 }
-            } catch (\Throwable $exception) {
-                $success = false;
-                $this->handleLayerFailure($priority, $exception, 'save', $item->getKey());
+            } catch (\Throwable $e) {
+                $this->handleFailure($priority, $e, 'save', $item->getKey());
+                $overallSuccess = false;
             }
         }
 
-        return $success;
+        return $overallSuccess;
     }
 
     public function saveDeferred(CacheItemInterface $item): bool
     {
-        $success = true;
-        foreach ($this->layers as $priority => $layer) {
-            if (!$this->isLayerAvailable($priority)) {
-                continue;
-            }
-            try {
-                if (!$layer->saveDeferred(clone $item)) {
-                    $success = false;
-                } else {
-                    $this->recordLayerSuccess($priority);
-                }
-            } catch (\Throwable $exception) {
-                $success = false;
-                $this->handleLayerFailure($priority, $exception, 'saveDeferred', $item->getKey());
-            }
-        }
-
-        return $success;
+        return $this->save($item); // Safest strategy for layered cache
     }
 
     public function commit(): bool
     {
-        $success = true;
-        foreach ($this->layers as $priority => $layer) {
-            if (!$this->isLayerAvailable($priority)) {
-                continue;
-            }
-            try {
-                if (!$layer->commit()) {
-                    $success = false;
-                } else {
-                    $this->recordLayerSuccess($priority);
-                }
-            } catch (\Throwable $exception) {
-                $success = false;
-                $this->handleLayerFailure($priority, $exception, 'commit', 'deferred');
-            }
-        }
-
-        return $success;
+        return true; // `saveDeferred` is not truly deferred, so commit is a no-op
     }
+
+    // --- AtomicOperable Methods ---
 
     public function increment(string $key, int $step = 1, int $initialValue = 0): int
     {
-        $this->validateKey($key);
-
+        $this->validator->validateKey($key);
         foreach ($this->layers as $priority => $layer) {
-            if (!$this->isLayerAvailable($priority) || !($layer instanceof AtomicOperable)) {
-                continue;
-            }
-            try {
-                $result = $layer->increment($key, $step, $initialValue);
-                $this->recordLayerSuccess($priority);
-                $this->propagateValueToAllLayers($key, $result, $priority);
+            if ($this->isLayerAvailable($priority) && $layer instanceof AtomicOperable) {
+                try {
+                    $newValue = $layer->increment($key, $step, $initialValue);
+                    $this->propagateValueToAllLayers($key, $newValue, $priority);
+                    $this->recordSuccess($priority);
 
-                return $result;
-            } catch (\Throwable $exception) {
-                $this->handleLayerFailure($priority, $exception, 'increment', $key);
+                    return $newValue;
+                } catch (\Throwable $e) {
+                    $this->handleFailure($priority, $e, 'increment', $key);
+                }
             }
         }
 
-        return $this->nonAtomicIncrement($key, $step, $initialValue);
+        $this->logger->warning('No atomic layer available for increment. Falling back to non-atomic operation.', ['key' => $key]);
+        $item = $this->getItem($key);
+        $currentValue = $item->isHit() && is_numeric($item->get()) ? (int) $item->get() : $initialValue;
+        $newValue = $currentValue + $step;
+        $this->save($item->set($newValue));
+
+        return $newValue;
     }
 
     public function decrement(string $key, int $step = 1, int $initialValue = 0): int
@@ -305,7 +280,7 @@ final class LayeredCacheManager implements LayeredCache
 
     public function add(string $key, mixed $value): bool
     {
-        $this->validateKey($key);
+        $this->validator->validateKey($key);
         if ($this->hasItem($key)) {
             return false;
         }
@@ -313,212 +288,182 @@ final class LayeredCacheManager implements LayeredCache
         return $this->save(new CacheItem($key, $value));
     }
 
+    // --- CompareAndSwapAware Methods ---
+
     public function compareAndSwap(string $key, mixed $expected, mixed $value): bool
     {
-        $this->validateKey($key);
+        $this->validator->validateKey($key);
         foreach ($this->layers as $priority => $layer) {
-            if (!$this->isLayerAvailable($priority) || !($layer instanceof CompareAndSwapAware)) {
-                continue;
-            }
-            try {
-                $success = $layer->compareAndSwap($key, $expected, $value);
-                if ($success) {
-                    $this->recordLayerSuccess($priority);
-                    $this->propagateValueToAllLayers($key, $value, $priority);
+            if ($this->isLayerAvailable($priority) && $layer instanceof CompareAndSwapAware) {
+                try {
+                    if ($layer->compareAndSwap($key, $expected, $value)) {
+                        $this->propagateValueToAllLayers($key, $value, $priority);
+                        $this->recordSuccess($priority);
 
-                    return true;
+                        return true;
+                    } else {
+                        // If CAS fails on an authoritative layer, the whole operation fails.
+                        return false;
+                    }
+                } catch (\Throwable $e) {
+                    $this->handleFailure($priority, $e, 'compareAndSwap', $key);
                 }
-
-                return false;
-            } catch (\Throwable $exception) {
-                $this->handleLayerFailure($priority, $exception, 'compareAndSwap', $key);
             }
         }
+        $this->logger->error('No layer supports CompareAndSwap operation.', ['key' => $key]);
 
         return false;
     }
 
+    // --- TaggablePool & Taggable Methods ---
+
+    public function setWithTags(string $key, mixed $value, iterable $tags): bool
+    {
+        $item = new CacheItem($key, $value);
+        $item->tag($tags);
+
+        return $this->save($item);
+    }
+
     public function invalidateTags(iterable $tags): bool
     {
-        $normalizedTags = $this->normalizeTags($tags);
-        $success = true;
+        $uniqueInvalidatedKeys = [];
         foreach ($this->layers as $priority => $layer) {
-            if (!$this->isLayerAvailable($priority)) {
-                continue;
-            }
-            try {
-                if ($layer instanceof TaggablePool) {
-                    if (!$layer->invalidateTags($normalizedTags)) {
-                        $success = false;
+            if ($this->isLayerAvailable($priority) && $layer instanceof TaggablePool) {
+                try {
+                    $keysBefore = $layer->getByTags($tags);
+                    if (is_array($keysBefore)) {
+                        $uniqueInvalidatedKeys = array_merge($uniqueInvalidatedKeys, array_keys($keysBefore));
                     }
-                } else {
-                    $layer->clear();
+                    $layer->invalidateTags($tags);
+                    $this->recordSuccess($priority);
+                } catch (\Throwable $e) {
+                    $this->handleFailure($priority, $e, 'invalidateTags');
                 }
-                $this->recordLayerSuccess($priority);
-            } catch (\Throwable $exception) {
-                $success = false;
-                $this->handleLayerFailure($priority, $exception, 'invalidateTags', 'tags');
             }
         }
 
-        return $success;
+        return count(array_unique($uniqueInvalidatedKeys)) > 1;
     }
 
     public function getByTags(iterable $tags): iterable
     {
-        $normalizedTags = $this->normalizeTags($tags);
-        $allResults = [];
-        foreach (array_reverse($this->layers, true) as $priority => $layer) {
-            if (!$this->isLayerAvailable($priority) || !($layer instanceof TaggablePool)) {
-                continue;
-            }
-            try {
-                $layerResults = $layer->getByTags($normalizedTags);
-                if (is_iterable($layerResults)) {
-                    foreach ($layerResults as $key => $value) {
-                        if (!isset($allResults[$key])) {
-                            $allResults[$key] = $value;
+        $results = [];
+        foreach ($this->layers as $priority => $layer) {
+            if ($this->isLayerAvailable($priority) && $layer instanceof TaggablePool) {
+                try {
+                    foreach ($layer->getByTags($tags) as $key => $value) {
+                        if (!isset($results[$key])) {
+                            $results[$key] = $value;
                         }
                     }
+                    $this->recordSuccess($priority);
+                } catch (\Throwable $e) {
+                    $this->handleFailure($priority, $e, 'getByTags');
                 }
-                $this->recordLayerSuccess($priority);
-            } catch (\Throwable $exception) {
-                $this->handleLayerFailure($priority, $exception, 'getByTags', 'tags');
             }
         }
 
-        return $allResults;
+        return $results;
     }
 
     public function getTags(): iterable
     {
         $allTags = [];
         foreach ($this->layers as $priority => $layer) {
-            if (!$this->isLayerAvailable($priority) || !($layer instanceof TaggablePool)) {
-                continue;
-            }
-            try {
-                $layerTags = $layer->getTags();
-                if (is_iterable($layerTags)) {
-                    foreach ($layerTags as $tag) {
+            if ($this->isLayerAvailable($priority) && $layer instanceof TaggablePool) {
+                try {
+                    foreach ($layer->getTags() as $tag) {
                         $allTags[(string) $tag] = true;
                     }
+                    $this->recordSuccess($priority);
+                } catch (\Throwable $e) {
+                    $this->handleFailure($priority, $e, 'getTags');
                 }
-                $this->recordLayerSuccess($priority);
-            } catch (\Throwable $exception) {
-                $this->handleLayerFailure($priority, $exception, 'getTags', 'all');
             }
         }
 
-        return array_map(fn ($tag) => new Tag($tag), array_keys($allTags));
+        return array_keys($allTags);
     }
 
-    public function setWithTags(string $key, mixed $value, iterable $tags): bool
-    {
-        $this->validateKey($key);
-        $normalizedTags = $this->normalizeTags($tags);
-        $item = new CacheItem($key, $value);
-        $success = true;
+    // --- TopicSubscribable Methods ---
 
-        foreach ($this->layers as $priority => $layer) {
-            if (!$this->isLayerAvailable($priority)) {
-                continue;
-            }
-            try {
-                if ($layer instanceof Taggable) {
-                    if (!$layer->setWithTags($key, $value, $normalizedTags)) {
-                        $success = false;
-                    }
-                } else {
-                    if (!$layer->save($item)) {
-                        $success = false;
-                    }
-                }
-                $this->recordLayerSuccess($priority);
-            } catch (\Throwable $exception) {
-                $success = false;
-                $this->handleLayerFailure($priority, $exception, 'setWithTags', $key);
-            }
-        }
-
-        return $success;
-    }
-
-    /**
-     * CORRIGIDO: Delega a subscrição de tópicos para as camadas que suportam esta funcionalidade.
-     */
     public function subscribeTo(string $key, iterable $topics): void
     {
-        $this->validateKey($key);
-        $normalizedTopics = $this->normalizeTopics($topics);
-
         foreach ($this->layers as $priority => $layer) {
             if ($this->isLayerAvailable($priority) && $layer instanceof TopicSubscribable) {
                 try {
-                    $layer->subscribeTo($key, $normalizedTopics);
-                    $this->recordLayerSuccess($priority);
-                } catch (\Throwable $exception) {
-                    $this->handleLayerFailure($priority, $exception, 'subscribeTo', $key);
+                    $layer->subscribeTo($key, $topics);
+                    $this->recordSuccess($priority);
+                } catch (\Throwable $e) {
+                    $this->handleFailure($priority, $e, 'subscribeTo', $key);
                 }
             }
         }
     }
 
-    /**
-     * CORRIGIDO: Delega a anulação da subscrição de tópicos para as camadas que suportam esta funcionalidade.
-     */
     public function unsubscribeFrom(string $key, iterable $topics): void
     {
-        $this->validateKey($key);
-        $normalizedTopics = $this->normalizeTopics($topics);
-
         foreach ($this->layers as $priority => $layer) {
             if ($this->isLayerAvailable($priority) && $layer instanceof TopicSubscribable) {
                 try {
-                    $layer->unsubscribeFrom($key, $normalizedTopics);
-                    $this->recordLayerSuccess($priority);
-                } catch (\Throwable $exception) {
-                    $this->handleLayerFailure($priority, $exception, 'unsubscribeFrom', $key);
+                    $layer->unsubscribeFrom($key, $topics);
+                    $this->recordSuccess($priority);
+                } catch (\Throwable $e) {
+                    $this->handleFailure($priority, $e, 'unsubscribeFrom', $key);
                 }
             }
         }
     }
 
-    /**
-     * CORRIGIDO: Agrega os tópicos subscritos de todas as camadas que suportam esta funcionalidade.
-     */
+    public function invalidateTopics(iterable $topics): bool
+    {
+        $overallSuccess = true;
+        foreach ($this->layers as $priority => $layer) {
+            if ($this->isLayerAvailable($priority) && $layer instanceof TopicSubscribable) {
+                try {
+                    if (!$layer->invalidateTopics($topics)) {
+                        $overallSuccess = false;
+                    } else {
+                        $this->recordSuccess($priority);
+                    }
+                } catch (\Throwable $e) {
+                    $this->handleFailure($priority, $e, 'invalidateTopics');
+                    $overallSuccess = false;
+                }
+            }
+        }
+
+        return $overallSuccess;
+    }
+
     public function getSubscribedTopics(string $key): array
     {
-        $allSubscribedTopics = [];
+        $allTopics = [];
         foreach ($this->layers as $priority => $layer) {
             if ($this->isLayerAvailable($priority) && $layer instanceof TopicSubscribable) {
                 try {
-                    $layerTopics = $layer->getSubscribedTopics($key);
-                    $allSubscribedTopics = array_merge($allSubscribedTopics, is_array($layerTopics) ? $layerTopics : iterator_to_array($layerTopics));
-                    $this->recordLayerSuccess($priority);
-                } catch (\Throwable $exception) {
-                    $this->handleLayerFailure($priority, $exception, 'getSubscribedTopics', $key);
+                    $allTopics = array_merge($allTopics, $layer->getSubscribedTopics($key));
+                    $this->recordSuccess($priority);
+                } catch (\Throwable $e) {
+                    $this->handleFailure($priority, $e, 'getSubscribedTopics', $key);
                 }
             }
         }
 
-        return array_unique($allSubscribedTopics);
+        return array_unique($allTopics);
     }
 
-    /**
-     * CORRIGIDO: Agrega os subscritores de um tópico de todas as camadas que suportam esta funcionalidade.
-     */
     public function getSubscribersForTopic(string $topic): array
     {
         $allSubscribers = [];
         foreach ($this->layers as $priority => $layer) {
             if ($this->isLayerAvailable($priority) && $layer instanceof TopicSubscribable) {
                 try {
-                    $layerSubscribers = $layer->getSubscribersForTopic($topic);
-                    $allSubscribers = array_merge($allSubscribers, is_array($layerSubscribers) ? $layerSubscribers : iterator_to_array($layerSubscribers));
-                    $this->recordLayerSuccess($priority);
-                } catch (\Throwable $exception) {
-                    $this->handleLayerFailure($priority, $exception, 'getSubscribersForTopic', $topic);
+                    $allSubscribers = array_merge($allSubscribers, $layer->getSubscribersForTopic($topic));
+                    $this->recordSuccess($priority);
+                } catch (\Throwable $e) {
+                    $this->handleFailure($priority, $e, 'getSubscribersForTopic', $topic);
                 }
             }
         }
@@ -526,96 +471,38 @@ final class LayeredCacheManager implements LayeredCache
         return array_unique($allSubscribers);
     }
 
-    /**
-     * CORRIGIDO: Delega a invalidação de tópicos para as camadas que suportam esta funcionalidade.
-     */
-    public function invalidateTopics(iterable $topics): bool
+    // --- Maintainable Method ---
+
+    public function maintenance(array $options = []): bool
     {
-        $normalizedTopics = $this->normalizeTopics($topics);
-        $success = true;
-
-        foreach ($this->layers as $priority => $layer) {
-            if ($this->isLayerAvailable($priority) && $layer instanceof TopicSubscribable) {
-                try {
-                    if (!$layer->invalidateTopics($normalizedTopics)) {
-                        $success = false;
-                    } else {
-                        $this->recordLayerSuccess($priority);
-                    }
-                } catch (\Throwable $exception) {
-                    $success = false;
-                    $this->handleLayerFailure($priority, $exception, 'invalidateTopics', 'topics');
-                }
-            }
-        }
-
-        return $success;
-    }
-
-    public function maintenance(iterable $options = []): bool
-    {
-        $optionsArray = is_array($options) ? $options : iterator_to_array($options);
         $overallSuccess = true;
-
         foreach ($this->layers as $priority => $layer) {
-            if (!$this->isLayerAvailable($priority) || !($layer instanceof Maintainable)) {
-                continue;
-            }
-            try {
-                if (!$layer->maintenance($optionsArray)) {
+            if ($this->isLayerAvailable($priority) && $layer instanceof Maintainable) {
+                try {
+                    if (!$layer->maintenance($options)) {
+                        $overallSuccess = false;
+                    } else {
+                        $this->recordSuccess($priority);
+                    }
+                } catch (\Throwable $e) {
+                    $this->handleFailure($priority, $e, 'maintenance');
                     $overallSuccess = false;
                 }
-                $this->circuitBreakers[$priority]['state'] = 'closed';
-                $this->circuitBreakers[$priority]['failures'] = 0;
-            } catch (\Throwable $exception) {
-                $overallSuccess = false;
-                $this->handleLayerFailure($priority, $exception, 'maintenance', 'all');
             }
         }
 
         return $overallSuccess;
     }
 
-    /**
-     * Adapts a generic PSR-6 CacheItemInterface to our internal CacheItemContract implementation.
-     */
-    private function adaptToCacheItem(CacheItemInterface $item): CacheItemContract
-    {
-        if ($item instanceof CacheItemContract) {
-            return $item;
-        }
+    // --- Private Helper Methods ---
 
-        return new CacheItem($item->getKey(), $item->get(), $item->isHit());
-    }
-
-    /**
-     * Initializes the circuit breaker state for a new layer.
-     */
-    private function initializeCircuitBreaker(int $priority): void
-    {
-        $this->circuitBreakers[$priority] = [
-            'failures' => 0,
-            'last_failure' => null,
-            'state' => 'closed', // possible states: closed, open, half-open
-        ];
-    }
-
-    /**
-     * Checks if a layer is operational based on its circuit breaker state.
-     */
     private function isLayerAvailable(int $priority): bool
     {
-        if (!isset($this->circuitBreakers[$priority])) {
-            return false;
-        }
-
-        $breaker = &$this->circuitBreakers[$priority];
-
-        if ('open' === $breaker['state']) {
-            $timeSinceFailure = time() - ($breaker['last_failure'] ?? 0);
-
-            if ($timeSinceFailure >= self::CIRCUIT_BREAKER_TIMEOUT_SECONDS) {
-                $breaker['state'] = 'half-open';
+        $breaker = $this->circuitBreakers[$priority];
+        if (CircuitBreakerState::STATE_OPEN === $breaker->state) {
+            if (time() - ($breaker->lastFailureTimestamp ?? 0) > self::CIRCUIT_BREAKER_TIMEOUT) {
+                $this->circuitBreakers[$priority] = $breaker->halfOpenCircuit();
+                $this->logger->info('Circuit breaker is now half-open.', ['priority' => $priority]);
 
                 return true;
             }
@@ -626,98 +513,58 @@ final class LayeredCacheManager implements LayeredCache
         return true;
     }
 
-    private function recordLayerSuccess(int $priority): void
+    private function handleFailure(int $priority, \Throwable $e, string $operation, ?string $key = 'N/A'): void
     {
-        if (isset($this->circuitBreakers[$priority])) {
-            $breaker = &$this->circuitBreakers[$priority];
-
-            if ('half-open' === $breaker['state']) {
-                $this->initializeCircuitBreaker($priority);
-            }
+        $breaker = $this->circuitBreakers[$priority]->recordFailure();
+        if ($breaker->failures >= self::MAX_FAILURES && CircuitBreakerState::STATE_CLOSED === $breaker->state) {
+            $breaker = $breaker->openCircuit();
+            $this->logger->critical('Circuit breaker opened for cache layer.', [
+                'priority' => $priority, 'layer' => get_class($this->layers[$priority]),
+            ]);
         }
-    }
-
-    private function handleLayerFailure(int $priority, \Throwable $exception, string $operation, string $key): void
-    {
-        if (isset($this->circuitBreakers[$priority])) {
-            $breaker = &$this->circuitBreakers[$priority];
-            ++$breaker['failures'];
-            $breaker['last_failure'] = time();
-
-            if ($breaker['failures'] >= self::MAX_FAILURES_BEFORE_CIRCUIT_BREAK) {
-                $breaker['state'] = 'open';
-                $this->logger->warning('Layer circuit breaker opened', [
-                    'priority' => $priority,
-                    'failures' => $breaker['failures'],
-                    'layer_type' => get_class($this->layers[$priority]),
-                ]);
-            }
-        }
-
-        $this->logger->error('Layer operation failed', [
-            'priority' => $priority,
-            'operation' => $operation,
-            'key' => $key,
-            'error' => $exception->getMessage(),
+        $this->circuitBreakers[$priority] = $breaker;
+        $this->logger->error('Cache layer operation failed.', [
+            'priority' => $priority, 'operation' => $operation, 'key' => $key, 'error' => $e->getMessage(),
         ]);
     }
 
-    /**
-     * Promotes an item found in a slower layer to all faster layers.
-     */
-    private function promoteToHigherLayers(string $key, CacheItemInterface $item, int $sourceLayerPriority): void
+    private function recordSuccess(int $priority): void
     {
-        foreach ($this->layers as $priority => $layer) {
-            if ($priority >= $sourceLayerPriority || !$this->isLayerAvailable($priority)) {
-                continue;
-            }
-
-            try {
-                $layer->save(clone $item);
-            } catch (\Throwable $e) {
-                $this->logger->debug('Item promotion failed', [
-                    'key' => $key,
-                    'target_priority' => $priority,
-                    'source_priority' => $sourceLayerPriority,
-                    'error' => $e->getMessage(),
-                ]);
-            }
-        }
+        $this->circuitBreakers[$priority] = $this->circuitBreakers[$priority]->recordSuccess();
     }
 
-    /**
-     * Propagates a new value to all layers except the source.
-     */
-    private function propagateValueToAllLayers(string $key, mixed $value, int $sourceLayerPriority): void
+    private function promoteToHigherLayers(CacheItemInterface $item, int $sourcePriority): void
     {
-        foreach ($this->layers as $priority => $layer) {
-            if ($priority === $sourceLayerPriority || !$this->isLayerAvailable($priority)) {
-                continue;
-            }
+        $key = $item->getKey();
+        $this->hitCounts[$key] = ($this->hitCounts[$key] ?? 0) + 1;
 
-            try {
-                $layer->save(new CacheItem($key, $value));
-            } catch (\Throwable $e) {
-                $this->logger->debug('Value propagation failed', [
-                    'key' => $key,
-                    'target_priority' => $priority,
-                    'error' => $e->getMessage(),
-                ]);
+        if ($this->hitCounts[$key] < self::PROMOTION_THRESHOLD) {
+            return;
+        }
+
+        for ($p = 0; $p < $sourcePriority; ++$p) {
+            if (isset($this->layers[$p]) && $this->isLayerAvailable($p)) {
+                try {
+                    $this->layers[$p]->save(clone $item);
+                } catch (\Throwable $e) {
+                    $this->handleFailure($p, $e, 'promotion_save', $key);
+                }
             }
         }
+        unset($this->hitCounts[$key]);
     }
 
-    /**
-     * Fallback non-atomic increment implementation.
-     */
-    private function nonAtomicIncrement(string $key, int $step, int $initialValue): int
+    private function propagateValueToAllLayers(string $key, mixed $value, int $sourcePriority): void
     {
-        $item = $this->getItem($key);
-        $currentValue = $item->isHit() && is_numeric($item->get()) ? (int) $item->get() : $initialValue;
-        $newValue = $currentValue + $step;
-
-        $this->save(new CacheItem($key, $newValue));
-
-        return $newValue;
+        $item = new CacheItem($key, $value);
+        foreach ($this->layers as $priority => $layer) {
+            if ($priority !== $sourcePriority && $this->isLayerAvailable($priority)) {
+                try {
+                    $layer->save(clone $item);
+                } catch (\Throwable $e) {
+                    $this->handleFailure($priority, $e, 'propagate_value', $key);
+                }
+            }
+        }
     }
 }

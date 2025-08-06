@@ -38,21 +38,21 @@ interface CacheItem extends CacheItemInterface
      */
     public function getTags(): array;
 
-    /**
-     * Subscribe to invalidation topics.
-     *
-     * @param string[] $topics an array of topics to subscribe to
-     *
-     * @return static the instance of the cache item for method chaining
-     */
-    public function subscribeTo(array $topics): static;
+    // /**
+    //  * Subscribe to invalidation topics.
+    //  *
+    //  * @param string[] $topics an array of topics to subscribe to
+    //  *
+    //  * @return static the instance of the cache item for method chaining
+    //  */
+    // public function subscribeTo(array $topics): static;
 
-    /**
-     * Get subscribed topics.
-     *
-     * @return string[] an array of subscribed topics
-     */
-    public function getTopics(): array;
+    // /**
+    //  * Get subscribed topics.
+    //  *
+    //  * @return string[] an array of subscribed topics
+    //  */
+    // public function getTopics(): array;
 
     /**
      * Returns the expiration timestamp.

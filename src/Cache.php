@@ -4,163 +4,217 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache;
 
-use KaririCode\Cache\Contract\Cache as CacheContract;
+use KaririCode\Cache\Builder\CacheOperationBuilder;
+use KaririCode\Cache\Command\CommandExecutor;
+use KaririCode\Cache\Command\CommandFactory;
+use KaririCode\Cache\Contract\AdvancedCache;
+use KaririCode\Cache\Contract\Behavioral\TopicSubscribable;
+use KaririCode\Cache\Contract\TaggableCache;
 use KaririCode\Cache\Metrics\CacheMetrics;
-use KaririCode\Cache\Operation\AdvancedCacheOperations;
-use KaririCode\Cache\Operation\BasicCacheOperations;
-use KaririCode\Cache\Operation\TaggedCacheOperations;
-use KaririCode\Cache\Operation\TopicCacheOperations;
+use KaririCode\Cache\Service\EventService;
+use KaririCode\Cache\Service\HealthCheckService;
+use KaririCode\Cache\Service\LockService;
+use KaririCode\Cache\Service\MetricsService;
+use KaririCode\Cache\Service\SerializationService;
+use KaririCode\Cache\Service\ValidationService;
+use Psr\Log\LoggerInterface;
+use Psr\Log\NullLogger;
 
-final class Cache implements CacheContract
+/**
+ * Main Cache Facade.
+ *
+ * Provides a simple, unified public API for interacting with the complex caching subsystem.
+ * It follows the Facade pattern, delegating all operations to specialized command
+ * objects, which are created by a factory and executed by an executor.
+ */
+final class Cache implements AdvancedCache, TaggableCache, TopicSubscribable
 {
+    private readonly CommandExecutor $commandExecutor;
+    private readonly CommandFactory $commandFactory;
+
+    /**
+     * Constructor with dependency injection of all required services.
+     */
     public function __construct(
-        private readonly BasicCacheOperations $basic,
-        private readonly TaggedCacheOperations $tagged,
-        private readonly TopicCacheOperations $topic,
-        private readonly AdvancedCacheOperations $advanced,
-        private readonly string $name = 'default'
+        private readonly string $name,
+        // Low-level components
+        private readonly LayeredCacheManager $layeredCache,
+        // Services
+        private readonly ValidationService $validator,
+        private readonly SerializationService $serializer,
+        private readonly EventService $events,
+        private readonly MetricsService $metrics,
+        private readonly HealthCheckService $health,
+        private readonly LockService $locks, // LockService is available for more advanced use cases
+        private readonly LoggerInterface $logger = new NullLogger()
     ) {
+        $this->commandExecutor = new CommandExecutor($this->logger);
+        $this->commandFactory = new CommandFactory(
+            $this->layeredCache,
+            $this->validator,
+            $this->serializer,
+            $this->events,
+            $this->metrics
+        );
     }
 
-    // Basic Cache Operations
+    // --- Fluent Interface ---
+
+    /**
+     * Returns a new fluent operation builder for chaining complex commands.
+     */
+    public function with(): CacheOperationBuilder
+    {
+        return new CacheOperationBuilder($this->commandFactory, $this->commandExecutor);
+    }
+
+    // --- Basic Operations ---
+
     public function get(string $key, mixed $default = null): mixed
     {
-        return $this->basic->get($key, $default);
+        $command = $this->commandFactory->createGetCommand($key, $default);
+
+        return $this->commandExecutor->execute($command);
     }
 
     public function set(string $key, mixed $value): bool
     {
-        return $this->basic->set($key, $value);
+        $command = $this->commandFactory->createSetCommand($key, $value);
+
+        return $this->commandExecutor->execute($command);
     }
 
     public function delete(string $key): bool
     {
-        return $this->basic->delete($key);
+        $command = $this->commandFactory->createDeleteCommand($key);
+
+        return $this->commandExecutor->execute($command);
     }
 
     public function clear(): bool
     {
-        return $this->basic->clear();
+        $command = $this->commandFactory->createClearCommand();
+
+        return $this->commandExecutor->execute($command);
     }
 
     public function has(string $key): bool
     {
-        return $this->basic->has($key);
+        $command = $this->commandFactory->createHasCommand($key);
+
+        return $this->commandExecutor->execute($command);
     }
+
+    // --- Batch Operations ---
 
     public function getMultiple(iterable $keys): iterable
     {
-        return $this->basic->getMultiple($keys);
+        $command = $this->commandFactory->createGetMultipleCommand($keys);
+
+        return $this->commandExecutor->execute($command);
     }
 
     public function setMultiple(iterable $values): bool
     {
-        return $this->basic->setMultiple($values);
+        $command = $this->commandFactory->createSetMultipleCommand($values);
+
+        return $this->commandExecutor->execute($command);
     }
 
     public function deleteMultiple(iterable $keys): bool
     {
-        return $this->basic->deleteMultiple($keys);
+        $command = $this->commandFactory->createDeleteMultipleCommand($keys);
+
+        return $this->commandExecutor->execute($command);
     }
 
-    // Atomic Operations
+    // --- Atomic Operations ---
+
     public function increment(string $key, int $step = 1, int $initialValue = 0): int
     {
-        return $this->basic->increment($key, $step, $initialValue);
+        $command = $this->commandFactory->createIncrementCommand($key, $step, $initialValue);
+
+        return $this->commandExecutor->execute($command);
     }
 
     public function decrement(string $key, int $step = 1, int $initialValue = 0): int
     {
-        return $this->basic->decrement($key, $step, $initialValue);
+        $command = $this->commandFactory->createDecrementCommand($key, $step, $initialValue);
+
+        return $this->commandExecutor->execute($command);
     }
 
     public function add(string $key, mixed $value): bool
     {
-        return $this->basic->add($key, $value);
+        $command = $this->commandFactory->createAddCommand($key, $value);
+
+        return $this->commandExecutor->execute($command);
     }
 
     public function compareAndSwap(string $key, mixed $expected, mixed $value): bool
     {
-        return $this->advanced->compareAndSwap($key, $expected, $value);
+        $command = $this->commandFactory->createCompareAndSwapCommand($key, $expected, $value);
+
+        return $this->commandExecutor->execute($command);
     }
 
-    // Tagged Cache Operations
+    // --- Taggable Operations ---
+
     public function setWithTags(string $key, mixed $value, iterable $tags = []): bool
     {
-        return $this->tagged->setWithTags($key, $value, $tags);
+        $command = $this->commandFactory->createSetWithTagsCommand($key, $value, $tags);
+
+        return $this->commandExecutor->execute($command);
     }
 
     public function invalidateTags(iterable $tags): bool
     {
-        return $this->tagged->invalidateTags($tags);
+        $command = $this->commandFactory->createInvalidateTagsCommand($tags);
+
+        return $this->commandExecutor->execute($command);
     }
 
     public function getByTags(iterable $tags): iterable
     {
-        return $this->tagged->getByTags($tags);
+        // This operation is more complex and typically used via the builder,
+        // but can be offered here for completeness.
+        return $this->with()->getByTags($tags);
     }
 
-    /**
-     * {@inheritdoc}
-     * Implements missing method from TaggablePool interface.
-     */
     public function getTags(): iterable
     {
-        return $this->tagged->getTags();
+        // This is a direct query on the driver, bypassing the command pattern for simplicity.
+        return $this->layeredCache->getTags();
     }
 
-    // Topic-based Operations
+    // --- Topic Operations ---
+
     public function subscribeTo(string $key, iterable $topics): void
     {
-        $this->topic->subscribeTo($key, $topics);
+        $this->layeredCache->subscribeTo($key, $topics);
     }
 
     public function unsubscribeFrom(string $key, iterable $topics): void
     {
-        $this->topic->unsubscribeFrom($key, $topics);
+        $this->layeredCache->unsubscribeFrom($key, $topics);
     }
 
     public function invalidateTopics(iterable $topics): bool
     {
-        return $this->topic->invalidateTopics($topics);
+        return $this->layeredCache->invalidateTopics($topics);
     }
 
-    /**
-     * {@inheritdoc}
-     * Implements missing method from TopicSubscribable interface.
-     */
     public function getSubscribedTopics(string $key): array
     {
-        return $this->topic->getSubscribedTopics($key);
+        return $this->layeredCache->getSubscribedTopics($key);
     }
 
-    /**
-     * {@inheritdoc}
-     * Implements missing method from TopicSubscribable interface.
-     */
     public function getSubscribersForTopic(string $topic): array
     {
-        return $this->topic->getSubscribersForTopic($topic);
+        return $this->layeredCache->getSubscribersForTopic($topic);
     }
 
-    // Advanced Operations
-    public function getWithCallback(
-        string $key,
-        ?callable $callback = null,
-        iterable $tags = []
-    ): mixed {
-        return $this->advanced->getWithCallback($key, $callback, $tags);
-    }
-
-    public function warm(iterable $data): void
-    {
-        $this->advanced->warm($data);
-    }
-
-    public function getMetrics(): CacheMetrics
-    {
-        return $this->advanced->getMetrics();
-    }
+    // --- Metadata and Health ---
 
     public function getName(): string
     {
@@ -169,13 +223,30 @@ final class Cache implements CacheContract
 
     public function isHealthy(): bool
     {
-        return $this->advanced->isHealthy();
+        return $this->health->isHealthy();
     }
 
-    public function maintenance(iterable $options = []): bool
+    public function getMetrics(): CacheMetrics
     {
-        $optionsArray = is_array($options) ? $options : iterator_to_array($options);
+        return new CacheMetrics($this->metrics->getMetrics());
+    }
 
-        return $this->advanced->maintenance($optionsArray);
+    public function getCapabilities(): array
+    {
+        return [];
+    }
+
+    // ========================================================================
+    // Internal Access for Builder
+    // ========================================================================
+
+    public function getCommandExecutor(): CommandExecutor
+    {
+        return $this->commandExecutor;
+    }
+
+    public function getLayeredCache(): LayeredCacheManager
+    {
+        return $this->layeredCache;
     }
 }

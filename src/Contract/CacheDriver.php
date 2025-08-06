@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace KaririCode\Cache\Contract;
 
 use KaririCode\Cache\Contract\Behavioral\MultiOperationCacheable;
+use Psr\Cache\CacheItemPoolInterface;
 
 /**
  * Interface CacheDriver.
@@ -21,7 +22,7 @@ use KaririCode\Cache\Contract\Behavioral\MultiOperationCacheable;
  *
  * @see       https://kariricode.org/
  */
-interface CacheDriver extends MultiOperationCacheable
+interface CacheDriver extends MultiOperationCacheable, CacheItemPoolInterface
 {
     /**
      * Gets the supported capabilities of this driver.
@@ -30,10 +31,10 @@ interface CacheDriver extends MultiOperationCacheable
      */
     public function getCapabilities(): array;
 
-    // /**
-    //  * Gets driver-specific statistics.
-    //  *
-    //  * @return DriverStats driver statistics as an immutable object
-    //  */
-    // public function getStats(): DriverStats;
+    /**
+     * Gets driver-specific statistics.
+     *
+     * @return DriverStats driver statistics as an immutable object
+     */
+    public function getStats(): DriverStats;
 }

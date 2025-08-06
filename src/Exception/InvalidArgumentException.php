@@ -51,14 +51,12 @@ final class InvalidArgumentException extends AbstractException
         );
     }
 
-    public static function invalidTtl(mixed $ttl): static
+    public static function invalidTtl(string $message): static
     {
-        $type = is_object($ttl) ? get_class($ttl) : gettype($ttl);
-
         return static::createException(
             self::CODE_INVALID_TTL,
             'INVALID_TTL',
-            "Invalid TTL value. Expected int, DateInterval or null, got {$type}"
+            $message
         );
     }
 
