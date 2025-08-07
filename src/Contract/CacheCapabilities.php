@@ -18,7 +18,7 @@ namespace KaririCode\Cache\Contract;
  *
  * @see       https://kariricode.org/
  */
-final abstract class CacheCapabilities
+abstract class CacheCapabilities
 {
     // Basic Operations
     public const BASIC_OPERATIONS = 'basic_operations';
@@ -98,6 +98,7 @@ final abstract class CacheCapabilities
      * Check if a capability is valid.
      *
      * @param string $capability The capability to check
+     *
      * @return bool True if the capability is valid
      */
     public static function isValid(string $capability): bool

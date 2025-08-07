@@ -12,8 +12,16 @@ use KaririCode\Contract\ImmutableValue;
 /**
  * A decorator serializer that adds GZIP compression to another serializer.
  */
-final class CompressingSerializer implements CacheSerializer, ImmutableValue
+final class CompressingSerializer implements CacheSerializer
 {
+    private const PREFIX_COMPRESSED = 'gz:';
+    private const PREFIX_RAW = 'raw:';
+
+    /**
+     * @param CacheSerializer $serializer the inner serializer to wrap
+     * @param int $compressionLevel the GZIP compression level (0-9)
+     * @param int $threshold the minimum size in bytes to attempt compression
+     */
     public function __construct(
         private readonly CacheSerializer $serializer,
         private readonly int $compressionLevel = 6,
@@ -25,29 +33,26 @@ final class CompressingSerializer implements CacheSerializer, ImmutableValue
     {
         $serialized = $this->serializer->serialize($data);
 
-        // Only try to compress if the data is larger than the threshold.
-        if (strlen($serialized) < $this->threshold) {
-            return 'raw:' . $serialized;
+        if (!$this->shouldCompress($serialized)) {
+            return self::PREFIX_RAW . $serialized;
         }
 
         $compressed = gzcompress($serialized, $this->compressionLevel);
 
-        // Check if compression was successful and if it provided a meaningful size reduction.
-        if (false !== $compressed && strlen($compressed) < strlen($serialized)) {
-            return 'gz:' . $compressed;
+        if ($this->wasCompressionEffective($compressed, $serialized)) {
+            return self::PREFIX_COMPRESSED . $compressed;
         }
 
-        // If compression failed or didn't help, store the raw data.
-        return 'raw:' . $serialized;
+        return self::PREFIX_RAW . $serialized;
     }
 
     public function unserialize(string $data): mixed
     {
-        if (str_starts_with($data, 'gz:')) {
-            $compressedData = substr($data, 3);
-            $decompressed = gzuncompress($compressedData);
+        if ($this->isCompressed($data)) {
+            $compressedData = substr($data, strlen(self::PREFIX_COMPRESSED));
+            // Suppress the expected warning when data is corrupt.
+            $decompressed = @gzuncompress($compressedData);
 
-            // Check if decompression was successful before passing it on.
             if (false === $decompressed) {
                 throw CacheException::deserializationFailed('compressing', new \RuntimeException('Failed to decompress data, it might be corrupt.'));
             }
@@ -55,8 +60,8 @@ final class CompressingSerializer implements CacheSerializer, ImmutableValue
             return $this->serializer->unserialize($decompressed);
         }
 
-        if (str_starts_with($data, 'raw:')) {
-            return $this->serializer->unserialize(substr($data, 4));
+        if ($this->isRaw($data)) {
+            return $this->serializer->unserialize(substr($data, strlen(self::PREFIX_RAW)));
         }
 
         // For backward compatibility, assume old data might not have a prefix.
@@ -75,11 +80,43 @@ final class CompressingSerializer implements CacheSerializer, ImmutableValue
 
     public function getConfiguration(): ImmutableValue
     {
-        return new SerializationScheme([
-            'type' => 'compressing',
-            'inner_serializer' => get_class($this->serializer),
-            'compression_level' => $this->compressionLevel,
-            'threshold' => $this->threshold,
-        ]);
+        return new SerializationScheme(
+            type: 'compressing',
+            innerSerializer: get_class($this->serializer),
+            compressionLevel: $this->compressionLevel,
+            threshold: $this->threshold
+        );
+    }
+
+    /**
+     * Determines if the data is large enough to be worth compressing.
+     */
+    private function shouldCompress(string $data): bool
+    {
+        return strlen($data) >= $this->threshold;
+    }
+
+    /**
+     * Checks if compression was successful and resulted in a smaller size.
+     */
+    private function wasCompressionEffective(string|false $compressed, string $original): bool
+    {
+        return false !== $compressed && strlen($compressed) < strlen($original);
+    }
+
+    /**
+     * Checks if the data is prefixed as compressed.
+     */
+    private function isCompressed(string $data): bool
+    {
+        return str_starts_with($data, self::PREFIX_COMPRESSED);
+    }
+
+    /**
+     * Checks if the data is prefixed as raw (uncompressed).
+     */
+    private function isRaw(string $data): bool
+    {
+        return str_starts_with($data, self::PREFIX_RAW);
     }
 }

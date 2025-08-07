@@ -134,13 +134,4 @@ final class CircuitBreakerState
 
         return (time() - $this->lastFailureTimestamp) > self::OPEN_TIMEOUT_SECONDS;
     }
-
-    public function toArray(): array
-    {
-        return [
-            'failures' => $this->failures,
-            'last_failure_timestamp' => $this->lastFailureTimestamp,
-            'state' => $this->state,
-        ];
-    }
 }

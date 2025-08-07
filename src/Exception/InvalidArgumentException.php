@@ -70,6 +70,24 @@ final class InvalidArgumentException extends AbstractException
         );
     }
 
+    public static function emptyTag(): static
+    {
+        return static::createException(
+            self::CODE_INVALID_TAG,
+            'EMPTY_TAG',
+            'Tag cannot be empty.'
+        );
+    }
+
+    public static function tagTooLong(string $tag, int $maxLength): static
+    {
+        return static::createException(
+            self::CODE_INVALID_TAG,
+            'TAG_TOO_LONG',
+            sprintf('Tag cannot exceed %d characters. Current length: %d.', $maxLength, strlen($tag))
+        );
+    }
+
     public static function invalidTagFormat(string $tag): static
     {
         return static::createException(
@@ -79,12 +97,41 @@ final class InvalidArgumentException extends AbstractException
         );
     }
 
-    public static function invalidTopic(string $topic): static
+    public static function invalidTopic(string $reason): static
     {
         return static::createException(
             self::CODE_INVALID_TOPIC,
             'INVALID_TOPIC',
-            "Invalid cache topic: '{$topic}'"
+            "Invalid cache topic: {$reason}"
+        );
+    }
+
+    public static function emptyTopic(): static
+    {
+        return static::createException(
+            self::CODE_INVALID_TOPIC,
+            'EMPTY_TOPIC',
+            'Topic cannot be empty.'
+        );
+    }
+
+    public static function topicTooLong(
+        string $topic,
+        int $maxLength
+    ): static {
+        return static::createException(
+            self::CODE_INVALID_TOPIC,
+            'TOPIC_TOO_LONG',
+            sprintf('Topic cannot exceed %d characters. Current length: %d.', $maxLength, mb_strlen($topic))
+        );
+    }
+
+    public static function invalidTopicFormat(string $topic): static
+    {
+        return static::createException(
+            self::CODE_INVALID_TOPIC,
+            'INVALID_TOPIC_FORMAT',
+            "Invalid cache topic format: '{$topic}'. Only alphanumeric characters, underscores, dots, colons, and hyphens are allowed."
         );
     }
 

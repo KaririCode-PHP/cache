@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "27371d76d276f61d4df999d0319174c1",
+    "content-hash": "4ce9a11c8467dc1499869b24825bc39e",
     "packages": [
         {
             "name": "composer/ca-bundle",
@@ -798,24 +798,24 @@
         },
         {
             "name": "kariricode/contract",
-            "version": "v2.8.3",
+            "version": "v2.8.4",
             "source": {
                 "type": "git",
                 "url": "https://github.com/KaririCode-Framework/kariricode-contract.git",
-                "reference": "168e5fb10e95657cfbdec9f7131b0cc0f3c636ba"
+                "reference": "4dc1271aff94e3833dbbf64cc35618a1f85e807a"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/KaririCode-Framework/kariricode-contract/zipball/168e5fb10e95657cfbdec9f7131b0cc0f3c636ba",
-                "reference": "168e5fb10e95657cfbdec9f7131b0cc0f3c636ba",
+                "url": "https://api.github.com/repos/KaririCode-Framework/kariricode-contract/zipball/4dc1271aff94e3833dbbf64cc35618a1f85e807a",
+                "reference": "4dc1271aff94e3833dbbf64cc35618a1f85e807a",
                 "shasum": ""
             },
             "require": {
                 "php": "^8.3"
             },
             "require-dev": {
-                "enlightn/security-checker": "^2.0",
-                "friendsofphp/php-cs-fixer": "^3.58",
+                "enlightn/security-checker": "2.0.0",
+                "friendsofphp/php-cs-fixer": "3.85.1",
                 "mockery/mockery": "^1.6",
                 "nunomaduro/phpinsights": "^2.11",
                 "phpunit/phpunit": "^10.5",
@@ -856,7 +856,7 @@
                 "issues": "https://github.com/KaririCode-Framework/kariricode-contract/issues",
                 "source": "https://github.com/KaririCode-Framework/kariricode-contract"
             },
-            "time": "2025-03-06T16:05:06+00:00"
+            "time": "2025-07-31T14:42:52+00:00"
         },
         {
             "name": "kariricode/data-structure",
