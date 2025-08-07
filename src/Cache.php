@@ -8,8 +8,9 @@ use KaririCode\Cache\Builder\CacheOperationBuilder;
 use KaririCode\Cache\Command\CommandExecutor;
 use KaririCode\Cache\Command\CommandFactory;
 use KaririCode\Cache\Contract\AdvancedCache;
+use KaririCode\Cache\Contract\Behavioral\Taggable;
 use KaririCode\Cache\Contract\Behavioral\TopicSubscribable;
-use KaririCode\Cache\Contract\TaggableCache;
+use KaririCode\Cache\Driver\LayeredDriver;
 use KaririCode\Cache\Metrics\CacheMetrics;
 use KaririCode\Cache\Service\EventService;
 use KaririCode\Cache\Service\HealthCheckService;
@@ -26,8 +27,15 @@ use Psr\Log\NullLogger;
  * Provides a simple, unified public API for interacting with the complex caching subsystem.
  * It follows the Facade pattern, delegating all operations to specialized command
  * objects, which are created by a factory and executed by an executor.
+ *
+ * @category  Cache
+ *
+ * @author    Walmir Silva <walmir.silva@kariricode.org>
+ * @license   MIT
+ *
+ * @see       https://kariricode.org/
  */
-final class Cache implements AdvancedCache, TaggableCache, TopicSubscribable
+final class Cache implements AdvancedCache, Taggable, TopicSubscribable
 {
     private readonly CommandExecutor $commandExecutor;
     private readonly CommandFactory $commandFactory;
@@ -37,20 +45,19 @@ final class Cache implements AdvancedCache, TaggableCache, TopicSubscribable
      */
     public function __construct(
         private readonly string $name,
-        // Low-level components
-        private readonly LayeredCacheManager $layeredCache,
+        private readonly LayeredDriver $driver,
         // Services
         private readonly ValidationService $validator,
         private readonly SerializationService $serializer,
         private readonly EventService $events,
         private readonly MetricsService $metrics,
         private readonly HealthCheckService $health,
-        private readonly LockService $locks, // LockService is available for more advanced use cases
+        private readonly LockService $locks,
         private readonly LoggerInterface $logger = new NullLogger()
     ) {
         $this->commandExecutor = new CommandExecutor($this->logger);
         $this->commandFactory = new CommandFactory(
-            $this->layeredCache,
+            $this->driver,
             $this->validator,
             $this->serializer,
             $this->events,
@@ -60,15 +67,12 @@ final class Cache implements AdvancedCache, TaggableCache, TopicSubscribable
 
     // --- Fluent Interface ---
 
-    /**
-     * Returns a new fluent operation builder for chaining complex commands.
-     */
     public function with(): CacheOperationBuilder
     {
         return new CacheOperationBuilder($this->commandFactory, $this->commandExecutor);
     }
 
-    // --- Basic Operations ---
+    // --- Basic Operations (Delegated to Command Pattern) ---
 
     public function get(string $key, mixed $default = null): mixed
     {
@@ -105,7 +109,7 @@ final class Cache implements AdvancedCache, TaggableCache, TopicSubscribable
         return $this->commandExecutor->execute($command);
     }
 
-    // --- Batch Operations ---
+    // --- Batch Operations (Delegated to Command Pattern) ---
 
     public function getMultiple(iterable $keys): iterable
     {
@@ -128,7 +132,7 @@ final class Cache implements AdvancedCache, TaggableCache, TopicSubscribable
         return $this->commandExecutor->execute($command);
     }
 
-    // --- Atomic Operations ---
+    // --- Atomic Operations (Delegated to Command Pattern) ---
 
     public function increment(string $key, int $step = 1, int $initialValue = 0): int
     {
@@ -158,7 +162,7 @@ final class Cache implements AdvancedCache, TaggableCache, TopicSubscribable
         return $this->commandExecutor->execute($command);
     }
 
-    // --- Taggable Operations ---
+    // --- Taggable Operations (Delegated to Command Pattern) ---
 
     public function setWithTags(string $key, mixed $value, iterable $tags = []): bool
     {
@@ -176,42 +180,43 @@ final class Cache implements AdvancedCache, TaggableCache, TopicSubscribable
 
     public function getByTags(iterable $tags): iterable
     {
-        // This operation is more complex and typically used via the builder,
-        // but can be offered here for completeness.
-        return $this->with()->getByTags($tags);
+        $command = $this->commandFactory->createGetByTagsCommand($tags);
+
+        return $this->commandExecutor->execute($command);
     }
 
     public function getTags(): iterable
     {
-        // This is a direct query on the driver, bypassing the command pattern for simplicity.
-        return $this->layeredCache->getTags();
+        return $this->driver->getTags();
     }
 
-    // --- Topic Operations ---
+    // --- Topic Operations (Delegated to Driver) ---
 
     public function subscribeTo(string $key, iterable $topics): void
     {
-        $this->layeredCache->subscribeTo($key, $topics);
+        $this->driver->subscribeTo($key, $topics);
     }
 
     public function unsubscribeFrom(string $key, iterable $topics): void
     {
-        $this->layeredCache->unsubscribeFrom($key, $topics);
+        if (method_exists($this->driver, 'unsubscribeFrom')) {
+            $this->driver->unsubscribeFrom($key, $topics);
+        }
     }
 
     public function invalidateTopics(iterable $topics): bool
     {
-        return $this->layeredCache->invalidateTopics($topics);
+        return $this->driver->invalidateTopics($topics);
     }
 
     public function getSubscribedTopics(string $key): array
     {
-        return $this->layeredCache->getSubscribedTopics($key);
+        return $this->driver->getSubscribedTopics($key);
     }
 
     public function getSubscribersForTopic(string $topic): array
     {
-        return $this->layeredCache->getSubscribersForTopic($topic);
+        return $this->driver->getSubscribersForTopic($topic);
     }
 
     // --- Metadata and Health ---
@@ -233,20 +238,6 @@ final class Cache implements AdvancedCache, TaggableCache, TopicSubscribable
 
     public function getCapabilities(): array
     {
-        return [];
-    }
-
-    // ========================================================================
-    // Internal Access for Builder
-    // ========================================================================
-
-    public function getCommandExecutor(): CommandExecutor
-    {
-        return $this->commandExecutor;
-    }
-
-    public function getLayeredCache(): LayeredCacheManager
-    {
-        return $this->layeredCache;
+        return $this->driver->getCapabilities();
     }
 }

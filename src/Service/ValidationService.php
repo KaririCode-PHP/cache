@@ -58,6 +58,13 @@ final class ValidationService
         }
     }
 
+    public function validateMultipleKeys(iterable $keys): void
+    {
+        foreach ($keys as $key) {
+            $this->validateKey((string) $key);
+        }
+    }
+
     public function validateMultipleValues(iterable $values): void
     {
         foreach ($values as $key => $value) {

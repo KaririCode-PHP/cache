@@ -4,22 +4,23 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Config;
 
+use KaririCode\Cache\Config\DTO\LayeredDriverConfig;
 use KaririCode\Cache\Exception\ConfigurationException;
 use KaririCode\Contract\ImmutableValue;
 
 /**
  * Store Configuration Value Object.
  *
- * Represents the configuration for a single cache store.
- * This is an immutable value object that encapsulates all
- * settings for a specific cache driver instance.
+ * Represents the configuration for a single cache store. This is an immutable
+ * value object that encapsulates all settings for a specific cache driver instance,
+ * including specialized configurations for layered drivers.
  *
  * @category  Cache
  *
  * @author    Walmir Silva <walmir.silva@kariricode.org>
  * @license   MIT
  *
- * @see      https://kariricode.org/
+ * @see       https://kariricode.org/
  */
 final class StoreConfiguration implements ImmutableValue
 {
@@ -27,6 +28,7 @@ final class StoreConfiguration implements ImmutableValue
     private readonly string $driver;
     private readonly array $config;
     private readonly array $layers;
+    private readonly ?LayeredDriverConfig $layeredConfig;
 
     /**
      * @param string $name Store name
@@ -39,7 +41,14 @@ final class StoreConfiguration implements ImmutableValue
         $this->name = $name;
         $this->driver = $config['driver'];
         $this->config = $config['config'] ?? [];
-        $this->layers = $config['layers'] ?? [];
+
+        if ('layered' === $this->driver) {
+            $this->layers = $this->config['layers'] ?? [];
+            $this->layeredConfig = new LayeredDriverConfig($this->config);
+        } else {
+            $this->layers = [];
+            $this->layeredConfig = null;
+        }
     }
 
     public function getName(): string
@@ -54,12 +63,25 @@ final class StoreConfiguration implements ImmutableValue
 
     public function getConfig(): array
     {
+        // For non-layered drivers, this returns all their specific settings.
+        // For layered drivers, it contains settings like promotion, etc.
         return $this->config;
     }
 
+    /**
+     * @return array<int, array<string, mixed>>
+     */
     public function getLayers(): array
     {
         return $this->layers;
+    }
+
+    /**
+     * Returns the specific configuration DTO for a layered driver.
+     */
+    public function getLayeredConfig(): ?LayeredDriverConfig
+    {
+        return $this->layeredConfig;
     }
 
     public function isLayered(): bool
@@ -77,40 +99,17 @@ final class StoreConfiguration implements ImmutableValue
         return array_key_exists($key, $this->config);
     }
 
-    /**
-     * Get all configuration options.
-     */
-    public function getOptions(): array
-    {
-        return $this->config;
-    }
-
     private function validateConfig(array $config): void
     {
-        if (!isset($config['driver'])) {
-            throw ConfigurationException::invalidConfiguration('driver', 'Driver must be specified for cache store');
+        if (!isset($config['driver']) || !is_string($config['driver']) || empty($config['driver'])) {
+            throw ConfigurationException::invalidConfiguration('driver', 'Driver must be specified for cache store and must be a non-empty string.');
         }
 
-        if (!is_string($config['driver']) || empty($config['driver'])) {
-            throw ConfigurationException::invalidConfiguration('driver', 'Driver must be a non-empty string');
-        }
-
-        // Validate layered configuration
         if ('layered' === $config['driver']) {
-            if (!isset($config['layers']) || !is_array($config['layers'])) {
-                throw ConfigurationException::invalidConfiguration('layers', 'Layered cache must have layers configuration');
+            if (!isset($config['config']['layers']) || !is_array($config['config']['layers']) || empty($config['config']['layers'])) {
+                throw ConfigurationException::invalidConfiguration('layers', 'Layered cache must have a non-empty "layers" array inside its "config".');
             }
-
-            if (empty($config['layers'])) {
-                throw ConfigurationException::invalidConfiguration('layers', 'Layered cache must have at least one layer');
-            }
-
-            $this->validateLayers($config['layers']);
-        }
-
-        // Validate config is array if present
-        if (isset($config['config']) && !is_array($config['config'])) {
-            throw ConfigurationException::invalidConfiguration('config', 'Store config must be an array');
+            $this->validateLayers($config['config']['layers']);
         }
     }
 
@@ -118,20 +117,10 @@ final class StoreConfiguration implements ImmutableValue
     {
         foreach ($layers as $index => $layer) {
             if (!is_array($layer)) {
-                throw ConfigurationException::invalidConfiguration("layers.{$index}", 'Layer configuration must be an array');
+                throw ConfigurationException::invalidConfiguration("layers.{$index}", 'Layer configuration must be an array.');
             }
-
-            if (!isset($layer['driver'])) {
-                throw ConfigurationException::invalidConfiguration("layers.{$index}.driver", 'Layer driver must be specified');
-            }
-
-            if (!is_string($layer['driver']) || empty($layer['driver'])) {
-                throw ConfigurationException::invalidConfiguration("layers.{$index}.driver", 'Layer driver must be a non-empty string');
-            }
-
-            // Validate priority if present
-            if (isset($layer['priority']) && (!is_int($layer['priority']) || $layer['priority'] < 0)) {
-                throw ConfigurationException::invalidConfiguration("layers.{$index}.priority", 'Layer priority must be a non-negative integer');
+            if (!isset($layer['driver']) || !is_string($layer['driver']) || empty($layer['driver'])) {
+                throw ConfigurationException::invalidConfiguration("layers.{$index}.driver", 'Layer driver must be specified and be a non-empty string.');
             }
         }
     }

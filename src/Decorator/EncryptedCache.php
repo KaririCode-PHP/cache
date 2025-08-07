@@ -7,9 +7,9 @@ namespace KaririCode\Cache\Decorator;
 use KaririCode\Cache\Builder\CacheOperationBuilder;
 use KaririCode\Cache\Cache;
 use KaririCode\Cache\Contract\AdvancedCache;
+use KaririCode\Cache\Contract\Behavioral\Taggable;
 use KaririCode\Cache\Contract\Behavioral\TopicSubscribable;
 use KaririCode\Cache\Contract\CacheCapabilities;
-use KaririCode\Cache\Contract\TaggableCache;
 use KaririCode\Cache\Exception\CacheException;
 use KaririCode\Cache\Exception\InvalidArgumentException;
 use KaririCode\Cache\Exception\SecurityException;
@@ -34,7 +34,7 @@ use KaririCode\Cache\Service\SerializationService;
  *
  * @see       https://kariricode.org/
  */
-final class EncryptedCacheDecorator implements AdvancedCache, TaggableCache, TopicSubscribable
+final class EncryptedCacheDecorator implements AdvancedCache, Taggable, TopicSubscribable
 {
     private readonly int $ivLength;
     private readonly int $tagLength;

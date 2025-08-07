@@ -34,32 +34,36 @@ final class CircuitBreakerState
     public function __construct(
         public readonly int $failures = 0,
         public readonly ?int $lastFailureTimestamp = null,
-        public readonly string $state = self::STATE_CLOSED
+        public readonly string $state = self::STATE_CLOSED,
     ) {
+    }
+
+    /**
+     * Exposes the current consecutive failure count.
+     */
+    public function getFailureCount(): int
+    {
+        return $this->failures;
     }
 
     /**
      * Records a successful operation and transitions the state if necessary.
      * If the circuit was half-open, a success closes it.
-     *
-     * @return self a new instance representing the updated state
      */
     public function recordSuccess(): self
     {
+        // A successful operation when half-open resets the circuit fully.
         if ($this->isHalfOpen()) {
-            // A successful operation in a half-open state resets the circuit.
             return new self();
         }
 
-        // If closed, a success doesn't change the state.
+        // No change required for CLOSED state.
         return $this;
     }
 
     /**
-     * Records a failure and returns a new state.
-     * The state does not automatically open; use `open()` for that transition.
-     *
-     * @return self a new instance representing the updated state
+     * Records a failure and returns a new state instance.
+     * The state itself is not automatically opened; call open() explicitly if desired.
      */
     public function recordFailure(): self
     {
@@ -67,60 +71,60 @@ final class CircuitBreakerState
     }
 
     /**
-     * Transitions the state to open.
-     *
-     * @return self a new instance in the 'open' state
+     * Forces a transition to OPEN state.
      */
     public function open(): self
     {
-        return new self($this->failures, $this->lastFailureTimestamp, self::STATE_OPEN);
+        // Ensure we have a timestamp marking when the circuit opened.
+        return new self($this->failures, $this->lastFailureTimestamp ?? time(), self::STATE_OPEN);
     }
 
     /**
-     * Transitions the state to half-open.
-     *
-     * @return self a new instance in the 'half-open' state, with failures reset
+     * Forces a transition to HALF-OPEN state, resetting failure counters.
      */
     public function halfOpen(): self
     {
         return new self(0, null, self::STATE_HALF_OPEN);
     }
 
-    /**
-     * Checks if the circuit is currently open.
-     */
+    // === State inspection helpers ===
+
     public function isOpen(): bool
     {
         return self::STATE_OPEN === $this->state;
     }
 
-    /**
-     * Checks if the circuit is currently closed.
-     */
     public function isClosed(): bool
     {
         return self::STATE_CLOSED === $this->state;
     }
 
-    /**
-     * Checks if the circuit is currently half-open.
-     */
     public function isHalfOpen(): bool
     {
         return self::STATE_HALF_OPEN === $this->state;
     }
 
-    /**
-     * Determines if the circuit should be opened based on the failure threshold.
-     */
+    // === Transition decision helpers ===
+
     public function shouldOpen(): bool
     {
         return $this->failures >= self::FAILURE_THRESHOLD;
     }
 
     /**
-     * Determines if a retry can be attempted when the circuit is open.
-     * This is true if the timeout period has passed since the last failure.
+     * Determines if the circuit should reset from OPEN to HALF-OPEN after a timeout.
+     */
+    public function shouldAttemptReset(int $timeoutSeconds): bool
+    {
+        if (null === $this->lastFailureTimestamp) {
+            return false;
+        }
+
+        return (time() - $this->lastFailureTimestamp) > $timeoutSeconds;
+    }
+
+    /**
+     * Determines if a retry can be attempted while OPEN.
      */
     public function canAttemptRetry(): bool
     {
@@ -129,5 +133,14 @@ final class CircuitBreakerState
         }
 
         return (time() - $this->lastFailureTimestamp) > self::OPEN_TIMEOUT_SECONDS;
+    }
+
+    public function toArray(): array
+    {
+        return [
+            'failures' => $this->failures,
+            'last_failure_timestamp' => $this->lastFailureTimestamp,
+            'state' => $this->state,
+        ];
     }
 }

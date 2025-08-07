@@ -4,13 +4,13 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Item;
 
-use KaririCode\Cache\Contract\CacheItem as CacheItemContract;
+use Psr\Cache\CacheItemInterface;
 
 /**
  * A DTO representing a cache item, adhering to PSR-6.
  * This class is a simple data container; all validation is delegated to services.
  */
-final class CacheItem implements CacheItemContract
+final class CacheItem implements CacheItemInterface
 {
     private ?\DateTimeInterface $expiration = null;
 

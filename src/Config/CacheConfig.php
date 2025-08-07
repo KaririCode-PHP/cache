@@ -84,6 +84,16 @@ final class CacheConfig implements ImmutableValue
     }
 
     /**
+     * Check if store exists.
+     */
+    public function hasStore(string $name): bool
+    {
+        $stores = $this->getStores();
+
+        return isset($stores[$name]);
+    }
+
+    /**
      * Get all cache stores configuration.
      *
      * @return array<string, StoreConfiguration> associative array of store names and their configurations

@@ -23,6 +23,7 @@ final class InvalidArgumentException extends AbstractException
     private const CODE_INVALID_NAMESPACE = 1249;
     private const CODE_INVALID_VALUE = 1250;
     private const CODE_INVALID_CONFIGURATION = 1251;
+    private const CODE_INVALID_STEP = 1252;
 
     public static function emptyKey(): static
     {
@@ -84,6 +85,15 @@ final class InvalidArgumentException extends AbstractException
             self::CODE_INVALID_TOPIC,
             'INVALID_TOPIC',
             "Invalid cache topic: '{$topic}'"
+        );
+    }
+
+    public static function forInvalidStep(int $step): static
+    {
+        return static::createException(
+            self::CODE_INVALID_STEP,
+            'INVALID_STEP',
+            "Invalid step value: '{$step}'"
         );
     }
 

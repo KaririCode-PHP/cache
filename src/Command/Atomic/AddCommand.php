@@ -5,8 +5,8 @@ declare(strict_types=1);
 namespace KaririCode\Cache\Command\Atomic;
 
 use KaririCode\Cache\Command\AbstractCacheCommand;
+use KaririCode\Cache\Contract\Driver\LayeredDriver;
 use KaririCode\Cache\Item\CacheItem;
-use KaririCode\Cache\LayeredCacheManager;
 use KaririCode\Cache\Service\EventService;
 use KaririCode\Cache\Service\MetricsService;
 use KaririCode\Cache\Service\SerializationService;
@@ -18,17 +18,8 @@ use KaririCode\Cache\Service\ValidationService;
  */
 final class AddCommand extends AbstractCacheCommand
 {
-    /**
-     * @param LayeredCacheManager $cache the cache manager to perform the operation on
-     * @param ValidationService $validator service for validating inputs
-     * @param SerializationService $serializer service for serializing the value
-     * @param EventService $events service for dispatching cache events
-     * @param MetricsService $metrics service for recording performance metrics
-     * @param string $key the cache key for the item to add
-     * @param mixed $value the value to store
-     */
     public function __construct(
-        private readonly LayeredCacheManager $cache,
+        private readonly LayeredDriver $cache,
         ValidationService $validator,
         private readonly SerializationService $serializer,
         EventService $events,
@@ -70,10 +61,10 @@ final class AddCommand extends AbstractCacheCommand
      *
      * @param mixed $result the result of the doExecute method
      */
-    protected function afterExecute(mixed $result): void
+    protected function afterExecute(mixed $result, float $duration): void
     {
         if (true === $result) {
-            $this->events->dispatchCacheSet($this->key, $this->value, $this->ttl);
+            $this->events->dispatchCacheSet($this->key, $this->value, $this->ttl, $duration);
         }
     }
 

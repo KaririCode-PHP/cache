@@ -5,8 +5,8 @@ declare(strict_types=1);
 namespace KaririCode\Cache\Command\Basic;
 
 use KaririCode\Cache\Command\AbstractCacheCommand;
+use KaririCode\Cache\Contract\Driver\LayeredDriver;
 use KaririCode\Cache\Item\CacheItem;
-use KaririCode\Cache\LayeredCacheManager;
 use KaririCode\Cache\Service\EventService;
 use KaririCode\Cache\Service\MetricsService;
 use KaririCode\Cache\Service\SerializationService;
@@ -19,7 +19,7 @@ use KaririCode\Cache\Service\ValidationService;
 final class SetCommand extends AbstractCacheCommand
 {
     public function __construct(
-        private readonly LayeredCacheManager $cache,
+        private readonly LayeredDriver $cache,
         ValidationService $validator,
         private readonly SerializationService $serializer,
         EventService $events,

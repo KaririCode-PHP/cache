@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Service;
 
-use KaririCode\Cache\LayeredCacheManager;
+use KaririCode\Cache\Contract\Driver\LayeredDriver;
 use KaririCode\Cache\Service\DTO\HealthCheckResult;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
@@ -20,8 +20,7 @@ final class HealthCheckService
     private array $checks = [];
 
     public function __construct(
-        // DEPENDENCY CHANGED: Now depends on a lower-level, more stable component.
-        private readonly LayeredCacheManager $cacheManager,
+        private readonly LayeredDriver $driver,
         private readonly MetricsService $metrics,
         private readonly LoggerInterface $logger = new NullLogger()
     ) {
@@ -113,20 +112,20 @@ final class HealthCheckService
      */
     private function registerDefaultChecks(): void
     {
-        // Connectivity check now uses the PSR-6 interface methods from LayeredCacheManager
+        // Connectivity check now uses the PSR-6 interface methods from Layereddriver
         $this->checks['connectivity'] = function () {
             $key = '__health_check:' . uniqid();
-            $item = $this->cacheManager->getItem($key);
+            $item = $this->driver->getItem($key);
             $item->set('ok');
             $item->expiresAfter(5);
 
-            if (!$this->cacheManager->save($item)) {
+            if (!$this->driver->save($item)) {
                 return ['healthy' => false, 'message' => 'Failed to write to cache'];
             }
-            if (!$this->cacheManager->hasItem($key)) {
+            if (!$this->driver->hasItem($key)) {
                 return ['healthy' => false, 'message' => 'Write successful, but item not found'];
             }
-            $this->cacheManager->deleteItem($key);
+            $this->driver->deleteItem($key);
 
             return true;
         };

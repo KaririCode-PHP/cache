@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace KaririCode\Cache\Command\Basic;
 
 use KaririCode\Cache\Command\AbstractCacheCommand;
-use KaririCode\Cache\LayeredCacheManager;
+use KaririCode\Cache\Contract\Driver\LayeredDriver;
 use KaririCode\Cache\Service\EventService;
 use KaririCode\Cache\Service\MetricsService;
 use KaririCode\Cache\Service\ValidationService;
@@ -16,7 +16,7 @@ use KaririCode\Cache\Service\ValidationService;
 final class DeleteCommand extends AbstractCacheCommand
 {
     public function __construct(
-        private readonly LayeredCacheManager $cache,
+        private readonly LayeredDriver $cache,
         ValidationService $validator,
         EventService $events,
         MetricsService $metrics,
