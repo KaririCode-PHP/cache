@@ -11,29 +11,25 @@ use KaririCode\Cache\Config\DTO\LoggingConfig;
 use KaririCode\Cache\Config\DTO\MetricsConfig;
 use KaririCode\Cache\Config\DTO\OptimizationConfig;
 use KaririCode\Cache\Config\DTO\ValidationConfig;
+use KaririCode\Cache\Contract\Configuration\ConfigurationProvider;
 use KaririCode\Cache\Exception\ConfigurationException;
 use KaririCode\Contract\ImmutableValue;
 
 /**
- * Cache Configuration Manager.
+ * Immutable cache configuration implementation.
  *
- * This class manages all cache configuration, validating and providing
- * access to store configurations, serializers, and other settings.
- * Implements the Value Object pattern as an immutable configuration.
+ * This class serves as the primary configuration container,
+ * implementing the Value Object pattern for immutability.
  *
  * Design Patterns:
  * - Value Object: Immutable configuration representation
- * - Builder Pattern: Can be built from arrays
- * - Facade Pattern: Simplifies access to complex configuration
  *
  * @category  Cache
  *
  * @author    Walmir Silva <walmir.silva@kariricode.org>
  * @license   MIT
- *
- * @see      https://kariricode.org/
  */
-final class CacheConfiguration implements ImmutableValue
+final class CacheConfiguration implements ConfigurationProvider, ImmutableValue
 {
     private readonly string $defaultStore;
     private readonly array $stores;
@@ -72,6 +68,7 @@ final class CacheConfiguration implements ImmutableValue
         $this->validateDefaultSerializer();
     }
 
+    // region ConfigurationProvider Interface Implementation
     public function getDefaultStore(): string
     {
         return $this->defaultStore;
@@ -85,9 +82,13 @@ final class CacheConfiguration implements ImmutableValue
         return $this->stores;
     }
 
-    public function getStore(string $name): ?StoreConfiguration
+    public function getStore(string $name): StoreConfiguration
     {
-        return $this->stores[$name] ?? null;
+        if (!isset($this->stores[$name])) {
+            throw ConfigurationException::missingStore($name);
+        }
+
+        return $this->stores[$name];
     }
 
     public function hasStore(string $name): bool
@@ -95,14 +96,14 @@ final class CacheConfiguration implements ImmutableValue
         return isset($this->stores[$name]);
     }
 
-    public function getSerializers(): array
-    {
-        return $this->serializers;
-    }
-
     public function getDefaultSerializer(): string
     {
         return $this->defaultSerializer;
+    }
+
+    public function getSerializers(): array
+    {
+        return $this->serializers;
     }
 
     public function getFeatures(): FeatureConfig
@@ -139,19 +140,19 @@ final class CacheConfiguration implements ImmutableValue
     {
         return $this->optimizations;
     }
+    // endregion
 
+    // region Private Helper Methods
     /**
      * @return array<string, StoreConfiguration>
      */
     private function buildStores(array $stores): array
     {
         $configurations = [];
-
         foreach ($stores as $name => $config) {
             if (!is_string($name) || !is_array($config)) {
                 throw ConfigurationException::invalidConfiguration("stores.{$name}", 'Store configuration must be an array');
             }
-
             try {
                 $configurations[$name] = new StoreConfiguration($name, $config);
             } catch (\Exception $e) {
@@ -167,11 +168,9 @@ final class CacheConfiguration implements ImmutableValue
         if (isset($config['default']) && !is_string($config['default'])) {
             throw ConfigurationException::invalidConfiguration('default', 'Default store must be a string');
         }
-
         if (isset($config['stores']) && !is_array($config['stores'])) {
             throw ConfigurationException::invalidConfiguration('stores', 'Stores must be an array');
         }
-
         if (empty($config['stores'])) {
             throw ConfigurationException::invalidConfiguration('stores', 'At least one cache store must be configured');
         }
@@ -199,4 +198,5 @@ final class CacheConfiguration implements ImmutableValue
             'igbinary' => \KaririCode\Cache\Serializer\IgbinarySerializer::class,
         ];
     }
+    // endregion
 }

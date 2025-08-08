@@ -228,12 +228,20 @@ return [
     'serializers' => [
         'native'    => \KaririCode\Cache\Serializer\NativeSerializer::class,
         'igbinary'  => \KaririCode\Cache\Serializer\IgbinarySerializer::class,
-        'json'      => \KaririCode\Cache\Serializer\JsonSerializer::class,
+        'json_pretty' => [
+            'class' => \KaririCode\Cache\Serializer\JsonSerializer::class,
+            'options' => [
+                'flags' => JSON_PRETTY_PRINT,
+                'depth' => 256,
+            ],
+        ],
         'compressed' => [
             'class'             => \KaririCode\Cache\Serializer\CompressingSerializer::class,
             'inner'             => 'igbinary',
-            'compression_level' => 6,
-            'threshold'         => 1024,
+            'options' => [
+                'compression_level' => 6,
+                'threshold' => 1024,
+            ],
         ],
     ],
     'serializer' => env('CACHE_SERIALIZER', 'igbinary'),

@@ -4,13 +4,13 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Service;
 
-use KaririCode\Cache\Config\CacheConfig;
-use KaririCode\Cache\Config\CacheConfiguration;
 use KaririCode\Cache\Config\DriverManager;
+use KaririCode\Cache\Config\StoreConfiguration;
 use KaririCode\Cache\Contract\Behavioral\MultiOperationCacheable;
 use KaririCode\Cache\Contract\Cache;
 use KaririCode\Cache\Contract\CacheDriver;
 use KaririCode\Cache\Contract\CacheSerializer;
+use KaririCode\Cache\Contract\Configuration\ConfigurationProvider;
 use KaririCode\Cache\Contract\Provider\ExpirationProvider;
 use KaririCode\Cache\Exception\ConfigurationException;
 use KaririCode\Cache\Provider\ConfigurableExpirationProvider;
@@ -18,27 +18,20 @@ use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
 
 /**
- * Central Cache Manager - Facade Pattern for cache operations.
+ * Refactored Cache Manager following SOLID principles.
  *
- * This class serves as the main entry point for all cache operations in the application.
- * It manages multiple cache stores, handles driver creation, and provides a unified
- * interface for cache operations.
- *
- * Updated to work seamlessly with both CacheConfig (KaririCode\Configurator integration)
- * and traditional array configuration for maximum flexibility.
+ * This class now has a single responsibility: managing cache stores.
+ * Configuration handling is delegated to the ConfigurationProvider interface.
  *
  * Design Patterns:
- * - Facade Pattern: Provides simplified interface to complex subsystem
+ * - Dependency Injection: Configuration injected via interface
  * - Factory Pattern: Creates and manages cache drivers
  * - Strategy Pattern: Different cache stores for different needs
- * - Adapter Pattern: Adapts between CacheConfig and CacheConfiguration
  *
  * @category  Cache
  *
  * @author    Walmir Silva <walmir.silva@kariricode.org>
  * @license   MIT
- *
- * @see      https://kariricode.org/
  */
 final class CacheManager implements Cache, MultiOperationCacheable
 {
@@ -46,33 +39,23 @@ final class CacheManager implements Cache, MultiOperationCacheable
     private array $stores = [];
 
     private readonly string $defaultStore;
-    private readonly CacheConfiguration $configuration;
     private readonly DriverManager $driverManager;
-    private readonly CacheSerializer $serializationService;
+    private readonly SerializationService $serializationService;
     private readonly LoggerInterface $logger;
     private readonly ExpirationProvider $expirationProvider;
 
     /**
-     * Create CacheManager from various configuration sources.
+     * Constructor with dependency injection via interface.
      *
-     * @param CacheConfig|CacheConfiguration|array $config Configuration source
+     * @param ConfigurationProvider $configuration The configuration provider
      * @param LoggerInterface|null $logger Optional logger
      */
     public function __construct(
-        CacheConfig|CacheConfiguration|array $config,
+        private readonly ConfigurationProvider $configuration,
         ?LoggerInterface $logger = null
     ) {
         $this->logger = $logger ?? new NullLogger();
-
-        // Handle different configuration types
-        $this->configuration = match (true) {
-            $config instanceof CacheConfig => $config->toCacheConfiguration(),
-            $config instanceof CacheConfiguration => $config,
-            is_array($config) => new CacheConfiguration($config),
-            default => throw new \InvalidArgumentException('Invalid configuration type')
-        };
-
-        $this->defaultStore = $this->configuration->getDefaultStore();
+        $this->defaultStore = $configuration->getDefaultStore();
 
         // Initialize core services
         $this->driverManager = new DriverManager();
@@ -84,18 +67,11 @@ final class CacheManager implements Cache, MultiOperationCacheable
 
         $this->logger->info('CacheManager initialized', [
             'default_store' => $this->defaultStore,
-            'available_stores' => array_keys($this->configuration->getStores()),
-            'serializers' => array_keys($this->configuration->getSerializers()),
+            'available_stores' => array_keys($configuration->getStores()),
+            'serializers' => array_keys($this->serializationService->getRegisteredSerializers()),
         ]);
     }
 
-    /**
-     * Get a specific cache store.
-     *
-     * @param string|null $name Store name, or null for default
-     *
-     * @throws ConfigurationException If store doesn't exist
-     */
     public function store(?string $name = null): CacheDriver
     {
         $name = $name ?? $this->defaultStore;
@@ -105,10 +81,6 @@ final class CacheManager implements Cache, MultiOperationCacheable
         }
 
         $storeConfig = $this->configuration->getStore($name);
-        if (!$storeConfig) {
-            throw ConfigurationException::missingStore($name);
-        }
-
         $this->stores[$name] = $this->createDriver($storeConfig);
 
         $this->logger->debug('Cache store created', [
@@ -119,55 +91,34 @@ final class CacheManager implements Cache, MultiOperationCacheable
         return $this->stores[$name];
     }
 
-    /**
-     * Get default store.
-     */
     public function getDefaultStore(): CacheDriver
     {
         return $this->store();
     }
 
-    /**
-     * Check if a store exists.
-     */
     public function hasStore(string $name): bool
     {
         return $this->configuration->hasStore($name);
     }
 
-    /**
-     * Get all available store names.
-     */
     public function getAvailableStores(): array
     {
         return array_keys($this->configuration->getStores());
     }
 
-    /**
-     * Get configuration.
-     */
-    public function getConfiguration(): CacheConfiguration
+    public function getConfiguration(): ConfigurationProvider
     {
         return $this->configuration;
     }
 
-    /**
-     * Get expiration provider.
-     */
-    public function getExpirationProvider(): ExpirationProvider
-    {
-        return $this->expirationProvider;
-    }
-
-    // Delegate methods to default store
     public function get(string $key, mixed $default = null): mixed
     {
         return $this->getDefaultStore()->get($key, $default);
     }
 
-    public function set(string $key, mixed $value): bool
+    public function set(string $key, mixed $value, int|\DateInterval|null $ttl = null): bool
     {
-        return $this->getDefaultStore()->set($key, $value);
+        return $this->getDefaultStore()->set($key, $value, $ttl);
     }
 
     public function delete(string $key): bool
@@ -185,9 +136,9 @@ final class CacheManager implements Cache, MultiOperationCacheable
         return $this->getDefaultStore()->getMultiple($keys, $default);
     }
 
-    public function setMultiple(iterable $values): bool
+    public function setMultiple(iterable $values, int|\DateInterval|null $ttl = null): bool
     {
-        return $this->getDefaultStore()->setMultiple($values);
+        return $this->getDefaultStore()->setMultiple($values, $ttl);
     }
 
     public function deleteMultiple(iterable $keys): bool
@@ -200,30 +151,15 @@ final class CacheManager implements Cache, MultiOperationCacheable
         return $this->getDefaultStore()->has($key);
     }
 
-    public function getSerializationService(): SerializationService
-    {
-        return $this->serializationService;
-    }
-
-    private function createDriver($storeConfig): CacheDriver
+    private function createDriver(StoreConfiguration $storeConfig): CacheDriver
     {
         $driver = $storeConfig->getDriver();
-        $options = $storeConfig->getOptions();
+        $options = $storeConfig->getConfig();
 
-        // Add global configurations
         $options['expiration_provider'] = $this->expirationProvider;
         $options['serializer'] = $this->serializationService;
         $options['logger'] = $this->logger;
 
-        // Add feature flags
-        $features = $this->configuration->getFeatures();
-        $options['features'] = $features->toArray();
-
-        // Add validation rules
-        $validation = $this->configuration->getValidation();
-        $options['validation'] = $validation->toArray();
-
-        // Add driver-specific optimizations
         $optimizations = $this->configuration->getOptimizations();
         $driverOptimizations = $optimizations->getDriverOptimizations($driver);
         if (!empty($driverOptimizations)) {
@@ -233,28 +169,117 @@ final class CacheManager implements Cache, MultiOperationCacheable
         return $this->driverManager->createDriver($driver, $options);
     }
 
+    /**
+     * Creates and configures the serialization service from the configuration.
+     */
     private function createSerializationService(): SerializationService
     {
-        $serializationService = new SerializationService($this->logger);
+        $service = new SerializationService($this->logger);
+        $service->clearSerializers(); // Ensures the configuration is the single source of truth
 
-        return $serializationService;
+        $serializersConfig = $this->configuration->getSerializers();
+        $defaultSerializerName = $this->configuration->getDefaultSerializer();
+
+        foreach ($serializersConfig as $name => $config) {
+            $serializerInstance = $this->buildSerializer($name, $config, $service);
+            $service->registerSerializer($name, $serializerInstance);
+        }
+
+        if ($service->hasSerializer($defaultSerializerName)) {
+            $service->setDefaultSerializer($defaultSerializerName);
+        } elseif (!empty($service->getRegisteredSerializers())) {
+            $firstAvailable = $service->getRegisteredSerializers()[0];
+            $service->setDefaultSerializer($firstAvailable);
+            $this->logger->warning('Default serializer not found, falling back to first available.', [
+                'configured_default' => $defaultSerializerName,
+                'fallback' => $firstAvailable,
+            ]);
+        }
+
+        return $service;
+    }
+
+    /**
+     * Builds a serializer instance from its configuration.
+     * This method contains the semantic and robust logic you suggested.
+     *
+     * @param string $name The serializer's name (e.g., 'json_pretty')
+     * @param string|array<string, mixed> $config The configuration for this serializer
+     * @param SerializationService $service The serialization service (to resolve dependencies)
+     *
+     * @throws ConfigurationException If the configuration is invalid
+     */
+    private function buildSerializer(
+        string $name,
+        string|array $config,
+        SerializationService $service
+    ): CacheSerializer {
+        // Case 1: Simple configuration (just the class name)
+        if ($this->isSimpleConfig($config)) {
+            if (!class_exists($config)) {
+                throw ConfigurationException::invalidConfiguration("serializers.{$name}", "Class '{$config}' not found.");
+            }
+
+            return new $config();
+        }
+
+        // Case 2: Complex configuration (an array with 'class', 'options', etc.)
+        if ($this->isComplexConfig($config)) {
+            $class = $config['class'];
+            $options = $config['options'] ?? [];
+
+            if (!class_exists($class)) {
+                throw ConfigurationException::invalidConfiguration("serializers.{$name}", "Class '{$class}' not found.");
+            }
+
+            // Special case: It's a Decorator that needs another serializer
+            if ($this->isDecoratorConfig($config)) {
+                $innerSerializerName = $config['inner'];
+                $innerInstance = $service->getSerializer($innerSerializerName);
+
+                // Build the decorator by injecting the inner instance and other options
+                return new $class($innerInstance, ...$options);
+            }
+
+            // Build a normal serializer with its options
+            return new $class(...$options);
+        }
+
+        throw ConfigurationException::invalidConfiguration("serializers.{$name}", 'Invalid serializer configuration format.');
+    }
+
+    // --- Semantic check methods ---
+
+    private function isSimpleConfig(mixed $config): bool
+    {
+        return is_string($config);
+    }
+
+    private function isComplexConfig(mixed $config): bool
+    {
+        return is_array($config) && isset($config['class']) && is_string($config['class']);
+    }
+
+    private function isDecoratorConfig(array $config): bool
+    {
+        return isset($config['inner']) && is_string($config['inner']);
     }
 
     private function createExpirationProvider(): ExpirationProvider
     {
-        $config = $this->configuration->getExpirationProvider();
+        $configDto = $this->configuration->getExpirationProvider();
 
-        return ConfigurableExpirationProvider::fromConfig($config);
+        return ConfigurableExpirationProvider::fromConfig($configDto);
     }
 
     private function configureDriverManager(): void
     {
-        // Set global serialization service
         $this->driverManager->setSerializer($this->serializationService);
-
-        // Pre-configure driver options for each store
-        foreach ($this->configuration->getStores() as $name => $storeConfig) {
-            $this->driverManager->setDriverOptions($storeConfig->getDriver(), $storeConfig->getOptions());
+        foreach ($this->configuration->getStores() as $storeConfig) {
+            $this->driverManager->setDriverOptions(
+                $storeConfig->getDriver(),
+                $storeConfig->getConfig()
+            );
         }
     }
 }

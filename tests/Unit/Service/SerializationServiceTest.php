@@ -680,6 +680,34 @@ final class SerializationServiceTest extends TestCase
         $this->assertContains('custom', $registeredSerializers);
     }
 
+    /**
+     * Tests that clearSerializers removes all registered serializers.
+     */
+    public function testClearSerializersRemovesAllSerializers(): void
+    {
+        // Arrange: Verify initial state with default serializers
+        $this->assertNotEmpty($this->service->getRegisteredSerializers());
+        $this->assertTrue($this->service->hasSerializer('native'));
+
+        // Arrange: Add a custom serializer to ensure it's also removed
+        $customSerializer = $this->createMock(CacheSerializer::class);
+        $this->service->registerSerializer('custom', $customSerializer);
+        $this->assertTrue($this->service->hasSerializer('custom'));
+
+        // Act: Call the method under test
+        $this->service->clearSerializers();
+
+        // Assert: The list of registered serializers should now be empty
+        $this->assertEmpty($this->service->getRegisteredSerializers());
+        $this->assertFalse($this->service->hasSerializer('native'));
+        $this->assertFalse($this->service->hasSerializer('custom'));
+
+        // Assert: Attempting to get a serializer should now fail
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('Serializer "native" is not registered');
+        $this->service->getSerializer(); // This uses the default name 'native'
+    }
+
     // ========================================================================
     // JSON Serializer Specific Tests
     // ========================================================================

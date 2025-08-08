@@ -139,6 +139,14 @@ final class SerializationService implements CacheSerializer
     }
 
     /**
+     * Clears all registered serializers.
+     */
+    public function clearSerializers(): void
+    {
+        $this->serializers = [];
+    }
+
+    /**
      * Checks if a serializer with the given name is registered.
      *
      * @param string $name The serializer name to check
@@ -286,6 +294,24 @@ final class SerializationService implements CacheSerializer
         return $this->getSerializer()->getConfiguration();
     }
 
+    /**
+     * Retrieves a serializer instance by name.
+     *
+     * @param string|null $name The serializer name (uses default if null)
+     *
+     * @throws InvalidArgumentException When the requested serializer is not registered
+     *
+     * @return CacheSerializer The requested serializer instance
+     */
+    public function getSerializer(?string $name = null): CacheSerializer
+    {
+        $serializerName = $name ?? $this->defaultSerializer;
+
+        $this->ensureSerializerIsRegistered($serializerName);
+
+        return $this->serializers[$serializerName];
+    }
+
     // ========================================================================
     // Private Helper Methods
     // ========================================================================
@@ -301,24 +327,6 @@ final class SerializationService implements CacheSerializer
     private function isSerializationSupported(mixed $value): bool
     {
         return !($value instanceof \Closure);
-    }
-
-    /**
-     * Retrieves a serializer instance by name.
-     *
-     * @param string|null $name The serializer name (uses default if null)
-     *
-     * @throws InvalidArgumentException When the requested serializer is not registered
-     *
-     * @return CacheSerializer The requested serializer instance
-     */
-    private function getSerializer(?string $name = null): CacheSerializer
-    {
-        $serializerName = $name ?? $this->defaultSerializer;
-
-        $this->ensureSerializerIsRegistered($serializerName);
-
-        return $this->serializers[$serializerName];
     }
 
     /**
