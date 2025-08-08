@@ -7,33 +7,42 @@ namespace KaririCode\Cache\Config\DTO;
 use KaririCode\Contract\ImmutableValue;
 
 /**
- * Logging Configuration DTO.
+ * An immutable DTO that holds configuration for logging cache operations.
+ *
+ * It defines whether logging is enabled, the target channel and level,
+ * and rules for including potentially sensitive cached values in logs.
  */
 final class LoggingConfig implements ImmutableValue
 {
-    public readonly bool $enabled;
-    public readonly string $channel;
-    public readonly string $level;
-    public readonly bool $includeValues;
-    public readonly int $maxValueLength;
-
-    public function __construct(array $config = [])
-    {
-        $this->enabled = $config['enabled'] ?? true;
-        $this->channel = $config['channel'] ?? 'cache';
-        $this->level = $config['level'] ?? 'info';
-        $this->includeValues = $config['include_values'] ?? false;
-        $this->maxValueLength = $config['max_value_length'] ?? 100;
+    /**
+     * @param bool $enabled toggles logging for cache operations on or off
+     * @param string $channel The logging channel to use (e.g., 'cache', 'stderr').
+     * @param string $level The minimum log level to record (e.g., 'info', 'debug').
+     * @param bool $includeValues whether to include cached values in log messages
+     * @param int $maxValueLength the maximum length of a value to be included in logs
+     */
+    private function __construct(
+        public readonly bool $enabled,
+        public readonly string $channel,
+        public readonly string $level,
+        public readonly bool $includeValues,
+        public readonly int $maxValueLength
+    ) {
     }
 
-    public function toArray(): array
+    /**
+     * Creates an instance from a configuration array.
+     *
+     * @param array<string, mixed> $config the raw configuration array
+     */
+    public static function fromConfig(array $config = []): self
     {
-        return [
-            'enabled' => $this->enabled,
-            'channel' => $this->channel,
-            'level' => $this->level,
-            'include_values' => $this->includeValues,
-            'max_value_length' => $this->maxValueLength,
-        ];
+        return new self(
+            enabled: (bool) ($config['enabled'] ?? true),
+            channel: (string) ($config['channel'] ?? 'cache'),
+            level: (string) ($config['level'] ?? 'info'),
+            includeValues: (bool) ($config['include_values'] ?? false),
+            maxValueLength: (int) ($config['max_value_length'] ?? 100)
+        );
     }
 }

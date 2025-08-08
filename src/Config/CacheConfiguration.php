@@ -56,13 +56,13 @@ final class CacheConfiguration implements ConfigurationProvider, ImmutableValue
         $this->stores = $this->buildStores($config['stores'] ?? []);
         $this->serializers = $config['serializers'] ?? $this->getDefaultSerializers();
         $this->defaultSerializer = $config['serializer'] ?? 'native';
-        $this->features = new FeatureConfig($config['features'] ?? []);
-        $this->validation = new ValidationConfig($config['validation'] ?? []);
-        $this->metrics = new MetricsConfig($config['metrics'] ?? []);
-        $this->logging = new LoggingConfig($config['logging'] ?? []);
-        $this->healthChecks = new HealthCheckConfig($config['health_checks'] ?? []);
-        $this->expirationProvider = new ExpirationProviderConfig($config['expiration_provider'] ?? []);
-        $this->optimizations = new OptimizationConfig($config['optimizations'] ?? []);
+        $this->features = FeatureConfig::fromConfig($config['features'] ?? []);
+        $this->validation = ValidationConfig::fromConfig($config['validation'] ?? []);
+        $this->metrics = MetricsConfig::fromConfig($config['metrics'] ?? []);
+        $this->logging = LoggingConfig::fromConfig($config['logging'] ?? []);
+        $this->healthChecks = HealthCheckConfig::fromConfig($config['health_checks'] ?? []);
+        $this->expirationProvider = ExpirationProviderConfig::fromConfig($config['expiration_provider'] ?? []);
+        $this->optimizations = OptimizationConfig::fromConfig($config['optimizations'] ?? []);
 
         $this->validateDefaultStore();
         $this->validateDefaultSerializer();

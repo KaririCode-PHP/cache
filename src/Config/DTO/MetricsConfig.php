@@ -7,33 +7,42 @@ namespace KaririCode\Cache\Config\DTO;
 use KaririCode\Contract\ImmutableValue;
 
 /**
- * Metrics Configuration DTO.
+ * An immutable DTO that holds configuration for collecting cache metrics.
+ *
+ * It defines whether metrics are enabled, the collector to use, and how
+ * and when metrics should be exported.
  */
 final class MetricsConfig implements ImmutableValue
 {
-    public readonly bool $enabled;
-    public readonly string $collector;
-    public readonly string $exportFormat;
-    public readonly int $exportInterval;
-    public readonly bool $includeDriverStats;
-
-    public function __construct(array $config = [])
-    {
-        $this->enabled = $config['enabled'] ?? true;
-        $this->collector = $config['collector'] ?? 'default';
-        $this->exportFormat = $config['export_format'] ?? 'json';
-        $this->exportInterval = $config['export_interval'] ?? 60;
-        $this->includeDriverStats = $config['include_driver_stats'] ?? true;
+    /**
+     * @param bool $enabled toggles metrics collection on or off
+     * @param string $collector the name of the metrics collector implementation to use
+     * @param string $exportFormat The format for exporting metrics (e.g., 'json', 'prometheus').
+     * @param int $exportInterval the interval in seconds for automatic metric exporting
+     * @param bool $includeDriverStats whether to include driver-specific stats in the metrics
+     */
+    private function __construct(
+        public readonly bool $enabled,
+        public readonly string $collector,
+        public readonly string $exportFormat,
+        public readonly int $exportInterval,
+        public readonly bool $includeDriverStats
+    ) {
     }
 
-    public function toArray(): array
+    /**
+     * Creates an instance from a configuration array.
+     *
+     * @param array<string, mixed> $config the raw configuration array
+     */
+    public static function fromConfig(array $config = []): self
     {
-        return [
-            'enabled' => $this->enabled,
-            'collector' => $this->collector,
-            'export_format' => $this->exportFormat,
-            'export_interval' => $this->exportInterval,
-            'include_driver_stats' => $this->includeDriverStats,
-        ];
+        return new self(
+            enabled: (bool) ($config['enabled'] ?? true),
+            collector: (string) ($config['collector'] ?? 'default'),
+            exportFormat: (string) ($config['export_format'] ?? 'json'),
+            exportInterval: (int) ($config['export_interval'] ?? 60),
+            includeDriverStats: (bool) ($config['include_driver_stats'] ?? true)
+        );
     }
 }

@@ -4,11 +4,13 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Service\DTO;
 
+use KaririCode\Contract\ImmutableValue;
+
 /**
  * An immutable Data Transfer Object to represent the result of a single health check.
  * Using a DTO improves type safety and code clarity over associative arrays.
  */
-final class HealthCheckResult
+final class HealthCheckResult implements ImmutableValue
 {
     /**
      * @param string $checkName the name of the check performed
@@ -24,21 +26,5 @@ final class HealthCheckResult
         public readonly float $durationMs,
         public readonly int $timestamp
     ) {
-    }
-
-    /**
-     * Converts the result object to an array for diagnostics.
-     *
-     * @return array<string, mixed>
-     */
-    public function toArray(): array
-    {
-        return [
-            'check' => $this->checkName,
-            'healthy' => $this->isHealthy,
-            'message' => $this->message,
-            'duration_ms' => $this->durationMs,
-            'timestamp' => $this->timestamp,
-        ];
     }
 }

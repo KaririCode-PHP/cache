@@ -23,6 +23,7 @@ use DateTimeInterface;
  */
 interface ExpirationProvider
 {
+    public const DEFAULT_TTL_SECONDS = 3600; // 1 hour
     public const MAX_TTL_SECONDS = 2592000; // 30 days
     public const MIN_TTL_SECONDS = 1;
 

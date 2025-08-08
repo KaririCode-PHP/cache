@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace KaririCode\Cache\Factory;
+namespace KaririCode\Cache\Config\Factory;
 
 use KaririCode\Cache\Config\Adapter\ConfiguratorAdapter;
 use KaririCode\Cache\Config\CacheConfiguration;
@@ -27,7 +27,7 @@ final class ConfigurationFactory
     /**
      * Create configuration provider from array.
      */
-    public static function fromArray(array $config): ConfigurationProvider
+    public static function fromConfig(array $config): ConfigurationProvider
     {
         return new CacheConfiguration($config);
     }
@@ -47,12 +47,12 @@ final class ConfigurationFactory
      *
      * @param mixed $config Configuration source
      *
-     * @deprecated use specific factory methods fromArray() or fromConfigurator() instead
+     * @deprecated use specific factory methods fromConfig() or fromConfigurator() instead
      */
     public static function create(mixed $config): ConfigurationProvider
     {
         return match (true) {
-            is_array($config) => self::fromArray($config),
+            is_array($config) => self::fromConfig($config),
             $config instanceof ConfigurationProvider => $config,
             $config instanceof ConfigurationManager => self::fromConfigurator($config),
             default => throw InvalidArgumentException::invalidConfiguration('Invalid configuration type. Expected array, ConfigurationProvider, or ConfigurationManager'),

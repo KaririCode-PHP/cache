@@ -53,7 +53,7 @@ final class FilesystemDriverFactory extends AbstractDriverFactory
         ExpirationProvider $expirationProvider,
         LoggerInterface $logger
     ): CacheDriver {
-        $config = FilesystemConfig::fromArray($options);
+        $config = FilesystemConfig::fromConfig($options);
 
         // Resolve the global serializer instead of using a local one.
         $serializer = $this->resolveSerializer($options, $manager);
@@ -130,7 +130,7 @@ final class FilesystemDriverFactory extends AbstractDriverFactory
     {
         // Validation is handled by the FilesystemConfig DTO upon creation.
         // If this doesn't throw an exception, the options are valid.
-        FilesystemConfig::fromArray($options);
+        FilesystemConfig::fromConfig($options);
 
         return true;
     }

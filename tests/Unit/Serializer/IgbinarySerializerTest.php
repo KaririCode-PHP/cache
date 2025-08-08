@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace KaririCode\Tests\Cache\Unit\Serializer;
+namespace KaririCode\Cache\Tests\Unit\Serializer;
 
 use KaririCode\Cache\Exception\CacheException;
 use KaririCode\Cache\Serializer\IgbinarySerializer;

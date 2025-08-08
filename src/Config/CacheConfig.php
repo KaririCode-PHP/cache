@@ -157,7 +157,7 @@ final class CacheConfig implements ImmutableValue
     {
         $features = $this->get('features', []);
 
-        return new FeatureConfig($features);
+        return FeatureConfig::fromConfig($features);
     }
 
     /**
@@ -167,7 +167,7 @@ final class CacheConfig implements ImmutableValue
     {
         $validation = $this->get('validation', []);
 
-        return new ValidationConfig($validation);
+        return ValidationConfig::fromConfig($validation);
     }
 
     /**
@@ -177,7 +177,7 @@ final class CacheConfig implements ImmutableValue
     {
         $metrics = $this->get('metrics', []);
 
-        return new MetricsConfig($metrics);
+        return MetricsConfig::fromConfig($metrics);
     }
 
     /**
@@ -187,7 +187,7 @@ final class CacheConfig implements ImmutableValue
     {
         $logging = $this->get('logging', []);
 
-        return new LoggingConfig($logging);
+        return LoggingConfig::fromConfig($logging);
     }
 
     /**
@@ -197,7 +197,7 @@ final class CacheConfig implements ImmutableValue
     {
         $healthChecks = $this->get('health_checks', []);
 
-        return new HealthCheckConfig($healthChecks);
+        return HealthCheckConfig::fromConfig($healthChecks);
     }
 
     /**
@@ -207,7 +207,7 @@ final class CacheConfig implements ImmutableValue
     {
         $expirationProvider = $this->get('expiration_provider', []);
 
-        return new ExpirationProviderConfig($expirationProvider);
+        return ExpirationProviderConfig::fromConfig($expirationProvider);
     }
 
     /**
@@ -217,7 +217,7 @@ final class CacheConfig implements ImmutableValue
     {
         $optimizations = $this->get('optimizations', []);
 
-        return new OptimizationConfig($optimizations);
+        return OptimizationConfig::fromConfig($optimizations);
     }
 
     /**
