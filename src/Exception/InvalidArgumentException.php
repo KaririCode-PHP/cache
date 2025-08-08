@@ -185,7 +185,7 @@ final class InvalidArgumentException extends AbstractException
         return static::createException(
             self::CODE_INVALID_VALUE,
             'UNSERIALIZABLE_VALUE',
-            "The provided value of type '{$type}' cannot be serialized."
+            "Cannot cache value of type '{$type}'."
         );
     }
 
