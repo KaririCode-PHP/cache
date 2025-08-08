@@ -44,7 +44,7 @@ final class StoreConfiguration implements ImmutableValue
 
         if ('layered' === $this->driver) {
             $this->layers = $this->config['layers'] ?? [];
-            $this->layeredConfig = new LayeredDriverConfig($this->config);
+            $this->layeredConfig = LayeredDriverConfig::fromConfig($this->config);
         } else {
             $this->layers = [];
             $this->layeredConfig = null;
