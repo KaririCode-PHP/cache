@@ -38,7 +38,7 @@ final class CacheHitEvent extends CacheEvent
     /**
      * Gets the time taken to retrieve the value from cache.
      */
-    public function getRetrievalTime(): float
+    public function getDuration(): float
     {
         return $this->retrievalTime;
     }

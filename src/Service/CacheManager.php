@@ -39,9 +39,7 @@ final class CacheManager implements Cache, MultiOperationCacheable
     private array $stores = [];
 
     private readonly string $defaultStore;
-    private readonly DriverManager $driverManager;
     private readonly SerializationService $serializationService;
-    private readonly LoggerInterface $logger;
     private readonly ExpirationProvider $expirationProvider;
 
     /**
@@ -52,13 +50,12 @@ final class CacheManager implements Cache, MultiOperationCacheable
      */
     public function __construct(
         private readonly ConfigurationProvider $configuration,
-        ?LoggerInterface $logger = null
+        private readonly ?LoggerInterface $logger = new NullLogger(),
+        private readonly ?DriverManager $driverManager = new DriverManager()
     ) {
-        $this->logger = $logger ?? new NullLogger();
         $this->defaultStore = $configuration->getDefaultStore();
 
         // Initialize core services
-        $this->driverManager = new DriverManager();
         $this->serializationService = $this->createSerializationService();
         $this->expirationProvider = $this->createExpirationProvider();
 

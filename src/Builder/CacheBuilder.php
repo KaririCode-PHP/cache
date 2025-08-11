@@ -6,6 +6,7 @@ namespace KaririCode\Cache\Builder;
 
 use KaririCode\Cache\Config\CacheConfig;
 use KaririCode\Cache\Config\DriverManager;
+use KaririCode\Cache\Config\DTO\EventServiceConfig;
 use KaririCode\Cache\Config\DTO\LayeredDriverConfig;
 use KaririCode\Cache\Contract\Cache;
 use KaririCode\Cache\Contract\Provider\ExpirationProvider;
@@ -153,10 +154,20 @@ final class CacheBuilder
     {
         $logger = $this->logger ?? new NullLogger();
 
+        $eventConfig = new EventServiceConfig(
+            enabled: $this->config->getFeatures()->eventsEnabled,
+            logLevel: $this->config->getLogging()->level
+        );
+
         // 1. Resolve or create core services.
         $validationService = $this->validationService ?? new ValidationService();
         $serializationService = $this->serializationService ?? $this->createSerializationService();
-        $eventService = $this->eventService ?? new EventService($this->eventDispatcher, $logger);
+        $eventService = $this->eventService ?? new EventService(
+            $this->eventDispatcher,
+            $logger,
+            $eventConfig
+        );
+
         $metricsService = $this->metricsService ?? new MetricsService($logger);
         $expirationProvider = $this->expirationProvider ?? $this->createExpirationProvider();
 
@@ -219,10 +230,9 @@ final class CacheBuilder
         ]);
 
         if (!$driver instanceof LayeredDriver) {
-            // In our architecture, even single-driver stores are wrapped in a LayeredDriver
-            // with one layer for consistency. The DriverManager/Factory should handle this.
-            // If it doesn't, we can wrap it here as a safeguard.
-            $layeredConfig = new LayeredDriverConfig([]);
+            $storeSpecificConfig = $storeConfig->getConfig();
+            $layeredConfig = LayeredDriverConfig::fromConfig($storeSpecificConfig);
+
             $driver = new LayeredDriver([$driver], $layeredConfig, $logger);
         }
 

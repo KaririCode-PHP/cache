@@ -30,7 +30,7 @@ final class CacheDeleteEvent extends CacheEvent
     /**
      * Checks if the key existed before deletion.
      */
-    public function existed(): bool
+    public function isSuccess(): bool
     {
         return $this->existed;
     }

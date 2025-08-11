@@ -125,6 +125,16 @@ coverage-html: check-environment check-container-running
 	XDEBUG_MODE=coverage $(EXEC_PHP) ./vendor/bin/phpunit --coverage-html ./coverage-report-html tests
 	@echo "${GREEN}${INFO} Test coverage report generated in ./coverage-report-html${NC}"
 
+## coverage-file: Run test coverage for a specific file. Usage: make coverage-file FILE=src/Path/To/File.php
+coverage-file: check-environment check-container-running
+	@if [ -z "$(FILE)" ]; then \
+		echo "${RED}${WARNING}  You must specify a file. Usage: make coverage-file FILE=src/Path/To/File.php${NC}"; \
+	else \
+		echo "${GREEN}${INFO} Analyzing test coverage for file: $(FILE)...${NC}"; \
+		XDEBUG_MODE=coverage $(EXEC_PHP) ./vendor/bin/phpunit --coverage-html ./coverage-report-html --coverage-filter $(FILE) tests; \
+		echo "${GREEN}${CHECK_MARK} Test coverage report for $(FILE) generated in ./coverage-report-html${NC}"; \
+	fi
+
 ## run-script: Run a PHP script. Usage: make run-script SCRIPT="path/to/script.php"
 run-script: check-environment check-container-running
 	@echo "${GREEN}${INFO} Running script: $(SCRIPT)...${NC}"

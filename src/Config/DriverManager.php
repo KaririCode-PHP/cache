@@ -36,7 +36,7 @@ use KaririCode\Cache\Serializer\NativeSerializer;
  *
  * @see      https://kariricode.org/
  */
-final class DriverManager implements DriverManagerContract
+class DriverManager implements DriverManagerContract
 {
     /** @var array<string, class-string<CacheDriverFactory>> */
     private array $factories = [];

@@ -48,7 +48,7 @@ final class TagInvalidationEvent extends CacheEvent
     /**
      * Gets the number of cache keys affected by the invalidation.
      */
-    public function getAffectedKeysCount(): int
+    public function getAffectedKeys(): int
     {
         return $this->affectedKeys;
     }

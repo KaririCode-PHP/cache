@@ -68,7 +68,13 @@ final class HealthCheckService
         return [
             'health_status' => $this->isHealthy() ? 'HEALTHY' : 'UNHEALTHY',
             'timestamp' => time(),
-            'checks' => array_map(fn (HealthCheckResult $r) => $r->toArray(), $healthResults),
+            'checks' => array_map(fn (HealthCheckResult $r) => [
+                'check_name' => $r->checkName,
+                'is_healthy' => $r->isHealthy,
+                'message' => $r->message,
+                'duration_ms' => $r->durationMs,
+                'timestamp' => $r->timestamp,
+            ], $healthResults),
             'metrics' => $this->metrics->getMetrics(),
         ];
     }

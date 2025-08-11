@@ -17,7 +17,7 @@ final class CacheAtomicOperationEvent extends CacheEvent
      * @param string $key The cache key involved
      * @param mixed $result The result of the operation
      * @param float $duration Time taken to perform the operation (in seconds)
-     * @param array<string, mixed> $operationData Additional operation-specific data
+     * @param array<string, mixed> $data Additional operation-specific data
      * @param array<string, mixed> $context Additional context information
      */
     public function __construct(
@@ -25,7 +25,7 @@ final class CacheAtomicOperationEvent extends CacheEvent
         string $key,
         private readonly mixed $result,
         private readonly float $duration = 0.0,
-        private readonly array $operationData = [],
+        private readonly array $data = [],
         array $context = []
     ) {
         parent::__construct($key, array_merge($context, ['atomic_operation' => $operation]));
@@ -68,9 +68,9 @@ final class CacheAtomicOperationEvent extends CacheEvent
      *
      * @return array<string, mixed>
      */
-    public function getOperationData(): array
+    public function getData(): array
     {
-        return $this->operationData;
+        return $this->data;
     }
 
     /**

@@ -27,7 +27,7 @@ use Psr\Log\NullLogger;
  *
  * @see      https://kariricode.org/
  */
-final class MetricsService
+class MetricsService
 {
     /** @var array<string, int> Counters for different operation types. */
     private array $counters = [
