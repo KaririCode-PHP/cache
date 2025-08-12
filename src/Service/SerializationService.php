@@ -11,8 +11,8 @@ use KaririCode\Cache\Serializer\IgbinarySerializer;
 use KaririCode\Cache\Serializer\JsonSerializer;
 use KaririCode\Cache\Serializer\NativeSerializer;
 use KaririCode\Contract\ImmutableValue;
-use Psr\Log\LoggerInterface;
-use Psr\Log\NullLogger;
+use KaririCode\Contract\Logging\Logger;
+use KaririCode\Logging\SilentLogger;
 
 /**
  * Comprehensive serialization service for cache operations.
@@ -67,10 +67,10 @@ final class SerializationService implements CacheSerializer
     /**
      * Constructs the serialization service with optional logging.
      *
-     * @param LoggerInterface $logger PSR-3 logger for debugging and error tracking
+     * @param ?Logger $logger for debugging and error tracking
      */
     public function __construct(
-        private readonly LoggerInterface $logger = new NullLogger()
+        private readonly Logger $logger = new SilentLogger()
     ) {
         $this->registerDefaultSerializers();
     }

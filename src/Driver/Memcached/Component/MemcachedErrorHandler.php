@@ -6,7 +6,7 @@ namespace KaririCode\Cache\Driver\Memcached\Component;
 
 use KaririCode\Cache\Exception\CacheException;
 use KaririCode\Cache\Exception\ConnectionException;
-use Psr\Log\LoggerInterface;
+use KaririCode\Contract\Logging\Logger;
 
 /**
  * Centralized error handling for Memcached operations.
@@ -21,7 +21,7 @@ final class MemcachedErrorHandler
         \Memcached::RES_SERVER_TEMPORARILY_DISABLED,
     ];
 
-    public function __construct(private LoggerInterface $logger)
+    public function __construct(private Logger $logger)
     {
     }
 

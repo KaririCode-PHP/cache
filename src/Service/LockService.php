@@ -6,9 +6,9 @@ namespace KaririCode\Cache\Service;
 
 use KaririCode\Cache\Contract\Behavioral\AtomicOperable;
 use KaririCode\Cache\Exception\CacheException;
+use KaririCode\Contract\Logging\Logger;
+use KaririCode\Logging\SilentLogger;
 use Psr\Cache\CacheItemPoolInterface;
-use Psr\Log\LoggerInterface;
-use Psr\Log\NullLogger;
 
 /**
  * Provides a distributed locking mechanism using a PSR-6 compatible cache pool
@@ -26,11 +26,11 @@ final class LockService
 
     /**
      * @param AtomicOperable&CacheItemPoolInterface $cache The cache pool, which must support atomic operations
-     * @param LoggerInterface $logger a PSR-3 logger instance
+     * @param Logger $logger a PSR-3 logger instance
      */
     public function __construct(
         private readonly AtomicOperable&CacheItemPoolInterface $cache,
-        private readonly LoggerInterface $logger = new NullLogger()
+        private readonly Logger $logger = new SilentLogger()
     ) {
     }
 

@@ -18,8 +18,8 @@ use KaririCode\Cache\Service\LockService;
 use KaririCode\Cache\Service\MetricsService;
 use KaririCode\Cache\Service\SerializationService;
 use KaririCode\Cache\Service\ValidationService;
-use Psr\Log\LoggerInterface;
-use Psr\Log\NullLogger;
+use KaririCode\Contract\Logging\Logger;
+use KaririCode\Logging\SilentLogger;
 
 /**
  * Main Cache Facade.
@@ -53,7 +53,7 @@ final class Cache implements AdvancedCache, Taggable, TopicSubscribable
         private readonly MetricsService $metrics,
         private readonly HealthCheckService $health,
         private readonly LockService $locks,
-        private readonly LoggerInterface $logger = new NullLogger()
+        private readonly Logger $logger = new SilentLogger()
     ) {
         $this->commandExecutor = new CommandExecutor($this->logger);
         $this->commandFactory = new CommandFactory(

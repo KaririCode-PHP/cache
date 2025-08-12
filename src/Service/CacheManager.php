@@ -14,8 +14,8 @@ use KaririCode\Cache\Contract\Configuration\ConfigurationProvider;
 use KaririCode\Cache\Contract\Provider\ExpirationProvider;
 use KaririCode\Cache\Exception\ConfigurationException;
 use KaririCode\Cache\Provider\ConfigurableExpirationProvider;
-use Psr\Log\LoggerInterface;
-use Psr\Log\NullLogger;
+use KaririCode\Contract\Logging\Logger;
+use KaririCode\Logging\SilentLogger;
 
 /**
  * Refactored Cache Manager following SOLID principles.
@@ -46,11 +46,11 @@ final class CacheManager implements Cache, MultiOperationCacheable
      * Constructor with dependency injection via interface.
      *
      * @param ConfigurationProvider $configuration The configuration provider
-     * @param LoggerInterface|null $logger Optional logger
+     * @param Logger|null $logger Optional logger
      */
     public function __construct(
         private readonly ConfigurationProvider $configuration,
-        private readonly ?LoggerInterface $logger = new NullLogger(),
+        private readonly Logger $logger = new SilentLogger(),
         private readonly ?DriverManager $driverManager = new DriverManager()
     ) {
         $this->defaultStore = $configuration->getDefaultStore();

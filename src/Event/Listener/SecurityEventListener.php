@@ -8,8 +8,8 @@ use KaririCode\Cache\Contract\CacheEventListener;
 use KaririCode\Cache\Contract\Structural\EventDispatcherAware;
 use KaririCode\Cache\Event\DTO\IpStats;
 use KaririCode\Cache\Event\DTO\SecurityContext;
+use KaririCode\Contract\Logging\Logger;
 use Psr\EventDispatcher\EventDispatcherInterface;
-use Psr\Log\LoggerInterface;
 use Psr\Log\LogLevel;
 
 /**
@@ -30,7 +30,7 @@ final class SecurityEventListener implements CacheEventListener, EventDispatcher
     private EventDispatcherInterface $eventDispatcher;
 
     public function __construct(
-        private readonly LoggerInterface $logger,
+        private readonly Logger $logger,
         private readonly int $rateLimitMaxAttempts = 1000,
         private readonly int $rateLimitWindow = 300, // 5 minutes
         private readonly int $ipBlockDuration = 3600 // 1 hour

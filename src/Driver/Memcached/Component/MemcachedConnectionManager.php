@@ -6,7 +6,7 @@ namespace KaririCode\Cache\Driver\Memcached\Component;
 
 use KaririCode\Cache\Driver\Memcached\Config\MemcachedConfig;
 use KaririCode\Cache\Exception\ConnectionException;
-use Psr\Log\LoggerInterface;
+use KaririCode\Contract\Logging\Logger;
 
 /**
  * Manages Memcached connection lifecycle.
@@ -24,7 +24,7 @@ final class MemcachedConnectionManager
     public function __construct(
         private \Memcached $memcached,
         private MemcachedConfig $config,
-        private LoggerInterface $logger
+        private Logger $logger
     ) {
     }
 

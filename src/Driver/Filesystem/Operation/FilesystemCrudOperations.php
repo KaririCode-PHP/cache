@@ -10,7 +10,7 @@ use KaririCode\Cache\Contract\Filesystem\FileManager;
 use KaririCode\Cache\Contract\Provider\ExpirationProvider;
 use KaririCode\Cache\Driver\Filesystem\Config\FilesystemConfig;
 use KaririCode\Cache\Service\ValidationService;
-use Psr\Log\LoggerInterface;
+use KaririCode\Contract\Logging\Logger;
 
 /**
  * Handles basic CRUD and batch operations for the FilesystemDriver.
@@ -40,7 +40,7 @@ final class FilesystemCrudOperations
      * @param FileManager $fileManager manages file I/O operations
      * @param CacheSerializer $serializer handles serialization and deserialization
      * @param ExpirationProvider $expirationProvider the strategy for TTL management
-     * @param LoggerInterface $logger a PSR-3 logger instance
+     * @param Logger $logger a PSR-3 logger instance
      */
     public function __construct(
         private readonly FilesystemConfig $config,
@@ -48,7 +48,7 @@ final class FilesystemCrudOperations
         private readonly FileManager $fileManager,
         private readonly CacheSerializer $serializer,
         private readonly ExpirationProvider $expirationProvider,
-        private readonly LoggerInterface $logger
+        private readonly Logger $logger
     ) {
         $this->validator = new ValidationService();
     }

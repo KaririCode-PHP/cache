@@ -21,7 +21,7 @@ final class TagInvalidationEvent extends CacheEvent
     public function __construct(
         private readonly array $tags,
         private readonly float $duration = 0.0,
-        private readonly int $affectedKeys = 0,
+        private readonly float $affectedKeys = 0.0,
         array $context = []
     ) {
         parent::__construct('tags:' . implode(',', $tags), $context);
@@ -48,7 +48,7 @@ final class TagInvalidationEvent extends CacheEvent
     /**
      * Gets the number of cache keys affected by the invalidation.
      */
-    public function getAffectedKeys(): int
+    public function getAffectedKeys(): float
     {
         return $this->affectedKeys;
     }

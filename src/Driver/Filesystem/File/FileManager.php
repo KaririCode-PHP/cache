@@ -6,7 +6,7 @@ namespace KaririCode\Cache\Driver\Filesystem\File;
 
 use KaririCode\Cache\Contract\Filesystem\FileManager as FileManagerContract;
 use KaririCode\Cache\Driver\Filesystem\Config\FilesystemConfig;
-use Psr\Log\LoggerInterface;
+use KaririCode\Contract\Logging\Logger;
 
 /**
  * Thread-safe file manager with atomic operations.
@@ -28,11 +28,11 @@ final class FileManager implements FileManagerContract
 
     /**
      * @param FilesystemConfig $config the configuration DTO for the filesystem driver
-     * @param LoggerInterface $logger a PSR-3 logger instance
+     * @param Logger $logger a PSR-3 logger instance
      */
     public function __construct(
         private readonly FilesystemConfig $config,
-        private readonly LoggerInterface $logger
+        private readonly Logger $logger
     ) {
     }
 

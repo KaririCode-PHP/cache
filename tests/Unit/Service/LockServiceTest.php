@@ -7,6 +7,7 @@ namespace KaririCode\Cache\Tests\Unit\Service;
 use KaririCode\Cache\Contract\Behavioral\AtomicOperable;
 use KaririCode\Cache\Exception\CacheException;
 use KaririCode\Cache\Service\LockService;
+use KaririCode\Contract\Logging\Logger;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\PreserveGlobalState;
@@ -14,7 +15,6 @@ use PHPUnit\Framework\Attributes\RunInSeparateProcess;
 use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
 use Psr\Cache\CacheItemPoolInterface;
-use Psr\Log\LoggerInterface;
 
 /**
  * Complete unit tests for the LockService class.
@@ -38,7 +38,7 @@ final class LockServiceTest extends TestCase
      */
     private $cacheMock;
 
-    private LoggerInterface&MockObject $loggerMock;
+    private Logger&MockObject $loggerMock;
     private LockService $lockService;
 
     /**
@@ -52,7 +52,7 @@ final class LockServiceTest extends TestCase
             AtomicOperable::class,
             CacheItemPoolInterface::class,
         ]);
-        $this->loggerMock = $this->createMock(LoggerInterface::class);
+        $this->loggerMock = $this->createMock(Logger::class);
 
         $this->lockService = new LockService($this->cacheMock, $this->loggerMock);
     }
@@ -300,7 +300,7 @@ final class LockServiceTest extends TestCase
             AtomicOperable::class,
             CacheItemPoolInterface::class,
         ]);
-        $loggerMock = $this->createMock(LoggerInterface::class);
+        $loggerMock = $this->createMock(Logger::class);
 
         $cacheMock
             ->expects($this->once())

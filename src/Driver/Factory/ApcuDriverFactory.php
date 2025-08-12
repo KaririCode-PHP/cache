@@ -19,7 +19,7 @@ use KaririCode\Cache\Driver\Apcu\Operation\ApcuTagOperations;
 use KaririCode\Cache\Driver\Apcu\Operation\ApcuTopicOperations;
 use KaririCode\Cache\Driver\ApcuDriver;
 use KaririCode\Cache\Exception\ConfigurationException;
-use Psr\Log\LoggerInterface;
+use KaririCode\Contract\Logging\Logger;
 
 /**
  * Factory for creating a fully-configured ApcuDriver.
@@ -52,7 +52,7 @@ final class ApcuDriverFactory extends AbstractDriverFactory
      * @param array<string, mixed> $options the validated driver configuration
      * @param DriverManager $manager the driver manager for resolving shared dependencies
      * @param ExpirationProvider $expirationProvider the centrally configured expiration provider
-     * @param LoggerInterface $logger the logger instance
+     * @param Logger $logger the logger instance
      *
      * @return CacheDriver the fully configured ApcuDriver instance
      */
@@ -60,7 +60,7 @@ final class ApcuDriverFactory extends AbstractDriverFactory
         array $options,
         DriverManager $manager,
         ExpirationProvider $expirationProvider,
-        LoggerInterface $logger
+        Logger $logger
     ): CacheDriver {
         $config = ApcuConfig::fromArray($options);
 

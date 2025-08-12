@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace KaririCode\Cache\Driver\Apcu\Component;
 
 use KaririCode\Cache\Exception\ConfigurationException;
-use Psr\Log\LoggerInterface;
+use KaririCode\Contract\Logging\Logger;
 
 /**
  * Minimal connection manager for APCu to maintain consistency with other drivers.
@@ -16,7 +16,7 @@ final class ApcuConnectionManager
     private bool $isValidated = false;
 
     public function __construct(
-        private LoggerInterface $logger
+        private Logger $logger
     ) {
     }
 

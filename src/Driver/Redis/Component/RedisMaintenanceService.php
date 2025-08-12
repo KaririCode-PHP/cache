@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace KaririCode\Cache\Driver\Redis\Component;
 
 use KaririCode\Cache\Driver\Redis\Config\RedisConfig;
-use Psr\Log\LoggerInterface;
+use KaririCode\Contract\Logging\Logger;
 
 /**
  * Handles maintenance operations for the Redis driver.
@@ -26,12 +26,12 @@ final class RedisMaintenanceService
     /**
      * @param \Redis $redis the Redis client instance
      * @param RedisConfig $config configuration settings
-     * @param LoggerInterface $logger a PSR-3 logger instance
+     * @param Logger $logger a PSR-3 logger instance
      */
     public function __construct(
         private readonly \Redis $redis,
         private readonly RedisConfig $config,
-        private readonly LoggerInterface $logger
+        private readonly Logger $logger
     ) {
     }
 

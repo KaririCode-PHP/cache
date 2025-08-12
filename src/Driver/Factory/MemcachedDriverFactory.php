@@ -17,7 +17,7 @@ use KaririCode\Cache\Driver\Memcached\Operation\MemcachedCrudOperations;
 use KaririCode\Cache\Driver\Memcached\Operation\MemcachedTagOperations;
 use KaririCode\Cache\Driver\MemcachedDriver;
 use KaririCode\Cache\Exception\ConfigurationException;
-use Psr\Log\LoggerInterface;
+use KaririCode\Contract\Logging\Logger;
 
 /**
  * Factory for creating a fully-configured MemcachedDriver.
@@ -49,7 +49,7 @@ final class MemcachedDriverFactory extends AbstractDriverFactory
      * @param array<string, mixed> $options the validated driver configuration
      * @param DriverManager $manager the driver manager for resolving shared dependencies
      * @param ExpirationProvider $expirationProvider the centrally configured expiration provider
-     * @param LoggerInterface $logger the logger instance
+     * @param Logger $logger the logger instance
      *
      * @return CacheDriver the fully configured MemcachedDriver instance
      */
@@ -57,7 +57,7 @@ final class MemcachedDriverFactory extends AbstractDriverFactory
         array $options,
         DriverManager $manager,
         ExpirationProvider $expirationProvider,
-        LoggerInterface $logger
+        Logger $logger
     ): CacheDriver {
         $config = MemcachedConfig::fromArray($options);
 

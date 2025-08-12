@@ -13,10 +13,10 @@ use KaririCode\Cache\Contract\CacheDriver;
 use KaririCode\Cache\Contract\Configuration\ConfigurationProvider;
 use KaririCode\Cache\Exception\ConfigurationException;
 use KaririCode\Cache\Service\CacheManager;
+use KaririCode\Contract\Logging\Logger;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
-use Psr\Log\LoggerInterface;
 
 /**
  * Unit tests for the CacheManager class.
@@ -36,7 +36,7 @@ final class CacheManagerTest extends TestCase
 {
     private ConfigurationProvider&MockObject $configurationMock;
     private DriverManager&MockObject $driverManagerMock;
-    private LoggerInterface&MockObject $loggerMock;
+    private Logger&MockObject $loggerMock;
 
     /**
      * Sets up the test environment before each test.
@@ -46,7 +46,7 @@ final class CacheManagerTest extends TestCase
         parent::setUp();
         $this->configurationMock = $this->createMock(ConfigurationProvider::class);
         $this->driverManagerMock = $this->createMock(DriverManager::class);
-        $this->loggerMock = $this->createMock(LoggerInterface::class);
+        $this->loggerMock = $this->createMock(Logger::class);
     }
 
     /**

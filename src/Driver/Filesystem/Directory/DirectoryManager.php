@@ -7,7 +7,7 @@ namespace KaririCode\Cache\Driver\Filesystem\Directory;
 use KaririCode\Cache\Contract\Filesystem\DirectoryManager as DirectoryManagerContract;
 use KaririCode\Cache\Driver\Filesystem\Config\FilesystemConfig;
 use KaririCode\Cache\Exception\FilesystemException;
-use Psr\Log\LoggerInterface;
+use KaririCode\Contract\Logging\Logger;
 
 /**
  * Manages all directory-related operations for the FilesystemDriver.
@@ -29,11 +29,11 @@ final class DirectoryManager implements DirectoryManagerContract
 
     /**
      * @param FilesystemConfig $config the configuration DTO for the filesystem driver
-     * @param LoggerInterface $logger a PSR-3 logger instance
+     * @param Logger $logger a PSR-3 logger instance
      */
     public function __construct(
         private readonly FilesystemConfig $config,
-        private readonly LoggerInterface $logger
+        private readonly Logger $logger
     ) {
         $this->baseDirectory = rtrim($this->config->directory, '/\\') . DIRECTORY_SEPARATOR;
         $this->initializeBaseDirectory();

@@ -5,11 +5,10 @@ declare(strict_types=1);
 namespace KaririCode\Cache\Tests\Unit\Service;
 
 use KaririCode\Cache\Service\MetricsService;
+use KaririCode\Contract\Logging\Logger;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
-use Psr\Log\LoggerInterface;
-use Psr\Log\NullLogger;
 
 /**
  * Comprehensive unit tests for the MetricsService.
@@ -30,11 +29,11 @@ use Psr\Log\NullLogger;
 final class MetricsServiceTest extends TestCase
 {
     private MetricsService $service;
-    private LoggerInterface $logger;
+    private Logger $logger;
 
     protected function setUp(): void
     {
-        $this->logger = $this->createMock(LoggerInterface::class);
+        $this->logger = $this->createMock(Logger::class);
         $this->service = new MetricsService($this->logger);
     }
 
@@ -66,7 +65,7 @@ final class MetricsServiceTest extends TestCase
     public function testCanBeCreatedWithCustomLogger(): void
     {
         // Arrange
-        $logger = $this->createMock(LoggerInterface::class);
+        $logger = $this->createMock(Logger::class);
 
         // Act
         $service = new MetricsService($logger);
@@ -738,11 +737,10 @@ final class MetricsServiceTest extends TestCase
     public function testWorksWithDifferentLoggerConfigurations(): void
     {
         // Arrange
-        $nullLogger = new NullLogger();
-        $mockLogger = $this->createMock(LoggerInterface::class);
+        $mockLogger = $this->createMock(Logger::class);
 
         // Act & Assert
-        $service1 = new MetricsService($nullLogger);
+        $service1 = new MetricsService();
         $service2 = new MetricsService($mockLogger);
         $service3 = new MetricsService(); // Default logger
 

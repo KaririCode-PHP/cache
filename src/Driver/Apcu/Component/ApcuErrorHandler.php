@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace KaririCode\Cache\Driver\Apcu\Component;
 
 use KaririCode\Cache\Exception\CacheException;
-use Psr\Log\LoggerInterface;
+use KaririCode\Contract\Logging\Logger;
 
 /**
  * Centralized error handling for APCu operations.
@@ -19,7 +19,7 @@ final class ApcuErrorHandler
     ];
 
     public function __construct(
-        private LoggerInterface $logger,
+        private Logger $logger,
         private int $maxRetries = 3,
         private float $retryDelay = 0.1
     ) {

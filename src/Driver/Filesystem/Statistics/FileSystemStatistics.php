@@ -8,7 +8,7 @@ use KaririCode\Cache\Contract\DriverStats;
 use KaririCode\Cache\Contract\Filesystem\DirectoryManager;
 use KaririCode\Cache\Contract\Filesystem\FileManager;
 use KaririCode\Cache\Service\DTO\HealthCheckResult;
-use Psr\Log\LoggerInterface;
+use KaririCode\Contract\Logging\Logger;
 
 /**
  * Statistics collector for the FilesystemDriver.
@@ -37,7 +37,7 @@ final class FileSystemStatistics implements DriverStats
     public function __construct(
         private readonly DirectoryManager $directoryManager,
         private readonly FileManager $fileManager,
-        private readonly LoggerInterface $logger
+        private readonly Logger $logger
     ) {
         $this->startTime = microtime(true);
     }

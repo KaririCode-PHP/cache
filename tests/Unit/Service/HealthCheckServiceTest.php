@@ -9,11 +9,11 @@ use KaririCode\Cache\Item\CacheItem;
 use KaririCode\Cache\Service\DTO\HealthCheckResult;
 use KaririCode\Cache\Service\HealthCheckService;
 use KaririCode\Cache\Service\MetricsService;
+use KaririCode\Contract\Logging\Logger;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
-use Psr\Log\LoggerInterface;
 
 /**
  * Complete unit tests for the HealthCheckService class.
@@ -30,7 +30,7 @@ final class HealthCheckServiceTest extends TestCase
 {
     private LayeredDriver&MockObject $driverMock;
     private MetricsService&MockObject $metricsMock;
-    private LoggerInterface&MockObject $loggerMock;
+    private Logger&MockObject $loggerMock;
     private HealthCheckService $healthCheckService;
 
     protected function setUp(): void
@@ -39,7 +39,7 @@ final class HealthCheckServiceTest extends TestCase
         $this->driverMock = $this->createMock(LayeredDriver::class);
         // We remove 'final' from MetricsService to make it mockable
         $this->metricsMock = $this->createMock(MetricsService::class);
-        $this->loggerMock = $this->createMock(LoggerInterface::class);
+        $this->loggerMock = $this->createMock(Logger::class);
 
         $this->healthCheckService = new HealthCheckService(
             $this->driverMock,

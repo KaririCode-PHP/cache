@@ -21,10 +21,10 @@ use KaririCode\Cache\Exception\ConfigurationException;
 use KaririCode\Cache\Item\CacheItem;
 use KaririCode\Cache\Service\ValidationService;
 use KaririCode\Cache\ValueObject\CircuitBreakerState;
+use KaririCode\Contract\Logging\Logger;
+use KaririCode\Logging\SilentLogger;
 use Psr\Cache\CacheItemInterface;
 use Psr\Cache\CacheItemPoolInterface;
-use Psr\Log\LoggerInterface;
-use Psr\Log\NullLogger;
 
 /**
  * Orchestrates a prioritized hierarchy of cache drivers (layers).
@@ -65,7 +65,7 @@ final class LayeredDriver implements LayeredDriverContract
     public function __construct(
         array $layers,
         private readonly LayeredDriverConfig $config,
-        private readonly LoggerInterface $logger = new NullLogger()
+        private readonly Logger $logger = new SilentLogger()
     ) {
         if (empty($layers)) {
             throw ConfigurationException::invalidConfiguration('layers', 'At least one cache layer must be provided.');

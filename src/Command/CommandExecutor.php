@@ -5,8 +5,8 @@ declare(strict_types=1);
 namespace KaririCode\Cache\Command;
 
 use KaririCode\Cache\Contract\CacheCommand;
-use Psr\Log\LoggerInterface;
-use Psr\Log\NullLogger;
+use KaririCode\Contract\Logging\Logger;
+use KaririCode\Logging\SilentLogger;
 
 /**
  * Executes any cache command that adheres to the CacheCommand interface.
@@ -15,11 +15,8 @@ use Psr\Log\NullLogger;
  */
 final class CommandExecutor
 {
-    private readonly LoggerInterface $logger;
-
-    public function __construct(?LoggerInterface $logger = null)
+    public function __construct(private readonly Logger $logger = new SilentLogger())
     {
-        $this->logger = $logger ?? new NullLogger();
     }
 
     /**

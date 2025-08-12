@@ -6,8 +6,8 @@ namespace KaririCode\Cache\Service;
 
 use KaririCode\Cache\Contract\Driver\LayeredDriver;
 use KaririCode\Cache\Service\DTO\HealthCheckResult;
-use Psr\Log\LoggerInterface;
-use Psr\Log\NullLogger;
+use KaririCode\Contract\Logging\Logger;
+use KaririCode\Logging\SilentLogger;
 
 /**
  * Service for running health checks on the cache system.
@@ -22,7 +22,7 @@ final class HealthCheckService
     public function __construct(
         private readonly LayeredDriver $driver,
         private readonly MetricsService $metrics,
-        private readonly LoggerInterface $logger = new NullLogger()
+        private readonly Logger $logger = new SilentLogger()
     ) {
         $this->registerDefaultChecks();
     }

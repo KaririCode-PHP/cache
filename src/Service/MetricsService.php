@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Service;
 
-use Psr\Log\LoggerInterface;
-use Psr\Log\NullLogger;
+use KaririCode\Contract\Logging\Logger;
+use KaririCode\Logging\SilentLogger;
 
 /**
  * Service for collecting and calculating cache performance metrics.
@@ -58,7 +58,7 @@ class MetricsService
      */
     private const MAX_DURATION_RECORDS = 1000;
 
-    public function __construct(private readonly LoggerInterface $logger = new NullLogger())
+    public function __construct(private readonly Logger $logger = new SilentLogger())
     {
         $this->startTime = microtime(true);
     }

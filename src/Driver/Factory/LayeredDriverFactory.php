@@ -10,7 +10,7 @@ use KaririCode\Cache\Contract\DriverManager;
 use KaririCode\Cache\Contract\Provider\ExpirationProvider;
 use KaririCode\Cache\Driver\LayeredDriver;
 use KaririCode\Cache\Exception\ConfigurationException;
-use Psr\Log\LoggerInterface;
+use KaririCode\Contract\Logging\Logger;
 
 /**
  * Factory for creating a fully-configured LayeredDriver.
@@ -39,7 +39,7 @@ final class LayeredDriverFactory extends AbstractDriverFactory
      * @param array<string, mixed> $options the validated driver configuration
      * @param DriverManager $manager the driver manager for creating layer instances
      * @param ExpirationProvider $expirationProvider the centrally configured expiration provider
-     * @param LoggerInterface $logger the logger instance
+     * @param Logger $logger the logger instance
      *
      * @return CacheDriver the fully configured LayeredDriver instance
      */
@@ -47,7 +47,7 @@ final class LayeredDriverFactory extends AbstractDriverFactory
         array $options,
         DriverManager $manager,
         ExpirationProvider $expirationProvider,
-        LoggerInterface $logger
+        Logger $logger
     ): CacheDriver {
         // 1. Create the specific configuration DTO for the LayeredDriver's behavior.
         $layeredConfig = LayeredDriverConfig::fromArray($options);

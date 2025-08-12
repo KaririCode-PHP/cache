@@ -10,8 +10,7 @@ use KaririCode\Cache\Contract\CacheSerializer;
 use KaririCode\Cache\Contract\DriverManager;
 use KaririCode\Cache\Contract\Provider\ExpirationProvider;
 use KaririCode\Cache\Exception\ConfigurationException;
-use Psr\Log\LoggerInterface;
-use Psr\Log\NullLogger;
+use KaririCode\Contract\Logging\Logger;
 
 /**
  * Abstract base factory for cache drivers.
@@ -118,7 +117,7 @@ abstract class AbstractDriverFactory implements CacheDriverFactory
      * @param array<string, mixed> $options Validated options
      * @param DriverManager $manager Driver manager
      * @param ExpirationProvider $expirationProvider Expiration provider
-     * @param LoggerInterface $logger Logger instance
+     * @param Logger $logger Logger instance
      *
      * @return CacheDriver The created driver
      */
@@ -126,7 +125,7 @@ abstract class AbstractDriverFactory implements CacheDriverFactory
         array $options,
         DriverManager $manager,
         ExpirationProvider $expirationProvider,
-        LoggerInterface $logger
+        Logger $logger
     ): CacheDriver;
 
     /**
@@ -195,28 +194,28 @@ abstract class AbstractDriverFactory implements CacheDriverFactory
      * @param array<string, mixed> $options Driver options
      * @param DriverManager $manager Driver manager
      *
-     * @return LoggerInterface The logger instance
+     * @return Logger The logger instance
      */
     protected function resolveLogger(
         array $options,
         DriverManager $manager
-    ): LoggerInterface {
+    ): ?Logger {
         // Check for explicit logger
         if (isset($options['logger'])
-            && $options['logger'] instanceof LoggerInterface) {
+            && $options['logger'] instanceof Logger) {
             return $options['logger'];
         }
 
         // Check manager for logger
         if (method_exists($manager, 'getLogger')) {
             $logger = $manager->getLogger();
-            if ($logger instanceof LoggerInterface) {
+            if ($logger instanceof Logger) {
                 return $logger;
             }
         }
 
         // Return null logger as fallback
-        return new NullLogger();
+        return null;
     }
 
     /**

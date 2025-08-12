@@ -10,12 +10,11 @@ use KaririCode\Cache\Exception\InvalidArgumentException;
 use KaririCode\Cache\Serializer\NativeSerializer;
 use KaririCode\Cache\Service\SerializationService;
 use KaririCode\Cache\ValueObject\SerializationScheme;
+use KaririCode\Contract\Logging\Logger;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
-use Psr\Log\LoggerInterface;
-use Psr\Log\NullLogger;
 
 /**
  * Comprehensive unit tests for the SerializationService.
@@ -36,11 +35,11 @@ use Psr\Log\NullLogger;
 final class SerializationServiceTest extends TestCase
 {
     private SerializationService $service;
-    private LoggerInterface|MockObject $logger;
+    private Logger|MockObject $logger;
 
     protected function setUp(): void
     {
-        $this->logger = $this->createMock(LoggerInterface::class);
+        $this->logger = $this->createMock(Logger::class);
         $this->service = new SerializationService($this->logger);
     }
 
@@ -67,7 +66,7 @@ final class SerializationServiceTest extends TestCase
     public function testCanBeCreatedWithCustomLogger(): void
     {
         // Arrange
-        $logger = $this->createMock(LoggerInterface::class);
+        $logger = $this->createMock(Logger::class);
 
         // Act
         $service = new SerializationService($logger);
@@ -946,7 +945,7 @@ final class SerializationServiceTest extends TestCase
     public function testServiceWorksWithMinimalConfiguration(): void
     {
         // Arrange - Create service and immediately check its basic functionality
-        $service = new SerializationService(new NullLogger());
+        $service = new SerializationService();
 
         // Assert
         $this->assertIsArray($service->getRegisteredSerializers());
@@ -959,8 +958,8 @@ final class SerializationServiceTest extends TestCase
     public function testWorksWithDifferentLoggerConfigurations(): void
     {
         // Arrange & Act
-        $serviceWithNullLogger = new SerializationService(new NullLogger());
-        $serviceWithMockLogger = new SerializationService($this->createMock(LoggerInterface::class));
+        $serviceWithNullLogger = new SerializationService();
+        $serviceWithMockLogger = new SerializationService($this->createMock(Logger::class));
         $serviceWithoutLogger = new SerializationService();
 
         // Assert

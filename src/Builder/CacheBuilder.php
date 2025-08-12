@@ -20,17 +20,18 @@ use KaririCode\Cache\Service\LockService;
 use KaririCode\Cache\Service\MetricsService;
 use KaririCode\Cache\Service\SerializationService;
 use KaririCode\Cache\Service\ValidationService;
+use KaririCode\Contract\Logging\Logger;
+use KaririCode\Logging\LoggerFactory;
+use KaririCode\Logging\LoggerRegistry;
+use KaririCode\Logging\SilentLogger;
 use Psr\EventDispatcher\EventDispatcherInterface;
-use Psr\Log\LoggerInterface;
-use Psr\Log\NullLogger;
 
 /**
- * Fluent builder for creating a fully-configured Cache instance.
+ * Enhanced fluent builder for creating a fully-configured Cache instance with advanced logging.
  *
- * This class follows the Builder pattern to assemble a complex Cache object.
- * Its sole responsibility is to gather all necessary components (services,
- * configuration, drivers) and inject them into the Cache facade. It does not
- * create dependencies itself, adhering to Dependency Injection principles.
+ * This class follows the Builder pattern to assemble a complex Cache object with
+ * sophisticated logging capabilities. It integrates with KaririCode's logging
+ * infrastructure to provide comprehensive observability and monitoring.
  *
  * @category  Cache
  *
@@ -43,7 +44,9 @@ final class CacheBuilder
 {
     private string $storeName = 'default';
     private ?DriverManager $driverManager = null;
-    private ?LoggerInterface $logger = null;
+    private Logger $logger = new SilentLogger();
+    private ?LoggerRegistry $loggerRegistry = null;
+    private ?LoggerFactory $loggerFactory = null;
     private ?EventDispatcherInterface $eventDispatcher = null;
 
     // Services to be injected
@@ -84,9 +87,31 @@ final class CacheBuilder
         return $this;
     }
 
-    public function withLogger(LoggerInterface $logger): self
+    public function withLogger(Logger $logger): self
     {
         $this->logger = $logger;
+
+        return $this;
+    }
+
+    /**
+     * Configure the builder with a LoggerRegistry for advanced logging capabilities.
+     * This enables multiple specialized logging channels for the EventService.
+     */
+    public function withLoggerRegistry(LoggerRegistry $loggerRegistry): self
+    {
+        $this->loggerRegistry = $loggerRegistry;
+
+        return $this;
+    }
+
+    /**
+     * Configure the builder with a LoggerFactory to create specialized loggers.
+     * This is useful when you need to create loggers on-demand with specific configurations.
+     */
+    public function withLoggerFactory(LoggerFactory $loggerFactory): self
+    {
+        $this->loggerFactory = $loggerFactory;
 
         return $this;
     }
@@ -148,37 +173,41 @@ final class CacheBuilder
     }
 
     /**
-     * Builds the final Cache instance.
+     * Builds the final Cache instance with advanced logging capabilities.
      */
     public function build(): Cache
     {
-        $logger = $this->logger ?? new NullLogger();
+        $loggerRegistry = $this->resolveLoggerRegistry($this->logger);
 
-        $eventConfig = new EventServiceConfig(
-            enabled: $this->config->getFeatures()->eventsEnabled,
-            logLevel: $this->config->getLogging()->level
-        );
+        // Create enhanced EventServiceConfig based on application configuration
+        $eventConfig = $this->createEventServiceConfig();
 
-        // 1. Resolve or create core services.
+        // 1. Resolve or create core services with proper logging integration
         $validationService = $this->validationService ?? new ValidationService();
         $serializationService = $this->serializationService ?? $this->createSerializationService();
+
+        // Create EventService with advanced logging support
         $eventService = $this->eventService ?? new EventService(
             $this->eventDispatcher,
-            $logger,
+            $loggerRegistry,
             $eventConfig
         );
 
-        $metricsService = $this->metricsService ?? new MetricsService($logger);
+        $metricsService = $this->metricsService ?? new MetricsService($this->logger);
         $expirationProvider = $this->expirationProvider ?? $this->createExpirationProvider();
 
-        // 2. Build the central driver (which is always a LayeredDriver).
-        $driver = $this->buildDriver($expirationProvider, $logger);
+        // 2. Build the central driver (which is always a LayeredDriver)
+        $driver = $this->buildDriver($expirationProvider, $this->logger);
 
-        // 3. Build services that depend on the driver.
-        $lockService = $this->lockService ?? new LockService($driver, $logger);
-        $healthCheckService = $this->healthCheckService ?? new HealthCheckService($driver, $metricsService, $logger);
+        // 3. Build services that depend on the driver
+        $lockService = $this->lockService ?? new LockService($driver, $this->logger);
+        $healthCheckService = $this->healthCheckService ?? new HealthCheckService(
+            $driver,
+            $metricsService,
+            $this->logger
+        );
 
-        // 4. Assemble the main Cache facade.
+        // 4. Assemble the main Cache facade
         $cache = new Cache(
             name: $this->storeName,
             driver: $driver,
@@ -188,17 +217,121 @@ final class CacheBuilder
             metrics: $metricsService,
             health: $healthCheckService,
             locks: $lockService,
-            logger: $logger
+            logger: $this->logger
         );
 
-        // 5. Apply decorators based on configuration.
+        // 5. Apply decorators based on configuration
         return $this->applyDecorators($cache, $serializationService);
+    }
+
+    /**
+     * Resolve or create a LoggerRegistry for advanced logging capabilities.
+     */
+    private function resolveLoggerRegistry(Logger $fallbackLogger): ?LoggerRegistry
+    {
+        // If a LoggerRegistry was explicitly provided, use it
+        if (null !== $this->loggerRegistry) {
+            return $this->loggerRegistry;
+        }
+
+        // If a LoggerFactory was provided, create specialized loggers
+        if (null !== $this->loggerFactory) {
+            return $this->createLoggerRegistryFromFactory($this->loggerFactory);
+        }
+
+        // If advanced logging is not configured, return null to use fallback
+        // The EventService will handle null LoggerRegistry gracefully
+        return null;
+    }
+
+    /**
+     * Create a LoggerRegistry with specialized loggers using the provided factory.
+     */
+    private function createLoggerRegistryFromFactory(LoggerFactory $factory): LoggerRegistry
+    {
+        $registry = new LoggerRegistry();
+
+        try {
+            // Create specialized loggers for different cache operations
+            $cacheLogger = $factory->createLogger('cache');
+            $performanceLogger = $factory->createLogger('performance');
+            $errorLogger = $factory->createLogger('error');
+            $asyncLogger = $factory->createLogger('async');
+
+            // Register loggers in the registry
+            $registry->addLogger('cache', $cacheLogger);
+            $registry->addLogger('performance', $performanceLogger);
+            $registry->addLogger('error', $errorLogger);
+            $registry->addLogger('async', $asyncLogger);
+        } catch (\Throwable $e) {
+            // If logger creation fails, log the error and return empty registry
+            $this->logger?->warning('Failed to create specialized loggers', [
+                'error' => $e->getMessage(),
+                'fallback' => 'Using NullLogger for specialized channels',
+            ]);
+        }
+
+        return $registry;
+    }
+
+    /**
+     * Create EventServiceConfig based on application configuration and environment.
+     */
+    private function createEventServiceConfig(): EventServiceConfig
+    {
+        $features = $this->config->getFeatures();
+        $logging = $this->config->getLogging();
+
+        // Use environment-specific configurations
+        return new EventServiceConfig(
+            enabled: $features->eventsEnabled,
+            logOnDispatchError: true,
+            performanceLoggingEnabled: $features->metricsEnabled,
+            asyncLoggingEnabled: true,
+            structuredLoggingEnabled: true,
+            logLevel: $logging->level ?? 'debug',
+            // Custom performance thresholds based on configuration
+            performanceThresholds: $this->getPerformanceThresholds(),
+            // Sensitive keys based on application security requirements
+            sensitiveKeys: $this->getSensitiveKeys(),
+        );
+    }
+
+    /**
+     * Get performance thresholds from configuration or use defaults.
+     */
+    private function getPerformanceThresholds(): array
+    {
+        // These could come from configuration files or environment variables
+        return [
+            'cache_hit' => (float) ($_ENV['CACHE_HIT_THRESHOLD_MS'] ?? 10.0),
+            'cache_miss' => (float) ($_ENV['CACHE_MISS_THRESHOLD_MS'] ?? 5.0),
+            'cache_set' => (float) ($_ENV['CACHE_SET_THRESHOLD_MS'] ?? 50.0),
+            'cache_delete' => (float) ($_ENV['CACHE_DELETE_THRESHOLD_MS'] ?? 25.0),
+            'cache_clear' => (float) ($_ENV['CACHE_CLEAR_THRESHOLD_MS'] ?? 500.0),
+            'tag_invalidation' => (float) ($_ENV['TAG_INVALIDATION_THRESHOLD_MS'] ?? 200.0),
+            'atomic_operation' => (float) ($_ENV['ATOMIC_OPERATION_THRESHOLD_MS'] ?? 100.0),
+        ];
+    }
+
+    /**
+     * Get sensitive keys that should be masked in logs.
+     */
+    private function getSensitiveKeys(): array
+    {
+        $defaultKeys = ['password', 'token', 'secret', 'key', 'auth', 'session'];
+
+        // Allow additional sensitive keys from environment
+        $additionalKeys = explode(',', $_ENV['CACHE_SENSITIVE_KEYS'] ?? '');
+        $additionalKeys = array_filter(array_map('trim', $additionalKeys));
+
+        return array_merge($defaultKeys, $additionalKeys);
     }
 
     private function createSerializationService(): SerializationService
     {
-        $service = new SerializationService($this->logger ?? new NullLogger());
-        // In a real application, you would populate this from the config's 'serializers' section.
+        $service = new SerializationService($this->logger);
+        // In a real application, you would populate this from the config's 'serializers' section
         $service->setDefaultSerializer($this->config->getDefaultSerializer());
 
         return $service;
@@ -211,18 +344,18 @@ final class CacheBuilder
         return ConfigurableExpirationProvider::fromConfig($configDto);
     }
 
-    private function buildDriver(ExpirationProvider $provider, LoggerInterface $logger): LayeredDriver
+    private function buildDriver(ExpirationProvider $provider, Logger $logger): LayeredDriver
     {
         $storeConfig = $this->config->getStore($this->storeName);
         $driverManager = $this->driverManager ?? new DriverManager();
 
-        // The DriverManager needs the central serializer to pass it down to factories.
+        // The DriverManager needs the central serializer to pass it down to factories
         if ($this->serializationService) {
             $driverManager->setSerializer($this->serializationService);
         }
 
-        // The driver for a specific store is created here.
-        // The DriverManager will use the correct factory (e.g., LayeredDriverFactory).
+        // The driver for a specific store is created here
+        // The DriverManager will use the correct factory (e.g., LayeredDriverFactory)
         $driver = $driverManager->createDriver($storeConfig->getDriver(), [
             'store_config' => $storeConfig,
             'expiration_provider' => $provider,
@@ -252,5 +385,22 @@ final class CacheBuilder
         }
 
         return $cache;
+    }
+
+    /**
+     * Helper method to configure the builder with a complete logging setup.
+     * This is a convenience method for common use cases.
+     */
+    public function withAdvancedLogging(
+        LoggerRegistry $loggerRegistry,
+        ?EventDispatcherInterface $eventDispatcher = null
+    ): self {
+        $this->loggerRegistry = $loggerRegistry;
+
+        if (null !== $eventDispatcher) {
+            $this->eventDispatcher = $eventDispatcher;
+        }
+
+        return $this;
     }
 }

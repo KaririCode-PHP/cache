@@ -8,7 +8,7 @@ use KaririCode\Cache\Contract\CacheDriver;
 use KaririCode\Cache\Contract\DriverManager;
 use KaririCode\Cache\Contract\Provider\ExpirationProvider;
 use KaririCode\Cache\Driver\ArrayDriver;
-use Psr\Log\LoggerInterface;
+use KaririCode\Contract\Logging\Logger;
 
 /**
  * Factory for creating an ArrayDriver instance.
@@ -38,7 +38,7 @@ final class ArrayDriverFactory extends AbstractDriverFactory
      * @param array<string, mixed> $options the validated driver configuration
      * @param DriverManager $manager the driver manager for resolving shared dependencies
      * @param ExpirationProvider $expirationProvider the centrally configured expiration provider
-     * @param LoggerInterface $logger the logger instance
+     * @param Logger $logger the logger instance
      *
      * @return CacheDriver the fully configured ArrayDriver instance
      */
@@ -46,7 +46,7 @@ final class ArrayDriverFactory extends AbstractDriverFactory
         array $options,
         DriverManager $manager,
         ExpirationProvider $expirationProvider,
-        LoggerInterface $logger
+        Logger $logger
     ): CacheDriver {
         // The ArrayDriver's constructor is simple and only requires the expiration provider.
         return new ArrayDriver($expirationProvider);

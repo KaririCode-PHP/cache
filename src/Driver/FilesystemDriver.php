@@ -13,8 +13,8 @@ use KaririCode\Cache\Driver\Filesystem\Operation\FilesystemCrudOperations;
 use KaririCode\Cache\Driver\Filesystem\Operation\FilesystemTagOperations;
 use KaririCode\Cache\Driver\Filesystem\Statistics\FileSystemStatistics;
 use KaririCode\Cache\Item\CacheItem;
+use KaririCode\Contract\Logging\Logger;
 use Psr\Cache\CacheItemInterface;
-use Psr\Log\LoggerInterface;
 
 /**
  * Acts as a pure Facade for all Filesystem cache operations.
@@ -38,7 +38,7 @@ final class FilesystemDriver implements CacheDriver
      * @param FilesystemTagOperations $tagOperations handles tag-based operations
      * @param FileSystemStatistics $statistics provides driver statistics
      * @param FileSystemValidator $validator validates keys, values, and paths
-     * @param LoggerInterface $logger a PSR-3 logger instance
+     * @param Logger $logger a PSR-3 logger instance
      */
     public function __construct(
         private readonly DirectoryManager $directoryManager,
@@ -46,7 +46,7 @@ final class FilesystemDriver implements CacheDriver
         private readonly FilesystemTagOperations $tagOperations,
         private readonly FileSystemStatistics $statistics,
         private readonly FileSystemValidator $validator,
-        private readonly LoggerInterface $logger
+        private readonly Logger $logger
     ) {
     }
 

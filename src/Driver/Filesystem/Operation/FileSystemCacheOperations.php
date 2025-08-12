@@ -8,7 +8,7 @@ use KaririCode\Cache\Contract\CacheSerializer;
 use KaririCode\Cache\Contract\Filesystem\DirectoryManager;
 use KaririCode\Cache\Contract\Filesystem\ExpirationManager;
 use KaririCode\Cache\Contract\Filesystem\FileManager;
-use Psr\Log\LoggerInterface;
+use KaririCode\Contract\Logging\Logger;
 
 /**
  * Cache operations coordinator following SRP.
@@ -25,7 +25,7 @@ final class FileSystemCacheOperations
         private FileManager $fileManager,
         private CacheSerializer $serializer,
         private ExpirationManager $expirationManager,
-        private LoggerInterface $logger,
+        private Logger $logger,
         private string $keyPrefix = 'cache_',
         private int $directoryLevels = 2
     ) {
