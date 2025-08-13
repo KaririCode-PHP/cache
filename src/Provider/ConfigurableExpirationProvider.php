@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Provider;
 
-use DateTimeInterface;
 use KaririCode\Cache\Config\DTO\ExpirationProviderConfig;
 use KaririCode\Cache\Contract\Provider\ExpirationProvider;
 use KaririCode\Cache\Exception\InvalidArgumentException;
@@ -34,10 +33,6 @@ final class ConfigurableExpirationProvider implements ExpirationProvider
     private readonly bool $slidingExpiration;
     private readonly ?int $maxTtl;
 
-    /**
-     * The constructor is made private to force instantiation via the named constructor.
-     * This ensures that the object is always created from a well-defined DTO.
-     */
     private function __construct(ExpirationProviderConfig $config)
     {
         $this->defaultTtl = $config->defaultTtl;
@@ -49,31 +44,11 @@ final class ConfigurableExpirationProvider implements ExpirationProvider
         $this->validateConfiguration();
     }
 
-    /**
-     * Creates an instance from a configuration DTO.
-     * This is the single, public entry point for creating an instance.
-     */
     public static function fromConfig(ExpirationProviderConfig $config): self
     {
         return new self($config);
     }
 
-    /**
-     * Calculates the definitive expiration time for a cache entry.
-     *
-     * The TTL is determined based on the following priority:
-     * 1. Explicit TTL provided to the method.
-     * 2. TTL matching a key pattern.
-     * 3. TTL for the specific cache operation.
-     * 4. The default TTL.
-     *
-     * @param \DateInterval|\DateTimeInterface|int|null $ttl the desired TTL
-     * @param string|null $key the cache key, used for pattern matching
-     * @param string|null $operation The operation type (e.g., 'set').
-     * @param array<string, mixed> $context additional context for decision-making
-     *
-     * @return \DateTimeInterface|null the calculated expiration timestamp, or null for indefinite caching
-     */
     public function calculateExpiration(
         \DateInterval|\DateTimeInterface|int|null $ttl = null,
         ?string $key = null,
@@ -101,41 +76,26 @@ final class ConfigurableExpirationProvider implements ExpirationProvider
         return $this->fromSeconds($this->defaultTtl);
     }
 
-    /**
-     * Gets the default TTL in seconds.
-     *
-     * @return int the default time-to-live
-     */
     public function getDefaultTtl(): int
     {
         return $this->defaultTtl;
     }
 
-    /**
-     * Determines if a given expiration timestamp has passed.
-     *
-     * @param \DateTimeInterface|null $expiration the expiration timestamp to check
-     *
-     * @return bool true if the item has expired, false otherwise
-     */
     public function isExpired(?\DateTimeInterface $expiration): bool
     {
         if (null === $expiration) {
-            return false; // An item with no expiration is never considered expired.
+            return false;
         }
 
         return $expiration <= new \DateTimeImmutable();
     }
 
-    /**
-     * Converts various TTL formats into an integer representing seconds.
-     *
-     * @param \DateInterval|\DateTimeInterface|int|null $ttl the TTL value to convert
-     *
-     * @return int|null the TTL in seconds, or null for no expiration
-     */
-    public function toSeconds(\DateInterval|\DateTimeInterface|int|null $ttl): ?int
+    public function toSeconds(mixed $ttl): ?int
     {
+        if (!is_int($ttl) && !$ttl instanceof \DateInterval && !$ttl instanceof \DateTimeInterface && null !== $ttl) {
+            throw InvalidArgumentException::invalidTtl('TTL must be an integer, DateInterval, DateTimeInterface, or null.');
+        }
+
         if (null === $ttl) {
             return null;
         }
@@ -158,16 +118,9 @@ final class ConfigurableExpirationProvider implements ExpirationProvider
 
             return $this->validateTtlSeconds($seconds);
         }
-        throw InvalidArgumentException::invalidTtl($ttl);
+        throw InvalidArgumentException::invalidTtl('Invalid TTL type provided.');
     }
 
-    /**
-     * Creates a DateTimeInterface object representing a future timestamp from a given number of seconds.
-     *
-     * @param int $seconds the number of seconds from now
-     *
-     * @return \DateTimeInterface the calculated expiration timestamp
-     */
     public function fromSeconds(int $seconds): \DateTimeInterface
     {
         $validatedSeconds = $this->validateTtlSeconds($seconds);
@@ -175,25 +128,11 @@ final class ConfigurableExpirationProvider implements ExpirationProvider
         return new \DateTimeImmutable('+' . $validatedSeconds . ' seconds');
     }
 
-    /**
-     * Gets the configured TTL for a specific operation type.
-     *
-     * @param string $operation The operation name (e.g., 'set', 'increment').
-     *
-     * @return int|null the TTL in seconds, or null if not configured
-     */
     public function getOperationTtl(string $operation): ?int
     {
         return $this->operationTtls[$operation] ?? null;
     }
 
-    /**
-     * Gets the configured TTL for a key that matches a specific pattern.
-     *
-     * @param string $key the cache key to check against patterns
-     *
-     * @return int|null the TTL in seconds, or null if no pattern matches
-     */
     public function getKeyPatternTtl(string $key): ?int
     {
         foreach ($this->keyPatternTtls as $pattern => $ttl) {
@@ -205,25 +144,11 @@ final class ConfigurableExpirationProvider implements ExpirationProvider
         return null;
     }
 
-    /**
-     * Checks if sliding expiration is enabled.
-     *
-     * @return bool true if sliding expiration is active
-     */
     public function isSlidingExpiration(): bool
     {
         return $this->slidingExpiration;
     }
 
-    /**
-     * Calculates a new expiration timestamp if sliding expiration is enabled.
-     *
-     * @param \DateTimeInterface $currentExpiration the item's current expiration timestamp
-     * @param string|null $key the cache key, for context
-     * @param array<string, mixed> $context additional context
-     *
-     * @return \DateTimeInterface the updated expiration timestamp
-     */
     public function updateSlidingExpiration(
         \DateTimeInterface $currentExpiration,
         ?string $key = null,
@@ -235,7 +160,7 @@ final class ConfigurableExpirationProvider implements ExpirationProvider
         $now = new \DateTimeImmutable();
         $originalTtl = $currentExpiration->getTimestamp() - $now->getTimestamp();
         if ($originalTtl <= 0) {
-            return $currentExpiration; // Item has already expired.
+            return $currentExpiration;
         }
         $slidingTtl = $this->defaultTtl;
         if (null !== $key) {
@@ -248,11 +173,6 @@ final class ConfigurableExpirationProvider implements ExpirationProvider
         return $this->fromSeconds($slidingTtl);
     }
 
-    /**
-     * Gets the provider's configuration as an array.
-     *
-     * @return array<string, mixed> the current configuration
-     */
     public function getConfiguration(): array
     {
         return [
@@ -264,14 +184,7 @@ final class ConfigurableExpirationProvider implements ExpirationProvider
         ];
     }
 
-    /**
-     * Validates if a given TTL value is acceptable according to the provider's rules.
-     *
-     * @param \DateInterval|\DateTimeInterface|int|null $ttl the TTL value to validate
-     *
-     * @return bool true if the TTL is valid
-     */
-    public function validateTtl(\DateInterval|\DateTimeInterface|int|null $ttl): bool
+    public function validateTtl(mixed $ttl): bool
     {
         if (null === $ttl) {
             return true;
@@ -288,13 +201,6 @@ final class ConfigurableExpirationProvider implements ExpirationProvider
         }
     }
 
-    /**
-     * Processes a TTL value of various types into a standard DateTimeInterface object.
-     *
-     * @param \DateInterval|\DateTimeInterface|int $ttl the TTL to process
-     *
-     * @return \DateTimeInterface the resulting expiration timestamp
-     */
     private function processTtl(\DateInterval|\DateTimeInterface|int $ttl): \DateTimeInterface
     {
         if ($ttl instanceof \DateTimeInterface) {
@@ -312,30 +218,36 @@ final class ConfigurableExpirationProvider implements ExpirationProvider
         return $this->fromSeconds($ttl);
     }
 
-    /**
-     * Validates that a TTL in seconds is within the configured bounds.
-     *
-     * @param int $seconds the TTL in seconds
-     *
-     * @return int the validated TTL in seconds
-     */
     private function validateTtlSeconds(int $seconds): int
     {
-        if ($seconds < ExpirationProvider::MIN_TTL_SECONDS) {
-            throw InvalidArgumentException::invalidTtl(sprintf('TTL must be at least %d second(s)', ExpirationProvider::MIN_TTL_SECONDS));
-        }
-        if (null !== $this->maxTtl && $seconds > $this->maxTtl) {
-            throw InvalidArgumentException::invalidTtl(sprintf('TTL cannot exceed %d seconds', $this->maxTtl));
-        }
+        $this->ensureTtlIsNotNegative($seconds);
+        $this->ensureTtlIsAboveMinimum($seconds);
+        $this->ensureTtlIsWithinMaximum($seconds);
 
         return $seconds;
     }
 
-    /**
-     * Validates that an absolute expiration timestamp is in the future and within the max TTL.
-     *
-     * @param \DateTimeInterface $expiration the expiration timestamp
-     */
+    private function ensureTtlIsNotNegative(int $seconds): void
+    {
+        if ($seconds < 0) {
+            throw InvalidArgumentException::invalidTtl('TTL in seconds cannot be negative.');
+        }
+    }
+
+    private function ensureTtlIsAboveMinimum(int $seconds): void
+    {
+        if ($seconds > 0 && $seconds < ExpirationProvider::MIN_TTL_SECONDS) {
+            throw InvalidArgumentException::invalidTtl(sprintf('TTL must be at least %d second(s)', ExpirationProvider::MIN_TTL_SECONDS));
+        }
+    }
+
+    private function ensureTtlIsWithinMaximum(int $seconds): void
+    {
+        if (null !== $this->maxTtl && $seconds > $this->maxTtl) {
+            throw InvalidArgumentException::invalidTtl(sprintf('TTL cannot exceed %d seconds', $this->maxTtl));
+        }
+    }
+
     private function validateExpirationTime(\DateTimeInterface $expiration): void
     {
         $now = new \DateTimeImmutable();
@@ -350,24 +262,11 @@ final class ConfigurableExpirationProvider implements ExpirationProvider
         }
     }
 
-    /**
-     * Checks if a key matches a wildcard pattern.
-     *
-     * @param string $key the key to check
-     * @param string $pattern The wildcard pattern (e.g., 'user:*').
-     *
-     * @return bool true if the key matches the pattern
-     */
     private function matchesPattern(string $key, string $pattern): bool
     {
-        $regex = '/^' . str_replace(['*', '?'], ['.*', '.'], preg_quote($pattern, '/')) . '$/';
-
-        return (bool) preg_match($regex, $key);
+        return fnmatch($pattern, $key);
     }
 
-    /**
-     * Validates the provider's configuration upon instantiation.
-     */
     private function validateConfiguration(): void
     {
         if ($this->defaultTtl < ExpirationProvider::MIN_TTL_SECONDS) {

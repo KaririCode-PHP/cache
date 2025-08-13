@@ -12,6 +12,7 @@ use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\PreserveGlobalState;
 use PHPUnit\Framework\Attributes\RunInSeparateProcess;
+use PHPUnit\Framework\Constraint\IsType;
 use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
 use Psr\Cache\CacheItemPoolInterface;
@@ -38,7 +39,7 @@ final class LockServiceTest extends TestCase
      */
     private $cacheMock;
 
-    private Logger&MockObject $loggerMock;
+    private Logger|MockObject $loggerMock;
     private LockService $lockService;
 
     /**
@@ -48,6 +49,7 @@ final class LockServiceTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        /** @var AtomicOperable&CacheItemPoolInterface */
         $this->cacheMock = $this->createMockForIntersectionOfInterfaces([
             AtomicOperable::class,
             CacheItemPoolInterface::class,
@@ -92,7 +94,7 @@ final class LockServiceTest extends TestCase
         $this->loggerMock
             ->expects($this->once())
             ->method('debug')
-            ->with('Lock acquired successfully.', $this->isType('array'));
+            ->with('Lock acquired successfully.', new IsType(IsType::TYPE_ARRAY));
 
         // Act
         $result = $this->lockService->acquire($key, $ttl);
@@ -119,7 +121,7 @@ final class LockServiceTest extends TestCase
         $this->loggerMock
             ->expects($this->once())
             ->method('warning')
-            ->with('Lock acquisition timed out.', $this->isType('array'));
+            ->with('Lock acquisition timed out.', new IsType(IsType::TYPE_ARRAY));
 
         // Act
         $result = $this->lockService->acquire($key, 10, $maxWaitTime);

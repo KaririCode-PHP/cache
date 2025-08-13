@@ -10,7 +10,7 @@ namespace KaririCode\Cache\Event;
  * This event provides comprehensive information about successful cache
  * retrievals including timing, value information, and performance metrics.
  */
-final class CacheHitEvent extends CacheEvent
+class CacheHitEvent extends CacheEvent
 {
     /**
      * @param string $key The cache key that resulted in a hit

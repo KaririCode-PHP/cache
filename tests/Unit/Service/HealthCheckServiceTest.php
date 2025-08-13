@@ -140,6 +140,29 @@ final class HealthCheckServiceTest extends TestCase
         $this->assertStringContainsString('Driver down', $results['connectivity']->message);
     }
 
+    public function testConnectivityCheckFailsIfItemDisappearsAfterSave(): void
+    {
+        // Arrange
+        // Configure the mock driver to simulate a successful save
+        // followed by an immediate failure to find the item.
+        $item = new CacheItem('__health_check:connectivity', null, false);
+
+        $this->driverMock->method('getItem')->willReturn($item);
+        $this->driverMock->method('save')->willReturn(true); // Save succeeds
+        $this->driverMock->method('hasItem')->willReturn(false); // But hasItem fails right after
+
+        // Metrics are not the focus but need to be mocked for the other check.
+        $this->metricsMock->method('getMetrics')->willReturn(['hit_rate' => 0.9, 'total_operations' => 200]);
+
+        // Act
+        $results = $this->healthCheckService->runAllChecks();
+        $connectivityResult = $results['connectivity'];
+
+        // Assert
+        $this->assertFalse($connectivityResult->isHealthy);
+        $this->assertSame('Write successful, but item not found', $connectivityResult->message);
+    }
+
     #[DataProvider('metricsScenarioProvider')]
     public function testHitRateCheckWithDifferentMetrics(array $metrics, bool $expectedHealthy, string $expectedMessage): void
     {
