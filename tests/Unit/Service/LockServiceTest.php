@@ -154,7 +154,7 @@ final class LockServiceTest extends TestCase
         $this->loggerMock
             ->expects($this->once())
             ->method('debug')
-            ->with('Lock released.', $this->isType('array'));
+            ->with('Lock released.', new IsType(IsType::TYPE_ARRAY));
 
         // 3. Act on the 'release' step.
         $result = $this->lockService->release($key);

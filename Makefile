@@ -105,7 +105,7 @@ composer-update: check-environment check-container-running
 ## test: Run tests
 test: check-environment check-container-running
 	@echo "${GREEN}${INFO} Running tests...${NC}"
-	$(EXEC_PHP) ./vendor/bin/phpunit --testdox --colors=always tests
+	$(EXEC_PHP) ./vendor/bin/phpunit --testdox --colors=always tests  --display-deprecations --display-phpunit-deprecations
 	@echo "${GREEN}${CHECK_MARK} Tests completed!${NC}"
 
 ## test-file: Run tests on a specific class. Usage: make test-file FILE=[file]

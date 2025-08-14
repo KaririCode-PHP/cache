@@ -46,8 +46,6 @@ final class ConfigurationFactory
      * Create configuration provider from mixed source (backward compatibility).
      *
      * @param mixed $config Configuration source
-     *
-     * @deprecated use specific factory methods fromConfig() or fromConfigurator() instead
      */
     public static function create(mixed $config): ConfigurationProvider
     {

@@ -13,6 +13,7 @@ use KaririCode\Cache\ValueObject\SerializationScheme;
 use KaririCode\Contract\Logging\Logger;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\DataProvider;
+use PHPUnit\Framework\Constraint\IsType;
 use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
 
@@ -132,7 +133,7 @@ final class SerializationServiceTest extends TestCase
 
         $this->logger->expects($this->once())
             ->method('debug')
-            ->with('Serializer registered successfully', $this->isType('array'));
+            ->with('Serializer registered successfully', new IsType(IsType::TYPE_ARRAY));
 
         // Act
         $this->service->registerSerializer('custom', $customSerializer);
@@ -218,7 +219,7 @@ final class SerializationServiceTest extends TestCase
         // Arrange
         $this->logger->expects($this->once())
             ->method('info')
-            ->with('Default serializer changed', $this->isType('array'));
+            ->with('Default serializer changed', new IsType(IsType::TYPE_ARRAY));
 
         // Act
         $this->service->setDefaultSerializer('json');
@@ -315,7 +316,7 @@ final class SerializationServiceTest extends TestCase
         // Arrange
         $this->logger->expects($this->once())
             ->method('debug')
-            ->with('Value serialized successfully', $this->isType('array'));
+            ->with('Value serialized successfully', new IsType(IsType::TYPE_ARRAY));
 
         // Act
         $this->service->serialize('test value');
@@ -352,7 +353,7 @@ final class SerializationServiceTest extends TestCase
 
         $this->logger->expects($this->once())
             ->method('error')
-            ->with('Serialization failed', $this->isType('array'));
+            ->with('Serialization failed', new IsType(IsType::TYPE_ARRAY));
 
         // Assert
         $this->expectException(CacheException::class);
@@ -453,7 +454,7 @@ final class SerializationServiceTest extends TestCase
 
         $this->logger->expects($this->once())
             ->method('debug')
-            ->with('Data deserialized successfully', $this->isType('array'));
+            ->with('Data deserialized successfully', new IsType(IsType::TYPE_ARRAY));
 
         // Act
         $this->service->unserialize($serialized);
@@ -490,7 +491,7 @@ final class SerializationServiceTest extends TestCase
 
         $this->logger->expects($this->once())
             ->method('error')
-            ->with('Deserialization failed', $this->isType('array'));
+            ->with('Deserialization failed', new IsType(IsType::TYPE_ARRAY));
 
         // Assert
         $this->expectException(CacheException::class);

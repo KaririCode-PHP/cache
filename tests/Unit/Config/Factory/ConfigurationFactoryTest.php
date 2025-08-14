@@ -8,7 +8,9 @@ use KaririCode\Cache\Config\Adapter\ConfiguratorAdapter;
 use KaririCode\Cache\Config\CacheConfiguration;
 use KaririCode\Cache\Config\Factory\ConfigurationFactory;
 use KaririCode\Cache\Config\StoreConfiguration;
+use KaririCode\Cache\Contract\Configuration\ConfigurationProvider;
 use KaririCode\Cache\Exception\ConfigurationException;
+use KaririCode\Cache\Exception\InvalidArgumentException;
 use KaririCode\Configurator\Contract\Configurator\ConfigurationManager;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\DataProvider;
@@ -370,6 +372,60 @@ final class ConfigurationFactoryTest extends TestCase
         $features = $configuration->getFeatures();
         $this->assertTrue($features->debugMode);
         $this->assertFalse($features->metricsEnabled);
+    }
+
+    /**
+     * Verifies the create() method with an array input.
+     * This ensures the deprecated method maintains backward compatibility.
+     */
+    public function testCreateMethodWithArray(): void
+    {
+        // Act
+        $provider = ConfigurationFactory::create($this->minimalConfiguration);
+
+        // Assert
+        $this->assertInstanceOf(CacheConfiguration::class, $provider);
+    }
+
+    /**
+     * Verifies the create() method with a ConfigurationManager input.
+     */
+    public function testCreateMethodWithConfigurator(): void
+    {
+        // Act
+        $provider = ConfigurationFactory::create($this->configuratorMock);
+
+        // Assert
+        $this->assertInstanceOf(ConfiguratorAdapter::class, $provider);
+    }
+
+    /**
+     * Verifies the create() method when a provider instance is passed through.
+     */
+    public function testCreateMethodWithProviderInstance(): void
+    {
+        // Arrange
+        $providerMock = $this->createMock(ConfigurationProvider::class);
+
+        // Act
+        $result = ConfigurationFactory::create($providerMock);
+
+        // Assert
+        $this->assertSame($providerMock, $result, 'Should return the same instance passed in.');
+    }
+
+    /**
+     * Verifies the create() method throws an exception for invalid input types.
+     */
+    public function testCreateMethodWithInvalidTypeThrowsException(): void
+    {
+        // Assert
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('Invalid configuration type');
+
+        // Act
+        ConfigurationFactory::create('a string is not valid');
     }
 
     /**

@@ -13,7 +13,7 @@ use KaririCode\Cache\Contract\CacheSerializer;
 use KaririCode\Cache\Contract\Configuration\ConfigurationProvider;
 use KaririCode\Cache\Contract\Provider\ExpirationProvider;
 use KaririCode\Cache\Exception\ConfigurationException;
-use KaririCode\Cache\Provider\ConfigurableExpirationProvider;
+use KaririCode\Cache\Provider\Expiration\ConfigurableExpirationProvider;
 use KaririCode\Contract\Logging\Logger;
 use KaririCode\Logging\SilentLogger;
 

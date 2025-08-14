@@ -11,6 +11,7 @@ use KaririCode\Cache\Contract\DriverManager;
 use KaririCode\Cache\Contract\Provider\ExpirationProvider;
 use KaririCode\Cache\Exception\ConfigurationException;
 use KaririCode\Contract\Logging\Logger;
+use KaririCode\Logging\SilentLogger;
 
 /**
  * Abstract base factory for cache drivers.
@@ -199,7 +200,7 @@ abstract class AbstractDriverFactory implements CacheDriverFactory
     protected function resolveLogger(
         array $options,
         DriverManager $manager
-    ): ?Logger {
+    ): Logger {
         // Check for explicit logger
         if (isset($options['logger'])
             && $options['logger'] instanceof Logger) {
@@ -215,7 +216,7 @@ abstract class AbstractDriverFactory implements CacheDriverFactory
         }
 
         // Return null logger as fallback
-        return null;
+        return new SilentLogger();
     }
 
     /**

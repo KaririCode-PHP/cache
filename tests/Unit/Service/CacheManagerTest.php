@@ -213,6 +213,7 @@ final class CacheManagerTest extends TestCase
     public function testStoreCanReturnDriverWithAtomicCapabilities(): void
     {
         // Arrange
+        /** @var CacheDriver&AtomicOperable|MockObject */
         $atomicDriver = $this->createMockForIntersectionOfInterfaces([CacheDriver::class, AtomicOperable::class]);
         $this->setupDefaultStore($atomicDriver);
         $manager = $this->createManager();

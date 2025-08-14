@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace KaririCode\Cache\Driver;
 
 use KaririCode\Cache\Contract\CacheCapabilities;
+use KaririCode\Cache\Contract\CacheDriver;
 use KaririCode\Cache\Contract\DriverStats;
 use KaririCode\Cache\Contract\Provider\ExpirationProvider;
 use KaririCode\Cache\Driver\Array\Operation\ArrayAtomicOperations;
@@ -12,6 +13,8 @@ use KaririCode\Cache\Driver\Array\Operation\ArrayCrudOperations;
 use KaririCode\Cache\Driver\Array\Operation\ArrayTagOperations;
 use KaririCode\Cache\Driver\Array\Operation\ArrayTopicOperations;
 use KaririCode\Cache\Driver\Array\Storage\ArrayStorage;
+use KaririCode\Cache\Item\CacheItem;
+use Psr\Cache\CacheItemInterface;
 
 /**
  * In-memory array-based cache driver.
@@ -28,7 +31,7 @@ use KaririCode\Cache\Driver\Array\Storage\ArrayStorage;
  *
  * @see       https://kariricode.org/
  */
-final class ArrayDriver
+final class ArrayDriver implements CacheDriver
 {
     private readonly ArrayStorage $storage;
     private readonly ArrayCrudOperations $crudOperations;
@@ -174,6 +177,53 @@ final class ArrayDriver
     public function getSubscribersForTopic(string $topic): array
     {
         return $this->topicOperations->getSubscribersForTopic($topic);
+    }
+
+    public function getItem(string $key): CacheItemInterface
+    {
+        $value = $this->crudOperations->get($key);
+
+        return new CacheItem($key, $value, null !== $value);
+    }
+
+    public function getItems(iterable $keys = []): iterable
+    {
+        $items = [];
+        foreach ($keys as $key) {
+            $items[$key] = $this->getItem($key);
+        }
+
+        return $items;
+    }
+
+    public function hasItem(string $key): bool
+    {
+        return $this->crudOperations->has($key);
+    }
+
+    public function deleteItem(string $key): bool
+    {
+        return $this->crudOperations->delete($key);
+    }
+
+    public function deleteItems(array $keys): bool
+    {
+        return $this->crudOperations->deleteMultiple($keys);
+    }
+
+    public function save(CacheItemInterface $item): bool
+    {
+        return $this->crudOperations->set($item->getKey(), $item->get());
+    }
+
+    public function saveDeferred(CacheItemInterface $item): bool
+    {
+        return $this->save($item);
+    }
+
+    public function commit(): bool
+    {
+        return true;
     }
 
     // --- Driver Management and Statistics ---
