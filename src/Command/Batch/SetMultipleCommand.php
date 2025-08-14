@@ -55,6 +55,21 @@ final class SetMultipleCommand extends AbstractCacheCommand
         return $allSuccess && $this->cache->commit();
     }
 
+    /**
+     * Gets context data about the command for logging and debugging.
+     *
+     * @return array<string, mixed>
+     */
+    public function getContext(): array
+    {
+        // Extrai as chaves dos valores para o contexto
+        $keys = array_keys(is_array($this->values) ? $this->values : iterator_to_array($this->values));
+
+        return array_merge(parent::getContext(), [
+            'keys' => $keys,
+        ]);
+    }
+
     public function getName(): string
     {
         return 'SET_MULTIPLE';

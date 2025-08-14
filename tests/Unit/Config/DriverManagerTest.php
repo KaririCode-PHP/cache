@@ -143,6 +143,59 @@ final class DriverManagerTest extends TestCase
     }
 
     /**
+     * Tests that createDriver throws an exception when driver options are invalid.
+     * This covers the remaining branch in the createDriver method.
+     */
+    public function testCreateDriverThrowsExceptionOnInvalidOptions(): void
+    {
+        // Assert
+        $this->expectException(ConfigurationException::class);
+        $this->expectExceptionMessage("Invalid cache configuration for 'failing_driver': Invalid driver options");
+
+        // Arrange
+        // Create a mock factory that will fail the validation step
+
+        $failingFactory = new class implements CacheDriverFactory {
+            public function createDriver(array $options, DriverManagerContract $manager): CacheDriver
+            {
+                // This part is not expected to be reached in this specific test.
+                // We just need a valid implementation.
+                return $manager->createDriver('array', $options);
+            }
+
+            public function getSupportedOptions(): array
+            {
+                return [];
+            }
+
+            public function validateOptions(array $options): bool
+            {
+                // The crucial part: always fail validation for this test.
+                return false;
+            }
+        };
+
+        $this->driverManager->addFactory('failing_driver', get_class($failingFactory));
+
+        // Act
+        $this->driverManager->createDriver('failing_driver');
+    }
+
+    /**
+     * Tests that getSupportedOptions throws an exception for a non-existent driver.
+     * This covers the remaining branch in the getSupportedOptions method.
+     */
+    public function testGetSupportedOptionsThrowsExceptionForNonExistentDriver(): void
+    {
+        // Assert
+        $this->expectException(ConfigurationException::class);
+        $this->expectExceptionMessage("Cache driver 'nonexistent' is not configured");
+
+        // Act
+        $this->driverManager->getSupportedOptions('nonexistent');
+    }
+
+    /**
      * Tests that getSupportedOptions correctly delegates to the specified factory.
      */
     public function testGetSupportedOptionsDelegatesToFactory(): void

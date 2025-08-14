@@ -89,7 +89,6 @@ final class TagTest extends TestCase
     public function testCannotBeCreatedWithInvalidCharacters(string $invalidValue): void
     {
         $this->expectException(InvalidArgumentException::class);
-        // CORREÇÃO: A mensagem esperada foi ajustada para ser mais precisa.
         $this->expectExceptionMessage('Invalid cache tag format');
 
         Tag::fromString($invalidValue);

@@ -51,6 +51,18 @@ final class GetMultipleCommand extends AbstractCacheCommand
         return $results;
     }
 
+    /**
+     * Gets context data about the command for logging and debugging.
+     *
+     * @return array<string, mixed>
+     */
+    public function getContext(): array
+    {
+        return array_merge(parent::getContext(), [
+            'keys' => is_array($this->keys) ? $this->keys : iterator_to_array($this->keys),
+        ]);
+    }
+
     public function getName(): string
     {
         return 'GET_MULTIPLE';

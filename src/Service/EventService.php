@@ -23,7 +23,7 @@ use Psr\EventDispatcher\EventDispatcherInterface;
  * Orchestrates cache event dispatching and logging.
  * Refactored from God Class to follow Single Responsibility Principle.
  */
-final class EventService implements EventDispatcher
+class EventService implements EventDispatcher
 {
     private readonly CacheEventLogger $logger;
     private readonly CacheEventContextBuilder $contextBuilder;

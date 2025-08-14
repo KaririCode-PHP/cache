@@ -44,6 +44,20 @@ final class CompareAndSwapCommand extends AbstractCacheCommand
         return $this->cache->compareAndSwap($this->key, $serializedExpected, $serializedNew, $this->ttl);
     }
 
+    /**
+     * Gets context data about the command for logging and debugging.
+     *
+     * @return array<string, mixed>
+     */
+    public function getContext(): array
+    {
+        return array_merge(parent::getContext(), [
+            'key' => $this->key,
+            'expected_value' => $this->expectedValue,
+            'new_value' => $this->newValue,
+        ]);
+    }
+
     public function getName(): string
     {
         return 'COMPARE_AND_SWAP';

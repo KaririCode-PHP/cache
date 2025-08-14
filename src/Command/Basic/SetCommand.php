@@ -60,6 +60,19 @@ final class SetCommand extends AbstractCacheCommand
         }
     }
 
+    /**
+     * Gets context data about the command for logging and debugging.
+     *
+     * @return array<string, mixed>
+     */
+    public function getContext(): array
+    {
+        return array_merge(parent::getContext(), [
+            'key' => $this->key,
+            'value' => $this->value,
+        ]);
+    }
+
     public function getName(): string
     {
         return 'SET';

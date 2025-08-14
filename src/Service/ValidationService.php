@@ -32,7 +32,7 @@ use KaririCode\Cache\ValueObject\Tag;
  * @see       https://www.php-fig.org/psr/psr-6/ PSR-6 Caching Interface
  * @see       https://github.com/php-fig/cache Cache Library Standards
  */
-final class ValidationService
+class ValidationService
 {
     /**
      * Maximum allowed length for cache keys according to PSR-6 recommendations.

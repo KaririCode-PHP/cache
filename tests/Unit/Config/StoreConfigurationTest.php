@@ -115,6 +115,18 @@ final class StoreConfigurationTest extends TestCase
                 ['driver' => 'layered', 'config' => ['layers' => []]],
                 'Layered cache must have a non-empty "layers" array',
             ],
+            'layer item is not an array' => [
+                [
+                    'driver' => 'layered',
+                    'config' => [
+                        'layers' => [
+                            ['driver' => 'apcu'], // valid layer
+                            'invalid_layer_item',    // invalid layer (string instead of array)
+                        ],
+                    ],
+                ],
+                'Layer configuration must be an array',
+            ],
             'invalid layer config' => [
                 ['driver' => 'layered', 'config' => ['layers' => [['priority' => 1]]]],
                 'Layer driver must be specified',

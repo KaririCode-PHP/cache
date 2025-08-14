@@ -56,6 +56,71 @@ final class CacheConfigurationTest extends TestCase
     }
 
     /**
+     * Tests that the first store is used as default when only one store is configured
+     * and no explicit default is set. This covers an untested branch.
+     */
+    public function testUsesFirstStoreAsDefaultWhenOnlyOneExists(): void
+    {
+        // Arrange
+        $config = [
+            'stores' => [
+                'redis' => ['driver' => 'redis'], // The only store
+            ],
+        ];
+
+        // Act
+        $cacheConfig = new CacheConfiguration($config);
+
+        // Assert
+        $this->assertSame('redis', $cacheConfig->getDefaultStore());
+    }
+
+    /**
+     * Tests that the first available store is used as a final fallback when multiple
+     * stores exist, none are named 'array', and no default is set.
+     * This covers the final branch of the determineDefaultStore method.
+     */
+    public function testUsesFirstAvailableStoreAsDefaultAsLastResort(): void
+    {
+        // Arrange: A config with multiple stores, none named 'array', and no 'default'.
+        $config = [
+            'stores' => [
+                'redis' => ['driver' => 'redis'],
+                'memcached' => ['driver' => 'memcached'],
+            ],
+        ];
+
+        // Act
+        $cacheConfig = new CacheConfiguration($config);
+
+        // Assert: The first key from the stores array ('redis') should be chosen.
+        $this->assertSame('redis', $cacheConfig->getDefaultStore());
+    }
+
+    /**
+     * Tests that the 'array' store is preferred as the default when multiple stores exist
+     * and no explicit default is set. This covers the final untested branch.
+     */
+    public function testPrefersArrayStoreAsDefaultWhenAvailable(): void
+    {
+        // Arrange
+        $config = [
+            'stores' => [
+                'redis' => ['driver' => 'redis'],
+                'array' => ['driver' => 'array'],
+                'memcached' => ['driver' => 'memcached'],
+            ],
+            // No 'default' key is specified
+        ];
+
+        // Act
+        $cacheConfig = new CacheConfiguration($config);
+
+        // Assert
+        $this->assertSame('array', $cacheConfig->getDefaultStore());
+    }
+
+    /**
      * Tests that the configuration can be created with full configuration.
      *
      * This test verifies that all configuration options are properly

@@ -7,6 +7,7 @@ namespace KaririCode\Cache\Tests\Unit\Config;
 use KaririCode\Cache\Config\CacheConfig;
 use KaririCode\Cache\Config\CacheConfiguration;
 use KaririCode\Cache\Config\StoreConfiguration;
+use KaririCode\Cache\Exception\ConfigurationException;
 use KaririCode\Configurator\Contract\Configurator\ConfigurationManager;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\MockObject\MockObject;
@@ -78,6 +79,40 @@ final class CacheConfigTest extends TestCase
 
         // Assert
         $this->assertInstanceOf(CacheConfig::class, $cacheConfig);
+    }
+
+    /**
+     * Tests that getStore throws an exception for a non-existent store.
+     * This covers the remaining branch in the getStore method.
+     */
+    public function testGetStoreThrowsExceptionForNonExistentStore(): void
+    {
+        // Assert
+        $this->expectException(ConfigurationException::class);
+        $this->expectExceptionMessage("Cache store 'nonexistent' is not configured");
+
+        // Arrange
+        $this->configuratorMock
+            ->method('has')
+            ->with('cache')
+            ->willReturn(true);
+
+        // The constructor calls get('cache'), while getStore() eventually calls get('cache.stores').
+        // The mock must be able to respond correctly to both scenarios.
+        $this->configuratorMock
+            ->method('get')
+            ->willReturnCallback(function (string $key, $default = null) {
+                return match ($key) {
+                    'cache' => $this->sampleConfiguration,
+                    'cache.stores' => $this->sampleConfiguration['stores'],
+                    default => $default,
+                };
+            });
+
+        $cacheConfig = new CacheConfig($this->configuratorMock);
+
+        // Act
+        $cacheConfig->getStore('nonexistent');
     }
 
     /**

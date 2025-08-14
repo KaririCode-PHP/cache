@@ -45,7 +45,7 @@ use KaririCode\Logging\SilentLogger;
  * @see       https://www.php-fig.org/psr/psr-3/ PSR-3 Logger Interface
  * @see       CacheSerializer The interface this service implements
  */
-final class SerializationService implements CacheSerializer
+class SerializationService implements CacheSerializer
 {
     /**
      * Default serializer identifier.

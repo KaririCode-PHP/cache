@@ -53,7 +53,7 @@ final class AddCommand extends AbstractCacheCommand
             $item->expiresAfter($this->ttl);
         }
 
-        return $this->cache->add($item->getKey(), $item->get(), $item->getExpiration());
+        return $this->cache->add($item->getKey(), $serializedValue, $item->getExpiration());
     }
 
     /**
@@ -66,6 +66,19 @@ final class AddCommand extends AbstractCacheCommand
         if (true === $result) {
             $this->events->dispatchCacheSet($this->key, $this->value, $this->ttl, $duration);
         }
+    }
+
+    /**
+     * Gets context data about the command for logging and debugging.
+     *
+     * @return array<string, mixed>
+     */
+    public function getContext(): array
+    {
+        return array_merge(parent::getContext(), [
+            'key' => $this->key,
+            'value' => $this->value,
+        ]);
     }
 
     /**

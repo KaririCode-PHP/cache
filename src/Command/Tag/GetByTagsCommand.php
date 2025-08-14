@@ -18,13 +18,14 @@ final class GetByTagsCommand extends AbstractCacheCommand
 {
     public function __construct(
         private readonly LayeredDriver $cache,
-        private readonly ValidationService $validator,
+        ValidationService $validator,
         private readonly SerializationService $serializer,
-        private readonly EventService $events,
-        private readonly MetricsService $metrics,
-        private readonly array $tags
+        EventService $events,
+        MetricsService $metrics,
+        array $tags
     ) {
         parent::__construct($validator, $events, $metrics);
+        $this->tags = $tags;
     }
 
     /**
@@ -56,8 +57,17 @@ final class GetByTagsCommand extends AbstractCacheCommand
     }
 
     /**
-     * Returns the name of the command.
+     * Gets context data about the command for logging and debugging.
+     *
+     * @return array<string, mixed>
      */
+    public function getContext(): array
+    {
+        return array_merge(parent::getContext(), [
+            'tags' => $this->tags,
+        ]);
+    }
+
     public function getName(): string
     {
         return 'GET_BY_TAGS';

@@ -125,7 +125,7 @@ abstract class AbstractCacheCommand implements
             $this->validate();
             $this->beforeExecute();
             $result = $this->doExecute();
-            $success = true; // Mark as success before afterExecute hook
+            $success = is_bool($result) ? $result : true;
 
             $duration = microtime(true) - $startTime;
             $this->afterExecute($result, $duration);

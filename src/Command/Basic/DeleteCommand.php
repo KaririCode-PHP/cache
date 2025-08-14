@@ -40,6 +40,16 @@ final class DeleteCommand extends AbstractCacheCommand
         $this->events->dispatchCacheDelete($this->key, $result, $duration);
     }
 
+    /**
+     * Gets context data about the command for logging and debugging.
+     *
+     * @return array<string, mixed>
+     */
+    public function getContext(): array
+    {
+        return array_merge(parent::getContext(), ['key' => $this->key]);
+    }
+
     public function getName(): string
     {
         return 'DELETE';

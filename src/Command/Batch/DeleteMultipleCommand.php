@@ -35,6 +35,18 @@ final class DeleteMultipleCommand extends AbstractCacheCommand
         return $this->cache->deleteItems($this->keys);
     }
 
+    /**
+     * Gets context data about the command for logging and debugging.
+     *
+     * @return array<string, mixed>
+     */
+    public function getContext(): array
+    {
+        return array_merge(parent::getContext(), [
+            'keys' => is_array($this->keys) ? $this->keys : iterator_to_array($this->keys),
+        ]);
+    }
+
     public function getName(): string
     {
         return 'DELETE_MULTIPLE';

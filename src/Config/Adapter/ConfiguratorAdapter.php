@@ -35,8 +35,6 @@ use KaririCode\Contract\ImmutableValue;
  */
 final class ConfiguratorAdapter implements ConfigurationProvider, ImmutableValue
 {
-    private readonly ConfigurationManager $configurator;
-    private readonly string $namespace;
     private ?CacheConfiguration $cachedConfiguration = null;
 
     /**
@@ -44,11 +42,9 @@ final class ConfiguratorAdapter implements ConfigurationProvider, ImmutableValue
      * @param string $namespace The configuration namespace (default: 'cache')
      */
     public function __construct(
-        ConfigurationManager $configurator,
-        string $namespace = 'cache'
+        private readonly ConfigurationManager $configurator,
+        private readonly string $namespace = 'cache'
     ) {
-        $this->configurator = $configurator;
-        $this->namespace = $namespace;
     }
 
     /**
@@ -67,7 +63,7 @@ final class ConfiguratorAdapter implements ConfigurationProvider, ImmutableValue
     private function getConfiguration(): CacheConfiguration
     {
         if (null === $this->cachedConfiguration) {
-            $configArray = $this->extractConfigurationArray();
+            $configArray = $this->extractConfigurationData();
             $this->cachedConfiguration = new CacheConfiguration($configArray);
         }
 
@@ -77,7 +73,7 @@ final class ConfiguratorAdapter implements ConfigurationProvider, ImmutableValue
     /**
      * Extract configuration array from configurator.
      */
-    private function extractConfigurationArray(): array
+    private function extractConfigurationData(): array
     {
         $config = $this->configurator->has($this->namespace)
             ? $this->configurator->get($this->namespace)
@@ -85,12 +81,19 @@ final class ConfiguratorAdapter implements ConfigurationProvider, ImmutableValue
 
         $config = is_array($config) ? $config : [];
 
-        // Apply defaults
+        // Get default serializers
+        $defaultSerializers = $this->getDefaultSerializers();
+
+        // Merge configured serializers with defaults
+        $configuredSerializers = $config['serializers'] ?? [];
+        $mergedSerializers = array_merge($defaultSerializers, $configuredSerializers);
+
+        // Apply defaults with merged serializers
         $defaults = [
             'default' => 'array',
             'stores' => [],
             'serializer' => 'native',
-            'serializers' => [],
+            'serializers' => $mergedSerializers, // Use merged serializers
             'features' => [],
             'validation' => [],
             'metrics' => [],
@@ -100,7 +103,29 @@ final class ConfiguratorAdapter implements ConfigurationProvider, ImmutableValue
             'optimizations' => [],
         ];
 
-        return array_merge($defaults, $config);
+        // Merge configuration with defaults
+        $mergedConfig = array_merge($defaults, $config);
+
+        // Ensure serializers always include defaults
+        if (isset($config['serializers'])) {
+            $mergedConfig['serializers'] = array_merge($defaultSerializers, $config['serializers']);
+        }
+
+        return $mergedConfig;
+    }
+
+    /**
+     * Get default serializers that should always be available.
+     *
+     * @return array<string, class-string>
+     */
+    private function getDefaultSerializers(): array
+    {
+        return [
+            'native' => \KaririCode\Cache\Serializer\NativeSerializer::class,
+            'json' => \KaririCode\Cache\Serializer\JsonSerializer::class,
+            'igbinary' => \KaririCode\Cache\Serializer\IgbinarySerializer::class,
+        ];
     }
 
     // Delegate all ConfigurationProvider methods to the underlying configuration

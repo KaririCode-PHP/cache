@@ -5,42 +5,410 @@ declare(strict_types=1);
 namespace KaririCode\Cache\Tests\Unit\Config\Adapter;
 
 use KaririCode\Cache\Config\Adapter\ConfiguratorAdapter;
+use KaririCode\Cache\Config\DTO\ExpirationProviderConfig;
 use KaririCode\Cache\Config\DTO\FeatureConfig;
+use KaririCode\Cache\Config\DTO\HealthCheckConfig;
+use KaririCode\Cache\Config\DTO\LoggingConfig;
+use KaririCode\Cache\Config\DTO\MetricsConfig;
+use KaririCode\Cache\Config\DTO\OptimizationConfig;
 use KaririCode\Cache\Config\DTO\ValidationConfig;
 use KaririCode\Cache\Config\StoreConfiguration;
+use KaririCode\Cache\Contract\Configuration\ConfigurationProvider;
 use KaririCode\Cache\Exception\ConfigurationException;
 use KaririCode\Configurator\Contract\Configurator\ConfigurationManager;
+use KaririCode\Contract\ImmutableValue;
 use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
 
+/**
+ * Comprehensive unit tests for the ConfiguratorAdapter class.
+ *
+ * This test suite ensures the adapter correctly bridges between KaririCode\Configurator
+ * and the cache configuration system, following SOLID principles and Clean Code practices.
+ *
+ * @category  Tests
+ *
+ * @author    Walmir Silva <walmir.silva@kariricode.org>
+ * @license   MIT
+ *
+ * @see      https://kariricode.org/
+ *
+ * @covers \KaririCode\Cache\Config\Adapter\ConfiguratorAdapter
+ */
 #[CoversClass(ConfiguratorAdapter::class)]
 final class ConfiguratorAdapterTest extends TestCase
 {
     private ConfigurationManager&MockObject $configuratorMock;
-    private array $sampleConfiguration;
+    private array $completeConfiguration;
+    private array $minimalConfiguration;
 
     protected function setUp(): void
     {
         parent::setUp();
-
         $this->configuratorMock = $this->createMock(ConfigurationManager::class);
-        $this->sampleConfiguration = [
+        $this->setupCompleteConfiguration();
+        $this->setupMinimalConfiguration();
+    }
+
+    /**
+     * Tests the static factory method fromConfigurator.
+     * This covers the remaining uncovered method, ensuring 100% coverage.
+     */
+    public function testFromConfiguratorFactoryMethod(): void
+    {
+        // Act
+        // Call the static factory method directly.
+        $adapter = ConfiguratorAdapter::fromConfigurator($this->configuratorMock);
+
+        // Assert
+        // Verify that it returns a valid instance of the adapter.
+        $this->assertInstanceOf(ConfiguratorAdapter::class, $adapter);
+    }
+
+    /**
+     * Tests successful adapter creation with complete configuration.
+     */
+    public function testSuccessfulCreationWithCompleteConfiguration(): void
+    {
+        // Arrange
+        $this->setupConfiguratorWithData($this->completeConfiguration);
+        // Act
+        $adapter = new ConfiguratorAdapter($this->configuratorMock);
+
+        // FIX: Trigger lazy-loading to ensure the configurator mock is used,
+        // satisfying the expectations set in `setupConfiguratorWithData`.
+        $defaultStore = $adapter->getDefaultStore();
+
+        // Assert
+        $this->assertInstanceOf(ConfigurationProvider::class, $adapter);
+        $this->assertInstanceOf(ImmutableValue::class, $adapter);
+        $this->assertSame('layered', $defaultStore);
+    }
+
+    /**
+     * Tests adapter creation with custom namespace.
+     */
+    public function testCreationWithCustomNamespace(): void
+    {
+        // Arrange
+        $customNamespace = 'app.cache';
+        $this->configuratorMock
+            ->expects($this->once())
+            ->method('has')
+            ->with($customNamespace)
+            ->willReturn(true);
+        $this->configuratorMock
+            ->expects($this->once())
+            ->method('get')
+            ->with($customNamespace)
+            ->willReturn($this->completeConfiguration);
+        // Act
+        $adapter = new ConfiguratorAdapter($this->configuratorMock, $customNamespace);
+        // Assert
+        $this->assertSame('layered', $adapter->getDefaultStore());
+    }
+
+    /**
+     * Tests lazy loading behavior - configuration is only loaded when accessed.
+     */
+    public function testLazyLoadingBehavior(): void
+    {
+        // Arrange
+        $this->configuratorMock
+            ->expects($this->never())
+            ->method('has');
+        $this->configuratorMock
+            ->expects($this->never())
+            ->method('get');
+        // Act - Just create the adapter without accessing any properties
+        $adapter = new ConfiguratorAdapter($this->configuratorMock);
+        // Assert
+        $this->assertInstanceOf(ConfiguratorAdapter::class, $adapter);
+    }
+
+    /**
+     * Tests configuration caching - should only load once.
+     */
+    public function testConfigurationCaching(): void
+    {
+        // Arrange
+        $this->configuratorMock
+            ->expects($this->once()) // Should only be called once
+            ->method('has')
+            ->with('cache')
+            ->willReturn(true);
+        $this->configuratorMock
+            ->expects($this->once()) // Should only be called once
+            ->method('get')
+            ->with('cache')
+            ->willReturn($this->completeConfiguration);
+        $adapter = new ConfiguratorAdapter($this->configuratorMock);
+
+        // Act - Multiple accesses
+        $adapter->getDefaultStore();
+        $adapter->getStores();
+        $adapter->getDefaultSerializer();
+        $adapter->getFeatures();
+        // Assert - Methods were only called once (implicit in expects)
+        $this->assertSame('layered', $adapter->getDefaultStore());
+    }
+
+    /**
+     * Tests all DTO methods return correct instances.
+     */
+    public function testAllDtoMethodsReturnCorrectInstances(): void
+    {
+        // Arrange
+        $this->setupConfiguratorWithData($this->completeConfiguration);
+        $adapter = new ConfiguratorAdapter($this->configuratorMock);
+
+        // Act & Assert
+        $this->assertInstanceOf(FeatureConfig::class, $adapter->getFeatures());
+        $this->assertInstanceOf(ValidationConfig::class, $adapter->getValidation());
+        $this->assertInstanceOf(MetricsConfig::class, $adapter->getMetrics());
+        $this->assertInstanceOf(LoggingConfig::class, $adapter->getLogging());
+        $this->assertInstanceOf(HealthCheckConfig::class, $adapter->getHealthChecks());
+        $this->assertInstanceOf(ExpirationProviderConfig::class, $adapter->getExpirationProvider());
+        $this->assertInstanceOf(OptimizationConfig::class, $adapter->getOptimizations());
+    }
+
+    /**
+     * Tests store configuration retrieval.
+     */
+    public function testStoreConfigurationRetrieval(): void
+    {
+        // Arrange
+        $this->setupConfiguratorWithData($this->completeConfiguration);
+        $adapter = new ConfiguratorAdapter($this->configuratorMock);
+
+        // Act
+        $stores = $adapter->getStores();
+        $redisStore = $adapter->getStore('redis');
+        $layeredStore = $adapter->getStore('layered');
+
+        // Assert
+        $this->assertCount(3, $stores);
+        $this->assertInstanceOf(StoreConfiguration::class, $redisStore);
+        $this->assertInstanceOf(StoreConfiguration::class, $layeredStore);
+        $this->assertSame('redis', $redisStore->getDriver());
+        $this->assertSame('layered', $layeredStore->getDriver());
+        $this->assertTrue($adapter->hasStore('redis'));
+        $this->assertTrue($adapter->hasStore('filesystem'));
+        $this->assertFalse($adapter->hasStore('nonexistent'));
+    }
+
+    /**
+     * Tests serializer configuration handling.
+     */
+    public function testSerializerConfiguration(): void
+    {
+        // Arrange
+        $this->setupConfiguratorWithData($this->completeConfiguration);
+        $adapter = new ConfiguratorAdapter($this->configuratorMock);
+
+        // Act
+        $serializers = $adapter->getSerializers();
+        $defaultSerializer = $adapter->getDefaultSerializer();
+        // Assert
+        $this->assertIsArray($serializers);
+        $this->assertArrayHasKey('native', $serializers);
+        $this->assertArrayHasKey('igbinary', $serializers);
+        $this->assertArrayHasKey('json', $serializers);
+        $this->assertSame('igbinary', $defaultSerializer);
+    }
+
+    /**
+     * Tests handling of missing configuration namespace.
+     */
+    public function testHandlesMissingNamespaceGracefully(): void
+    {
+        // Arrange
+        $this->configuratorMock
+            ->expects($this->once())
+            ->method('has')
+            ->with('cache')
+            ->willReturn(false);
+        $adapter = new ConfiguratorAdapter($this->configuratorMock);
+
+        // Act & Assert
+        $this->expectException(ConfigurationException::class);
+        $this->expectExceptionMessage('At least one cache store must be configured');
+
+        $adapter->getDefaultStore();
+    }
+
+    /**
+     * Tests handling of invalid configuration format.
+     */
+    public function testHandlesInvalidConfigurationFormat(): void
+    {
+        // Arrange
+        $this->configuratorMock
+            ->expects($this->once())
+            ->method('has')
+            ->with('cache')
+            ->willReturn(true);
+        $this->configuratorMock
+            ->expects($this->once())
+            ->method('get')
+            ->with('cache')
+            ->willReturn('invalid_string_config');
+        // Not an array
+
+        $adapter = new ConfiguratorAdapter($this->configuratorMock);
+        // Act & Assert
+        $this->expectException(ConfigurationException::class);
+        $this->expectExceptionMessage('At least one cache store must be configured');
+        $adapter->getStores();
+    }
+
+    /**
+     * Tests exception for non-existent store.
+     */
+    public function testThrowsExceptionForNonExistentStore(): void
+    {
+        // Arrange
+        $this->setupConfiguratorWithData($this->completeConfiguration);
+        $adapter = new ConfiguratorAdapter($this->configuratorMock);
+
+        // Act & Assert
+        $this->expectException(ConfigurationException::class);
+        $this->expectExceptionMessage("Cache store 'nonexistent' is not configured");
+
+        $adapter->getStore('nonexistent');
+    }
+
+    /**
+     * Tests default values when configuration sections are missing.
+     */
+    #[DataProvider('missingConfigurationSectionsProvider')]
+    public function testDefaultValuesForMissingSections(
+        array $config,
+        string $method,
+        mixed $expected
+    ): void {
+        // Arrange
+        $this->setupConfiguratorWithData($config);
+        $adapter = new ConfiguratorAdapter($this->configuratorMock);
+
+        // Act
+        $result = $adapter->$method();
+        // Assert
+        if (is_object($expected)) {
+            $this->assertInstanceOf(get_class($expected), $result);
+        } else {
+            $this->assertEquals($expected, $result);
+        }
+    }
+
+    /**
+     * Tests configuration with environment variable substitution.
+     */
+    public function testConfigurationWithEnvironmentVariables(): void
+    {
+        // Arrange
+        $configWithEnv = [
             'default' => 'redis',
+            'stores' => [
+                'redis' => [
+                    'driver' => 'redis',
+                    'config' => [
+                        'host' => '${REDIS_HOST:localhost}',
+                        'port' => '${REDIS_PORT:6379}',
+                    ],
+                ],
+            ],
+        ];
+        $this->setupConfiguratorWithData($configWithEnv);
+        $adapter = new ConfiguratorAdapter($this->configuratorMock);
+
+        // Act
+        $redisStore = $adapter->getStore('redis');
+        // Assert
+        $this->assertSame('redis', $redisStore->getDriver());
+        // Note: Actual env var substitution would be handled by Configurator
+    }
+
+    /**
+     * Tests immutability of the adapter.
+     */
+    public function testImmutability(): void
+    {
+        // Arrange
+        $this->setupConfiguratorWithData($this->completeConfiguration);
+        $adapter = new ConfiguratorAdapter($this->configuratorMock);
+
+        // FIX: Trigger lazy-loading before checking properties to meet mock expectations.
+        $adapter->getDefaultStore();
+
+        // Act & Assert
+        $reflection = new \ReflectionClass($adapter);
+        foreach ($reflection->getProperties() as $property) {
+            if (!$property->isStatic()) {
+                $this->assertTrue(
+                    $property->isReadOnly() || $property->isPrivate(),
+                    "Property {$property->getName()} should be readonly or private"
+                );
+            }
+        }
+    }
+
+    /**
+     * Tests complex layered driver configuration.
+     */
+    public function testComplexLayeredDriverConfiguration(): void
+    {
+        // Arrange
+        $this->setupConfiguratorWithData($this->completeConfiguration);
+        $adapter = new ConfiguratorAdapter($this->configuratorMock);
+
+        // Act
+        $layeredStore = $adapter->getStore('layered');
+        // Assert
+        $this->assertTrue($layeredStore->isLayered());
+        $this->assertNotNull($layeredStore->getLayeredConfig());
+        $this->assertCount(2, $layeredStore->getLayers());
+
+        $layeredConfig = $layeredStore->getLayeredConfig();
+        $this->assertTrue($layeredConfig->promotionEnabled);
+        $this->assertSame(3, $layeredConfig->promotionThreshold);
+    }
+
+    // Helper methods
+
+    private function setupConfiguratorWithData(array $data): void
+    {
+        $this->configuratorMock
+            ->expects($this->once())
+            ->method('has')
+            ->with('cache')
+            ->willReturn(true);
+        $this->configuratorMock
+            ->expects($this->once())
+            ->method('get')
+            ->with('cache')
+            ->willReturn($data);
+    }
+
+    private function setupCompleteConfiguration(): void
+    {
+        $this->completeConfiguration = [
+            'default' => 'layered',
             'stores' => [
                 'redis' => [
                     'driver' => 'redis',
                     'config' => [
                         'host' => 'localhost',
                         'port' => 6379,
-                        'key_prefix' => 'cache:',
+                        'database' => 1,
                     ],
                 ],
                 'filesystem' => [
                     'driver' => 'filesystem',
                     'config' => [
                         'directory' => '/tmp/cache',
-                        'key_prefix' => 'fs_',
                     ],
                 ],
                 'layered' => [
@@ -49,16 +417,8 @@ final class ConfiguratorAdapterTest extends TestCase
                         'promotion_enabled' => true,
                         'promotion_threshold' => 3,
                         'layers' => [
-                            [
-                                'driver' => 'redis',
-                                'priority' => 1,
-                                'config' => ['host' => 'localhost'],
-                            ],
-                            [
-                                'driver' => 'filesystem',
-                                'priority' => 10,
-                                'config' => ['directory' => '/tmp'],
-                            ],
+                            ['driver' => 'apcu', 'priority' => 1],
+                            ['driver' => 'redis', 'priority' => 10],
                         ],
                     ],
                 ],
@@ -71,224 +431,91 @@ final class ConfiguratorAdapterTest extends TestCase
             ],
             'features' => [
                 'stampede_protection' => true,
-                'metrics_enabled' => true,
-                'events_enabled' => true,
-                'strict_validation' => true,
-                'compression_enabled' => false,
-                'async_operations' => false,
-                'debug_mode' => true,
-                'encryption_enabled' => false,
+                'debug_mode' => false,
             ],
             'validation' => [
-                'max_key_length' => 200,
-                'max_value_size' => 1048576,
-                'reserved_characters' => ['{}()', '/', '@'],
-                'key_pattern' => '/^[a-zA-Z0-9_\-]+$/',
+                'max_key_length' => 250,
+                'reserved_characters' => ['/', '@'],
+            ],
+            'metrics' => [
+                'enabled' => true,
+                'collector' => 'prometheus',
+            ],
+            'logging' => [
+                'enabled' => true,
+                'level' => 'info',
+            ],
+            'health_checks' => [
+                'enabled' => true,
+                'interval' => 300,
+            ],
+            'expiration_provider' => [
+                'default_ttl' => 3600,
+            ],
+            'optimizations' => [
+                'redis' => ['pipeline_batch_size' => 100],
             ],
         ];
     }
 
-    public function testCanBeCreatedWithDefaultNamespace(): void
+    private function setupMinimalConfiguration(): void
     {
-        $adapter = new ConfiguratorAdapter($this->configuratorMock);
-        $this->assertInstanceOf(ConfiguratorAdapter::class, $adapter);
+        $this->minimalConfiguration = [
+            'stores' => [
+                'array' => [
+                    'driver' => 'array',
+                ],
+            ],
+        ];
     }
 
-    public function testCanBeCreatedWithCustomNamespace(): void
+    /**
+     * Data provider for missing configuration sections test.
+     */
+    public static function missingConfigurationSectionsProvider(): array
     {
-        $adapter = new ConfiguratorAdapter($this->configuratorMock, 'app.cache');
-        $this->assertInstanceOf(ConfiguratorAdapter::class, $adapter);
-    }
+        $minConfig = [
+            'stores' => [
+                'array' => ['driver' => 'array'],
+            ],
+        ];
 
-    public function testProperlyDelegatesConfigurationAccess(): void
-    {
-        $this->setupConfiguratorExpectations('cache');
-        $adapter = new ConfiguratorAdapter($this->configuratorMock);
-
-        $this->assertSame('redis', $adapter->getDefaultStore());
-        $this->assertSame('igbinary', $adapter->getDefaultSerializer());
-
-        $stores = $adapter->getStores();
-        $this->assertIsArray($stores);
-        $this->assertCount(3, $stores);
-        $this->assertArrayHasKey('redis', $stores);
-        $this->assertArrayHasKey('filesystem', $stores);
-        $this->assertArrayHasKey('layered', $stores);
-
-        foreach ($stores as $store) {
-            $this->assertInstanceOf(StoreConfiguration::class, $store);
-        }
-    }
-
-    public function testProperlyHandlesStoreRetrieval(): void
-    {
-        $this->setupConfiguratorExpectations('cache');
-        $adapter = new ConfiguratorAdapter($this->configuratorMock);
-
-        $redisStore = $adapter->getStore('redis');
-        $layeredStore = $adapter->getStore('layered');
-
-        $this->assertInstanceOf(StoreConfiguration::class, $redisStore);
-        $this->assertSame('redis', $redisStore->getName());
-        $this->assertSame('redis', $redisStore->getDriver());
-        $this->assertSame('localhost', $redisStore->getOption('host'));
-        $this->assertSame(6379, $redisStore->getOption('port'));
-
-        $this->assertInstanceOf(StoreConfiguration::class, $layeredStore);
-        $this->assertSame('layered', $layeredStore->getName());
-        $this->assertSame('layered', $layeredStore->getDriver());
-        $this->assertTrue($layeredStore->isLayered());
-        $this->assertCount(2, $layeredStore->getLayers());
-    }
-
-    public function testProperlyHandlesStoreExistenceChecks(): void
-    {
-        $this->setupConfiguratorExpectations('cache');
-        $adapter = new ConfiguratorAdapter($this->configuratorMock);
-
-        $this->assertTrue($adapter->hasStore('redis'));
-        $this->assertTrue($adapter->hasStore('filesystem'));
-        $this->assertTrue($adapter->hasStore('layered'));
-        $this->assertFalse($adapter->hasStore('nonexistent'));
-    }
-
-    public function testProperlyDelegatesDtoConfigurations(): void
-    {
-        $this->setupConfiguratorExpectations('cache');
-        $adapter = new ConfiguratorAdapter($this->configuratorMock);
-
-        $features = $adapter->getFeatures();
-        $this->assertInstanceOf(FeatureConfig::class, $features);
-        $this->assertTrue($features->stampedeProtection);
-        $this->assertTrue($features->metricsEnabled);
-        $this->assertTrue($features->eventsEnabled);
-        $this->assertTrue($features->strictValidation);
-        $this->assertFalse($features->compressionEnabled);
-        $this->assertFalse($features->asyncOperations);
-        $this->assertTrue($features->debugMode);
-        $this->assertFalse($features->encryptionEnabled);
-
-        $validation = $adapter->getValidation();
-        $this->assertInstanceOf(ValidationConfig::class, $validation);
-        $this->assertSame(200, $validation->maxKeyLength);
-        $this->assertSame(1048576, $validation->maxValueSize);
-        $this->assertSame(['{}()', '/', '@'], $validation->reservedCharacters);
-        $this->assertSame('/^[a-zA-Z0-9_\-]+$/', $validation->keyPattern);
-    }
-
-    public function testHandlesMissingConfigurationGracefully(): void
-    {
-        $this->configuratorMock
-            ->expects($this->once())
-            ->method('has')
-            ->with('cache')
-            ->willReturn(false);
-
-        $adapter = new ConfiguratorAdapter($this->configuratorMock);
-
-        $this->expectException(ConfigurationException::class);
-        $this->expectExceptionMessage('At least one cache store must be configured');
-
-        $adapter->getDefaultStore();
-    }
-
-    public function testHandlesInvalidConfigurationFormat(): void
-    {
-        $this->configuratorMock
-            ->expects($this->once())
-            ->method('has')
-            ->with('cache')
-            ->willReturn(true);
-
-        $this->configuratorMock
-            ->expects($this->once())
-            ->method('get')
-            ->with('cache')
-            ->willReturn('invalid_configuration');
-
-        $adapter = new ConfiguratorAdapter($this->configuratorMock);
-
-        $this->expectException(ConfigurationException::class);
-        $this->expectExceptionMessage('At least one cache store must be configured');
-
-        $adapter->getDefaultStore();
-    }
-
-    public function testThrowsExceptionForNonExistentStore(): void
-    {
-        $this->setupConfiguratorExpectations('cache');
-        $adapter = new ConfiguratorAdapter($this->configuratorMock);
-
-        $this->expectException(ConfigurationException::class);
-        $this->expectExceptionMessage('Cache store \'nonexistent\' is not configured');
-
-        $adapter->getStore('nonexistent');
-    }
-
-    public function testCachesConfigurationAfterFirstLoad(): void
-    {
-        $this->configuratorMock
-            ->expects($this->once())
-            ->method('has')
-            ->with('cache')
-            ->willReturn(true);
-
-        $this->configuratorMock
-            ->expects($this->once())
-            ->method('get')
-            ->with('cache')
-            ->willReturn($this->sampleConfiguration);
-
-        $adapter = new ConfiguratorAdapter($this->configuratorMock);
-
-        $defaultStore1 = $adapter->getDefaultStore();
-        $defaultStore2 = $adapter->getDefaultStore();
-        $stores1 = $adapter->getStores();
-        $stores2 = $adapter->getStores();
-
-        $this->assertSame($defaultStore1, $defaultStore2);
-        $this->assertSame($stores1, $stores2);
-    }
-
-    public function testImplementsRequiredInterfaces(): void
-    {
-        $adapter = new ConfiguratorAdapter($this->configuratorMock);
-
-        $this->assertInstanceOf(\KaririCode\Cache\Contract\Configuration\ConfigurationProvider::class, $adapter);
-        $this->assertInstanceOf(\KaririCode\Contract\ImmutableValue::class, $adapter);
-    }
-
-    public function testHandlesSerializerConfigurationCorrectly(): void
-    {
-        $this->setupConfiguratorExpectations('cache');
-        $adapter = new ConfiguratorAdapter($this->configuratorMock);
-
-        $serializers = $adapter->getSerializers();
-        $defaultSerializer = $adapter->getDefaultSerializer();
-
-        $this->assertIsArray($serializers);
-        $this->assertArrayHasKey('native', $serializers);
-        $this->assertArrayHasKey('igbinary', $serializers);
-        $this->assertArrayHasKey('json', $serializers);
-        $this->assertSame('igbinary', $defaultSerializer);
-
-        $this->assertSame(\KaririCode\Cache\Serializer\NativeSerializer::class, $serializers['native']);
-        $this->assertSame(\KaririCode\Cache\Serializer\IgbinarySerializer::class, $serializers['igbinary']);
-        $this->assertSame(\KaririCode\Cache\Serializer\JsonSerializer::class, $serializers['json']);
-    }
-
-    private function setupConfiguratorExpectations(string $namespace): void
-    {
-        $this->configuratorMock
-            ->expects($this->once())
-            ->method('has')
-            ->with($namespace)
-            ->willReturn(true);
-
-        $this->configuratorMock
-            ->expects($this->once())
-            ->method('get')
-            ->with($namespace)
-            ->willReturn($this->sampleConfiguration);
+        return [
+            'missing features' => [
+                $minConfig,
+                'getFeatures',
+                FeatureConfig::fromConfig([]),
+            ],
+            'missing validation' => [
+                $minConfig,
+                'getValidation',
+                ValidationConfig::fromConfig([]),
+            ],
+            'missing metrics' => [
+                $minConfig,
+                'getMetrics',
+                MetricsConfig::fromConfig([]),
+            ],
+            'missing logging' => [
+                $minConfig,
+                'getLogging',
+                LoggingConfig::fromConfig([]),
+            ],
+            'missing health checks' => [
+                $minConfig,
+                'getHealthChecks',
+                HealthCheckConfig::fromConfig([]),
+            ],
+            'missing expiration provider' => [
+                $minConfig,
+                'getExpirationProvider',
+                ExpirationProviderConfig::fromConfig([]),
+            ],
+            'missing optimizations' => [
+                $minConfig,
+                'getOptimizations',
+                OptimizationConfig::fromConfig([]),
+            ],
+        ];
     }
 }

@@ -25,7 +25,6 @@ final class OptimizationConfigTest extends TestCase
     {
         // Act
         $config = OptimizationConfig::fromConfig([]);
-
         // Assert
         $this->assertEmpty($config->redis);
         $this->assertEmpty($config->memcached);
@@ -48,7 +47,6 @@ final class OptimizationConfigTest extends TestCase
 
         // Act
         $config = OptimizationConfig::fromConfig($data);
-
         // Assert
         $this->assertSame(['pipeline_batch_size' => 100], $config->redis);
         $this->assertSame(['cas_tokens' => true], $config->memcached);
@@ -65,6 +63,7 @@ final class OptimizationConfigTest extends TestCase
         $data = [
             'redis' => ['pipeline' => 'enabled'],
             'memcached' => ['binary' => 'enabled'],
+            'apcu' => ['slam_defense' => true],
         ];
         $config = OptimizationConfig::fromConfig($data);
 
@@ -72,6 +71,28 @@ final class OptimizationConfigTest extends TestCase
         $this->assertSame(['pipeline' => 'enabled'], $config->getDriverOptimizations('redis'));
         $this->assertSame(['binary' => 'enabled'], $config->getDriverOptimizations('memcached'));
         $this->assertEmpty($config->getDriverOptimizations('filesystem'));
-        $this->assertEmpty($config->getDriverOptimizations('unknown_driver'));
+        $this->assertSame(['slam_defense' => true], $config->getDriverOptimizations('apcu'));
+    }
+
+    /**
+     * Tests the getDriverOptimizations method for an unknown driver.
+     * This covers the 'default' case in the match expression, ensuring 100% coverage.
+     */
+    public function testGetDriverOptimizationsReturnsEmptyArrayForUnknownDriver(): void
+    {
+        // Arrange
+        // Create a config instance. The initial data doesn't matter for this specific test.
+        $config = OptimizationConfig::fromConfig([
+            'redis' => ['pipeline' => 'enabled'],
+        ]);
+
+        // Act
+        // Call the method with a driver name that is not explicitly handled.
+        $result = $config->getDriverOptimizations('unknown_driver');
+
+        // Assert
+        // The expected result for an unknown driver is an empty array.
+        $this->assertEmpty($result);
+        $this->assertSame([], $result);
     }
 }

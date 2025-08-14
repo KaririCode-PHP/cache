@@ -61,6 +61,20 @@ final class IncrementCommand extends AbstractCacheCommand
     }
 
     /**
+     * Gets context data about the command for logging and debugging.
+     *
+     * @return array<string, mixed>
+     */
+    public function getContext(): array
+    {
+        return array_merge(parent::getContext(), [
+            'key' => $this->key,
+            'step' => $this->step,
+            'initial_value' => $this->initialValue,
+        ]);
+    }
+
+    /**
      * Returns the name of the command.
      */
     public function getName(): string

@@ -35,6 +35,16 @@ final class HasCommand extends AbstractCacheCommand
         return $this->cache->hasItem($this->key);
     }
 
+    /**
+     * Gets context data about the command for logging and debugging.
+     *
+     * @return array<string, mixed>
+     */
+    public function getContext(): array
+    {
+        return array_merge(parent::getContext(), ['key' => $this->key]);
+    }
+
     public function getName(): string
     {
         return 'HAS';

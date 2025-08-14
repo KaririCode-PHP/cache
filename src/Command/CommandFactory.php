@@ -19,7 +19,7 @@ use KaririCode\Cache\Command\Batch\SetMultipleCommand;
 use KaririCode\Cache\Command\Tag\GetByTagsCommand;
 use KaririCode\Cache\Command\Tag\InvalidateTagsCommand;
 use KaririCode\Cache\Command\Tag\SetWithTagsCommand;
-use KaririCode\Cache\Driver\LayeredDriver;
+use KaririCode\Cache\Contract\Driver\LayeredDriver;
 use KaririCode\Cache\Service\EventService;
 use KaririCode\Cache\Service\MetricsService;
 use KaririCode\Cache\Service\SerializationService;

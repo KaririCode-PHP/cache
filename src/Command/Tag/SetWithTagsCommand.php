@@ -15,7 +15,7 @@ use KaririCode\Cache\Service\ValidationService;
 /**
  * Command to store an item with associated tags.
  */
-final class SetWithTagsCommand extends AbstractCacheCommand
+class SetWithTagsCommand extends AbstractCacheCommand
 {
     public function __construct(
         private readonly LayeredDriver $cache,
@@ -25,9 +25,10 @@ final class SetWithTagsCommand extends AbstractCacheCommand
         MetricsService $metrics,
         private readonly string $key,
         private readonly mixed $value,
-        private readonly array $tags
+        array $tags
     ) {
         parent::__construct($validator, $events, $metrics);
+        $this->tags = $tags;
     }
 
     protected function validate(): void
@@ -49,6 +50,20 @@ final class SetWithTagsCommand extends AbstractCacheCommand
         }
 
         return $this->cache->save($item);
+    }
+
+    /**
+     * Gets context data about the command for logging and debugging.
+     *
+     * @return array<string, mixed>
+     */
+    public function getContext(): array
+    {
+        return array_merge(parent::getContext(), [
+            'key' => $this->key,
+            'value' => $this->value,
+            'tags' => $this->tags,
+        ]);
     }
 
     public function getName(): string

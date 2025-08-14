@@ -64,6 +64,19 @@ final class GetCommand extends AbstractCacheCommand
     }
 
     /**
+     * Gets context data about the command for logging and debugging.
+     *
+     * @return array<string, mixed>
+     */
+    public function getContext(): array
+    {
+        return array_merge(parent::getContext(), [
+            'key' => $this->key,
+            'default' => $this->default,
+        ]);
+    }
+
+    /**
      * Returns the name of the command.
      */
     public function getName(): string

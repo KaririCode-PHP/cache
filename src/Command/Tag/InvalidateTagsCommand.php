@@ -22,9 +22,10 @@ final class InvalidateTagsCommand extends AbstractCacheCommand
         ValidationService $validator,
         EventService $events,
         MetricsService $metrics,
-        private readonly array $tags
+        array $tags
     ) {
         parent::__construct($validator, $events, $metrics);
+        $this->tags = $tags;
     }
 
     protected function validate(): void
@@ -39,9 +40,17 @@ final class InvalidateTagsCommand extends AbstractCacheCommand
      */
     protected function doExecute(): bool
     {
-        $this->affectedKeysCount = $this->cache->invalidateTags($this->tags);
+        if (empty($this->tags)) {
+            $this->affectedKeysCount = 0;
 
-        return true; // The command itself succeeded if no exception was thrown.
+            return true;
+        }
+
+        $success = $this->cache->invalidateTags($this->tags);
+
+        $this->affectedKeysCount = $success ? -1 : 0;
+
+        return $success;
     }
 
     /**
@@ -49,13 +58,26 @@ final class InvalidateTagsCommand extends AbstractCacheCommand
      */
     protected function afterExecute(mixed $result, float $duration): void
     {
-        if (true === $result) {
+        if (true === $result && !empty($this->tags)) {
             $this->events->dispatchTagInvalidation(
                 $this->tags,
                 $this->affectedKeysCount,
                 $duration
             );
         }
+    }
+
+    /**
+     * Gets context data about the command for logging and debugging.
+     *
+     * @return array<string, mixed>
+     */
+    public function getContext(): array
+    {
+        return array_merge(parent::getContext(), [
+            'tags' => $this->tags,
+            'affected_keys' => $this->affectedKeysCount,
+        ]);
     }
 
     public function getName(): string
