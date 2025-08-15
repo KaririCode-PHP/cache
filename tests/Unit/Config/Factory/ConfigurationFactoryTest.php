@@ -6,8 +6,8 @@ namespace KaririCode\Cache\Tests\Unit\Config\Factory;
 
 use KaririCode\Cache\Config\Adapter\ConfiguratorAdapter;
 use KaririCode\Cache\Config\CacheConfiguration;
+use KaririCode\Cache\Config\DTO\StoreConfig;
 use KaririCode\Cache\Config\Factory\ConfigurationFactory;
-use KaririCode\Cache\Config\StoreConfiguration;
 use KaririCode\Cache\Contract\Configuration\ConfigurationProvider;
 use KaririCode\Cache\Exception\ConfigurationException;
 use KaririCode\Cache\Exception\InvalidArgumentException;
@@ -293,7 +293,7 @@ final class ConfigurationFactoryTest extends TestCase
      * This test ensures that complex layered configurations
      * are properly handled and validated.
      */
-    public function testCreatesLayeredStoreConfigurationCorrectly(): void
+    public function testCreatesLayeredStoreConfigCorrectly(): void
     {
         // Arrange
         $layeredConfig = [
@@ -324,10 +324,9 @@ final class ConfigurationFactoryTest extends TestCase
         $layeredStore = $configuration->getStore('layered');
 
         // Assert
-        $this->assertInstanceOf(StoreConfiguration::class, $layeredStore);
-        $this->assertSame('layered', $layeredStore->getDriver());
-        $this->assertTrue($layeredStore->isLayered());
-        $this->assertCount(2, $layeredStore->getLayers());
+        $this->assertInstanceOf(StoreConfig::class, $layeredStore);
+        $this->assertSame('layered', $layeredStore->driver);
+        $this->assertCount(2, $layeredStore->layers);
     }
 
     /**
@@ -365,9 +364,10 @@ final class ConfigurationFactoryTest extends TestCase
         $this->assertSame('redis', $configuration->getDefaultStore());
 
         $redisStore = $configuration->getStore('redis');
-        $this->assertSame('redis_server', $redisStore->getOption('host'));
-        $this->assertSame(6380, $redisStore->getOption('port'));
-        $this->assertSame('secret', $redisStore->getOption('password'));
+
+        $this->assertSame('redis_server', $redisStore->config['host']);
+        $this->assertSame(6380, $redisStore->config['port']);
+        $this->assertSame('secret', $redisStore->config['password']);
 
         $features = $configuration->getFeatures();
         $this->assertTrue($features->debugMode);
@@ -505,22 +505,17 @@ final class ConfigurationFactoryTest extends TestCase
             'store missing driver' => [
                 [
                     'stores' => [
-                        'redis' => [
-                            'config' => ['host' => 'localhost'],
-                            // Missing 'driver'
-                        ],
+                        'redis' => ['config' => ['host' => 'localhost']], // Missing 'driver'
                     ],
                 ],
-                'Driver must be specified for cache store',
+                'The "driver" key is mandatory and must be a non-empty string',
             ],
             'layered store missing layers' => [
                 [
                     'stores' => [
                         'layered' => [
                             'driver' => 'layered',
-                            'config' => [
-                                // Missing 'layers'
-                            ],
+                            'config' => [], // Missing 'layers'
                         ],
                     ],
                 ],
@@ -528,13 +523,9 @@ final class ConfigurationFactoryTest extends TestCase
             ],
             'invalid serializer reference' => [
                 [
-                    'stores' => [
-                        'array' => ['driver' => 'array'],
-                    ],
+                    'stores' => ['array' => ['driver' => 'array']],
                     'serializer' => 'nonexistent',
-                    'serializers' => [
-                        'json' => \KaririCode\Cache\Serializer\JsonSerializer::class,
-                    ],
+                    'serializers' => ['json' => \KaririCode\Cache\Serializer\JsonSerializer::class],
                 ],
                 'Default serializer \'nonexistent\' is not configured',
             ],

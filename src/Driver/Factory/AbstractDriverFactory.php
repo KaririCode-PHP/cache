@@ -185,7 +185,6 @@ abstract class AbstractDriverFactory implements CacheDriverFactory
             return $options['expiration_provider'];
         }
 
-        // Força o chamador (CacheBuilder) a sempre fornecer a instância.
         throw ConfigurationException::missingConfiguration('A pre-configured ExpirationProvider instance must be passed to the driver factory under the "expiration_provider" key.');
     }
 

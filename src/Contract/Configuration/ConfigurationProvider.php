@@ -10,8 +10,8 @@ use KaririCode\Cache\Config\DTO\HealthCheckConfig;
 use KaririCode\Cache\Config\DTO\LoggingConfig;
 use KaririCode\Cache\Config\DTO\MetricsConfig;
 use KaririCode\Cache\Config\DTO\OptimizationConfig;
+use KaririCode\Cache\Config\DTO\StoreConfig;
 use KaririCode\Cache\Config\DTO\ValidationConfig;
-use KaririCode\Cache\Config\StoreConfiguration;
 use KaririCode\Cache\Exception\ConfigurationException;
 
 /**
@@ -37,7 +37,7 @@ interface ConfigurationProvider
     /**
      * Get all configured stores.
      *
-     * @return array<string, StoreConfiguration>
+     * @return array<string, StoreConfig>
      */
     public function getStores(): array;
 
@@ -46,7 +46,7 @@ interface ConfigurationProvider
      *
      * @throws ConfigurationException
      */
-    public function getStore(string $name): StoreConfiguration;
+    public function getStore(string $name): StoreConfig;
 
     /**
      * Check if a store exists.

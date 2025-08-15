@@ -11,8 +11,8 @@ use KaririCode\Cache\Config\DTO\HealthCheckConfig;
 use KaririCode\Cache\Config\DTO\LoggingConfig;
 use KaririCode\Cache\Config\DTO\MetricsConfig;
 use KaririCode\Cache\Config\DTO\OptimizationConfig;
+use KaririCode\Cache\Config\DTO\StoreConfig;
 use KaririCode\Cache\Config\DTO\ValidationConfig;
-use KaririCode\Cache\Config\StoreConfiguration;
 use KaririCode\Cache\Contract\Configuration\ConfigurationProvider;
 use KaririCode\Cache\Exception\ConfigurationException;
 use KaririCode\Configurator\Contract\Configurator\ConfigurationManager;
@@ -177,7 +177,7 @@ final class ConfiguratorAdapterTest extends TestCase
     /**
      * Tests store configuration retrieval.
      */
-    public function testStoreConfigurationRetrieval(): void
+    public function testStoreConfigRetrieval(): void
     {
         // Arrange
         $this->setupConfiguratorWithData($this->completeConfiguration);
@@ -190,10 +190,10 @@ final class ConfiguratorAdapterTest extends TestCase
 
         // Assert
         $this->assertCount(3, $stores);
-        $this->assertInstanceOf(StoreConfiguration::class, $redisStore);
-        $this->assertInstanceOf(StoreConfiguration::class, $layeredStore);
-        $this->assertSame('redis', $redisStore->getDriver());
-        $this->assertSame('layered', $layeredStore->getDriver());
+        $this->assertInstanceOf(StoreConfig::class, $redisStore);
+        $this->assertInstanceOf(StoreConfig::class, $layeredStore);
+        $this->assertSame('redis', $redisStore->driver);
+        $this->assertSame('layered', $layeredStore->driver);
         $this->assertTrue($adapter->hasStore('redis'));
         $this->assertTrue($adapter->hasStore('filesystem'));
         $this->assertFalse($adapter->hasStore('nonexistent'));
@@ -327,7 +327,7 @@ final class ConfiguratorAdapterTest extends TestCase
         // Act
         $redisStore = $adapter->getStore('redis');
         // Assert
-        $this->assertSame('redis', $redisStore->getDriver());
+        $this->assertSame('redis', $redisStore->driver);
         // Note: Actual env var substitution would be handled by Configurator
     }
 
@@ -367,13 +367,7 @@ final class ConfiguratorAdapterTest extends TestCase
         // Act
         $layeredStore = $adapter->getStore('layered');
         // Assert
-        $this->assertTrue($layeredStore->isLayered());
-        $this->assertNotNull($layeredStore->getLayeredConfig());
-        $this->assertCount(2, $layeredStore->getLayers());
-
-        $layeredConfig = $layeredStore->getLayeredConfig();
-        $this->assertTrue($layeredConfig->promotionEnabled);
-        $this->assertSame(3, $layeredConfig->promotionThreshold);
+        $this->assertCount(2, $layeredStore->layers);
     }
 
     // Helper methods

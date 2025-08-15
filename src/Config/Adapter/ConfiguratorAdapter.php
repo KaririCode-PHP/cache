@@ -11,8 +11,8 @@ use KaririCode\Cache\Config\DTO\HealthCheckConfig;
 use KaririCode\Cache\Config\DTO\LoggingConfig;
 use KaririCode\Cache\Config\DTO\MetricsConfig;
 use KaririCode\Cache\Config\DTO\OptimizationConfig;
+use KaririCode\Cache\Config\DTO\StoreConfig;
 use KaririCode\Cache\Config\DTO\ValidationConfig;
-use KaririCode\Cache\Config\StoreConfiguration;
 use KaririCode\Cache\Contract\Configuration\ConfigurationProvider;
 use KaririCode\Configurator\Contract\Configurator\ConfigurationManager;
 use KaririCode\Contract\ImmutableValue;
@@ -140,7 +140,7 @@ final class ConfiguratorAdapter implements ConfigurationProvider, ImmutableValue
         return $this->getConfiguration()->getStores();
     }
 
-    public function getStore(string $name): StoreConfiguration
+    public function getStore(string $name): StoreConfig
     {
         return $this->getConfiguration()->getStore($name);
     }

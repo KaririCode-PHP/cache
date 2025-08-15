@@ -14,7 +14,7 @@ use KaririCode\Logging\SilentLogger;
  * It provides a way to verify the availability and performance of cache stores.
  * This version is decoupled from the high-level Cache facade.
  */
-final class HealthCheckService
+class HealthCheckService
 {
     /** @var array<string, callable> Registered checks. */
     private array $checks = [];

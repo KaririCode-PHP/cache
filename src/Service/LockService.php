@@ -15,7 +15,7 @@ use Psr\Cache\CacheItemPoolInterface;
  * that also supports atomic operations. It leverages the atomic 'add' operation
  * to ensure lock integrity across different processes.
  */
-final class LockService
+class LockService
 {
     private const DEFAULT_LOCK_TTL = 10; // seconds
     private const DEFAULT_WAIT_TIMEOUT = 5.0; // seconds

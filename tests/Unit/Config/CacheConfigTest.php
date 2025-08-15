@@ -6,7 +6,7 @@ namespace KaririCode\Cache\Tests\Unit\Config;
 
 use KaririCode\Cache\Config\CacheConfig;
 use KaririCode\Cache\Config\CacheConfiguration;
-use KaririCode\Cache\Config\StoreConfiguration;
+use KaririCode\Cache\Config\DTO\StoreConfig;
 use KaririCode\Cache\Exception\ConfigurationException;
 use KaririCode\Configurator\Contract\Configurator\ConfigurationManager;
 use PHPUnit\Framework\Attributes\CoversClass;
@@ -338,7 +338,7 @@ final class CacheConfigTest extends TestCase
         $this->assertSame('redis', $cacheConfig->getDefaultStore());
         $this->assertIsArray($cacheConfig->getStores());
         $this->assertCount(2, $cacheConfig->getStores());
-        $this->assertInstanceOf(StoreConfiguration::class, $cacheConfig->getStore('redis'));
+        $this->assertInstanceOf(StoreConfig::class, $cacheConfig->getStore('redis'));
         $this->assertSame('json', $cacheConfig->getDefaultSerializer());
         $this->assertIsArray($cacheConfig->getSerializers());
 

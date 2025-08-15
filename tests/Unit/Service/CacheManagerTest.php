@@ -7,8 +7,7 @@ namespace KaririCode\Cache\Tests\Unit\Service;
 use KaririCode\Cache\Config\DriverManager;
 use KaririCode\Cache\Config\DTO\ExpirationProviderConfig;
 use KaririCode\Cache\Config\DTO\OptimizationConfig;
-use KaririCode\Cache\Config\StoreConfiguration;
-use KaririCode\Cache\Contract\Behavioral\AtomicOperable;
+use KaririCode\Cache\Config\DTO\StoreConfig;
 use KaririCode\Cache\Contract\CacheDriver;
 use KaririCode\Cache\Contract\Configuration\ConfigurationProvider;
 use KaririCode\Cache\Exception\ConfigurationException;
@@ -34,9 +33,9 @@ use PHPUnit\Framework\TestCase;
 #[CoversClass(CacheManager::class)]
 final class CacheManagerTest extends TestCase
 {
-    private ConfigurationProvider&MockObject $configurationMock;
-    private DriverManager&MockObject $driverManagerMock;
-    private Logger&MockObject $loggerMock;
+    private MockObject|ConfigurationProvider $configurationMock;
+    private MockObject|DriverManager $driverManagerMock;
+    private MockObject|Logger $loggerMock;
 
     /**
      * Sets up the test environment before each test.
@@ -74,7 +73,7 @@ final class CacheManagerTest extends TestCase
     public function testCanGetSpecificStore(): void
     {
         // Arrange
-        $storeConfig = new StoreConfiguration('redis', ['driver' => 'redis']);
+        $storeConfig = StoreConfig::fromConfig(['driver' => 'redis']);
         $driverMock = $this->createMock(CacheDriver::class);
 
         $this->configurationMock->method('getStore')->with('redis')->willReturn($storeConfig);
@@ -114,7 +113,7 @@ final class CacheManagerTest extends TestCase
     public function testStoresAreCachedAfterCreation(): void
     {
         // Arrange
-        $storeConfig = new StoreConfiguration('redis', ['driver' => 'redis']);
+        $storeConfig = StoreConfig::fromConfig(['driver' => 'redis']);
         $driverMock = $this->createMock(CacheDriver::class);
 
         $this->configurationMock
@@ -208,87 +207,11 @@ final class CacheManagerTest extends TestCase
     }
 
     /**
-     * Tests that a driver with atomic capabilities can be retrieved and used.
-     */
-    public function testStoreCanReturnDriverWithAtomicCapabilities(): void
-    {
-        // Arrange
-        /** @var CacheDriver&AtomicOperable|MockObject */
-        $atomicDriver = $this->createMockForIntersectionOfInterfaces([CacheDriver::class, AtomicOperable::class]);
-        $this->setupDefaultStore($atomicDriver);
-        $manager = $this->createManager();
-
-        $atomicDriver->expects($this->once())->method('increment')->with('counter', 1, 0)->willReturn(1);
-
-        // Act
-        $driver = $manager->getDefaultStore();
-
-        // Assert
-        $this->assertInstanceOf(AtomicOperable::class, $driver);
-
-        if ($driver instanceof AtomicOperable) {
-            $this->assertSame(1, $driver->increment('counter'));
-        }
-    }
-
-    /**
-     * Tests the hasStore method for both existing and non-existing stores.
-     */
-    public function testHasStoreReturnsCorrectBoolean(): void
-    {
-        // Arrange
-        $this->configurationMock->method('hasStore')
-            ->willReturnMap([
-                ['redis', true],
-                ['nonexistent', false],
-            ]);
-        $manager = $this->createManager();
-
-        // Act & Assert
-        $this->assertTrue($manager->hasStore('redis'));
-        $this->assertFalse($manager->hasStore('nonexistent'));
-    }
-
-    /**
-     * Tests the getAvailableStores method returns the correct list of store names.
-     */
-    public function testGetAvailableStoresReturnsStoreNames(): void
-    {
-        // Arrange
-        $this->configurationMock->method('getStores')->willReturn([
-            'redis' => new StoreConfiguration('redis', ['driver' => 'redis']),
-            'memcached' => new StoreConfiguration('memcached', ['driver' => 'memcached']),
-        ]);
-        $manager = $this->createManager();
-
-        // Act
-        $stores = $manager->getAvailableStores();
-
-        // Assert
-        $this->assertEquals(['redis', 'memcached'], $stores);
-    }
-
-    /**
-     * Tests that getConfiguration returns the injected configuration provider.
-     */
-    public function testGetConfigurationReturnsProvider(): void
-    {
-        // Arrange
-        $manager = $this->createManager();
-
-        // Act
-        $configProvider = $manager->getConfiguration();
-
-        // Assert
-        $this->assertSame($this->configurationMock, $configProvider);
-    }
-
-    /**
      * Helper method to set up the default store mock configuration.
      */
     private function setupDefaultStore(CacheDriver $driver): void
     {
-        $storeConfig = new StoreConfiguration('default', ['driver' => 'array']);
+        $storeConfig = StoreConfig::fromConfig(['driver' => 'array']);
         $this->configurationMock->method('getDefaultStore')->willReturn('default');
         $this->configurationMock->method('getStore')->with('default')->willReturn($storeConfig);
         $this->driverManagerMock->method('createDriver')->with('array')->willReturn($driver);

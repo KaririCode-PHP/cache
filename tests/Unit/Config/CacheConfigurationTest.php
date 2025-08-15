@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace KaririCode\Cache\Tests\Unit\Config;
 
 use KaririCode\Cache\Config\CacheConfiguration;
-use KaririCode\Cache\Config\StoreConfiguration;
+use KaririCode\Cache\Config\DTO\StoreConfig;
 use KaririCode\Cache\Exception\ConfigurationException;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\DataProvider;
@@ -206,9 +206,9 @@ final class CacheConfigurationTest extends TestCase
      * Tests getting a specific store configuration.
      *
      * This test ensures that store retrieval works correctly and
-     * returns proper StoreConfiguration instances.
+     * returns proper StoreConfig instances.
      */
-    public function testCanGetSpecificStoreConfiguration(): void
+    public function testCanGetSpecificStoreConfig(): void
     {
         // Arrange - Include default to avoid automatic 'array' lookup
         $config = [
@@ -229,11 +229,10 @@ final class CacheConfigurationTest extends TestCase
         $redisStore = $cacheConfig->getStore('redis');
 
         // Assert
-        $this->assertInstanceOf(StoreConfiguration::class, $redisStore);
-        $this->assertSame('redis', $redisStore->getName());
-        $this->assertSame('redis', $redisStore->getDriver());
-        $this->assertSame('localhost', $redisStore->getOption('host'));
-        $this->assertSame(6379, $redisStore->getOption('port'));
+        $this->assertInstanceOf(StoreConfig::class, $redisStore);
+        $this->assertSame('redis', $redisStore->driver);
+        $this->assertSame('localhost', $redisStore->config['host']);
+        $this->assertSame(6379, $redisStore->config['port']);
     }
 
     /**
@@ -357,7 +356,7 @@ final class CacheConfigurationTest extends TestCase
      *
      * This test ensures that individual store validation is properly handled.
      */
-    public function testThrowsExceptionForInvalidStoreConfiguration(): void
+    public function testThrowsExceptionForInvalidStoreConfig(): void
     {
         // Arrange
         $config = [

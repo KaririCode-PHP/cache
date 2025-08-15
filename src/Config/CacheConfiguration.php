@@ -10,14 +10,13 @@ use KaririCode\Cache\Config\DTO\HealthCheckConfig;
 use KaririCode\Cache\Config\DTO\LoggingConfig;
 use KaririCode\Cache\Config\DTO\MetricsConfig;
 use KaririCode\Cache\Config\DTO\OptimizationConfig;
+use KaririCode\Cache\Config\DTO\StoreConfig;
 use KaririCode\Cache\Config\DTO\ValidationConfig;
 use KaririCode\Cache\Contract\Configuration\ConfigurationProvider;
 use KaririCode\Cache\Exception\ConfigurationException;
 use KaririCode\Contract\ImmutableValue;
 
 /**
- * ALTERNATIVE FIX: Enhanced CacheConfiguration with automatic default serializers.
- *
  * This approach ensures that default serializers are always available,
  * even when not explicitly configured, preventing validation errors.
  *
@@ -146,7 +145,7 @@ final class CacheConfiguration implements ConfigurationProvider, ImmutableValue
             }
 
             try {
-                $configurations[$name] = new StoreConfiguration($name, $config);
+                $configurations[$name] = StoreConfig::fromConfig($config);
             } catch (\Exception $e) {
                 throw ConfigurationException::invalidConfiguration("stores.{$name}", $e->getMessage());
             }
@@ -213,7 +212,7 @@ final class CacheConfiguration implements ConfigurationProvider, ImmutableValue
         return $this->stores;
     }
 
-    public function getStore(string $name): StoreConfiguration
+    public function getStore(string $name): StoreConfig
     {
         if (!isset($this->stores[$name])) {
             throw ConfigurationException::missingStore($name);

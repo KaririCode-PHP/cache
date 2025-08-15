@@ -10,7 +10,9 @@ use KaririCode\Cache\Config\DTO\HealthCheckConfig;
 use KaririCode\Cache\Config\DTO\LoggingConfig;
 use KaririCode\Cache\Config\DTO\MetricsConfig;
 use KaririCode\Cache\Config\DTO\OptimizationConfig;
+use KaririCode\Cache\Config\DTO\StoreConfig;
 use KaririCode\Cache\Config\DTO\ValidationConfig;
+use KaririCode\Cache\Contract\Configuration\ConfigurationProvider;
 use KaririCode\Cache\Exception\ConfigurationException;
 use KaririCode\Configurator\Contract\Configurator\ConfigurationManager;
 use KaririCode\Contract\ImmutableValue;
@@ -30,7 +32,7 @@ use KaririCode\Contract\ImmutableValue;
  *
  * @see      https://kariricode.org/
  */
-final class CacheConfig implements ImmutableValue
+final class CacheConfig implements ConfigurationProvider, ImmutableValue
 {
     private ConfigurationManager $configurator;
     private string $namespace;
@@ -106,7 +108,7 @@ final class CacheConfig implements ImmutableValue
 
         foreach ($storesData as $name => $config) {
             if (is_array($config)) {
-                $stores[$name] = new StoreConfiguration($name, $config);
+                $stores[$name] = StoreConfig::fromConfig($config);
             }
         }
 
@@ -116,7 +118,7 @@ final class CacheConfig implements ImmutableValue
     /**
      * Get specific store configuration.
      */
-    public function getStore(string $name): StoreConfiguration
+    public function getStore(string $name): StoreConfig
     {
         $stores = $this->getStores();
         if (!isset($stores[$name])) {

@@ -4,16 +4,18 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Builder;
 
+use KaririCode\Cache\Cache;
 use KaririCode\Cache\Config\CacheConfig;
 use KaririCode\Cache\Config\DriverManager;
 use KaririCode\Cache\Config\DTO\EventServiceConfig;
 use KaririCode\Cache\Config\DTO\LayeredDriverConfig;
-use KaririCode\Cache\Contract\Cache;
+use KaririCode\Cache\Contract\AdvancedCache;
+use KaririCode\Cache\Contract\Cache as CacheContract;
 use KaririCode\Cache\Contract\Provider\ExpirationProvider;
 use KaririCode\Cache\Decorator\EncryptedCacheDecorator;
 use KaririCode\Cache\Driver\LayeredDriver;
 use KaririCode\Cache\Exception\ConfigurationException;
-use KaririCode\Cache\Provider\ConfigurableExpirationProvider;
+use KaririCode\Cache\Provider\Expiration\ConfigurableExpirationProvider;
 use KaririCode\Cache\Service\EventService;
 use KaririCode\Cache\Service\HealthCheckService;
 use KaririCode\Cache\Service\LockService;
@@ -43,13 +45,11 @@ use Psr\EventDispatcher\EventDispatcherInterface;
 final class CacheBuilder
 {
     private string $storeName = 'default';
+    private Logger $logger;
     private ?DriverManager $driverManager = null;
-    private Logger $logger = new SilentLogger();
     private ?LoggerRegistry $loggerRegistry = null;
     private ?LoggerFactory $loggerFactory = null;
     private ?EventDispatcherInterface $eventDispatcher = null;
-
-    // Services to be injected
     private ?ValidationService $validationService = null;
     private ?SerializationService $serializationService = null;
     private ?MetricsService $metricsService = null;
@@ -61,6 +61,7 @@ final class CacheBuilder
     public function __construct(private readonly CacheConfig $config)
     {
         $this->storeName = $config->getDefaultStore();
+        $this->logger = new SilentLogger();
     }
 
     public static function fromConfig(CacheConfig $config): self
@@ -175,7 +176,7 @@ final class CacheBuilder
     /**
      * Builds the final Cache instance with advanced logging capabilities.
      */
-    public function build(): Cache
+    public function build(): AdvancedCache
     {
         $loggerRegistry = $this->resolveLoggerRegistry($this->logger);
 
@@ -354,16 +355,18 @@ final class CacheBuilder
             $driverManager->setSerializer($this->serializationService);
         }
 
-        // The driver for a specific store is created here
-        // The DriverManager will use the correct factory (e.g., LayeredDriverFactory)
-        $driver = $driverManager->createDriver($storeConfig->getDriver(), [
-            'store_config' => $storeConfig,
-            'expiration_provider' => $provider,
-            'logger' => $logger,
-        ]);
+        $driverOptions = array_merge(
+            $storeConfig->config,
+            [
+                'expiration_provider' => $provider,
+                'logger' => $logger,
+            ]
+        );
+
+        $driver = $driverManager->createDriver($storeConfig->driver, $driverOptions);
 
         if (!$driver instanceof LayeredDriver) {
-            $storeSpecificConfig = $storeConfig->getConfig();
+            $storeSpecificConfig = $storeConfig->config;
             $layeredConfig = LayeredDriverConfig::fromConfig($storeSpecificConfig);
 
             $driver = new LayeredDriver([$driver], $layeredConfig, $logger);
@@ -372,7 +375,7 @@ final class CacheBuilder
         return $driver;
     }
 
-    private function applyDecorators(Cache $cache, SerializationService $serializer): Cache
+    private function applyDecorators(CacheContract $cache, SerializationService $serializer): AdvancedCache
     {
         $features = $this->config->getFeatures();
 

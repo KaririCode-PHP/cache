@@ -1,0 +1,102 @@
+<?php
+
+declare(strict_types=1);
+
+namespace KaririCode\Cache\Tests\Unit\Builder;
+
+use KaririCode\Cache\Builder\CacheOperationBuilder;
+use KaririCode\Cache\Command\CommandExecutor;
+use KaririCode\Cache\Command\CommandFactory;
+use KaririCode\Cache\Command\Basic\SetCommand;
+use KaririCode\Cache\Contract\Command\SupportsTtl;
+use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\MockObject\MockObject;
+use PHPUnit\Framework\TestCase;
+
+/**
+ * Unit tests for the CacheOperationBuilder class.
+ *
+ * @category  Tests
+ * @author    Walmir Silva <walmir.silva@kariricode.org>
+ * @license   MIT
+ * @see       https://kariricode.org/
+ */
+#[CoversClass(CacheOperationBuilder::class)]
+final class CacheOperationBuilderTest extends TestCase
+{
+    private MockObject|CommandFactory $factoryMock;
+    private MockObject|CommandExecutor $executorMock;
+    private CacheOperationBuilder $builder;
+
+    protected function setUp(): void
+    {
+        $this->factoryMock = $this->createMock(CommandFactory::class);
+        $this->executorMock = $this->createMock(CommandExecutor::class);
+        $this->builder = new CacheOperationBuilder($this->factoryMock, $this->executorMock);
+    }
+
+    public function testTtlMethodIsImmutable(): void
+    {
+        $newBuilder = $this->builder->ttl(3600);
+        $this->assertNotSame($this->builder, $newBuilder, 'Builder should be immutable.');
+    }
+
+    public function testTagsMethodIsImmutable(): void
+    {
+        $newBuilder = $this->builder->tags('tag1');
+        $this->assertNotSame($this->builder, $newBuilder, 'Builder should be immutable.');
+    }
+
+    public function testTopicsMethodIsImmutable(): void
+    {
+        $newBuilder = $this->builder->topics('topic1');
+        $this->assertNotSame($this->builder, $newBuilder, 'Builder should be immutable.');
+    }
+
+    public function testUseSerializerMethodIsImmutable(): void
+    {
+        $newBuilder = $this->builder->useSerializer('json');
+        $this->assertNotSame($this->builder, $newBuilder, 'Builder should be immutable.');
+    }
+
+    public function testConfigurationIsAppliedToCommandBeforeExecution(): void
+    {
+        // Arrange
+        $key = 'test_key';
+        $value = 'test_value';
+        $ttl = 3600;
+        $tags = ['tag1', 'tag2'];
+
+        // Create a mock for the command that also implements the SupportsTtl interface
+        $commandMock = $this->createMock(SetCommand::class);
+        $commandMock->method('withTtl')->willReturnSelf(); // Fluent interface
+        $commandMock->method('withTags')->willReturnSelf(); // Fluent interface
+
+        $this->factoryMock->method('createSetCommand')->with($key, $value)->willReturn($commandMock);
+        $this->executorMock->method('execute')->with($commandMock)->willReturn(true);
+
+        // Expect that the configuration methods are called on the command
+        $commandMock->expects($this->once())->method('withTtl')->with($ttl);
+        $commandMock->expects($this->once())->method('withTags')->with($tags);
+
+        // Act
+        $result = $this->builder->ttl($ttl)->tags(...$tags)->set($key, $value);
+
+        // Assert
+        $this->assertTrue($result);
+    }
+
+    public function testGetMethodCreatesAndExecutesCommand(): void
+    {
+        // Arrange
+        $commandMock = $this->createMock(\KaririCode\Cache\Command\Basic\GetCommand::class);
+        $this->factoryMock->method('createGetCommand')->willReturn($commandMock);
+        $this->executorMock->method('execute')->with($commandMock)->willReturn('cached_value');
+
+        // Act
+        $result = $this->builder->get('test_key', 'default');
+
+        // Assert
+        $this->assertSame('cached_value', $result);
+    }
+}

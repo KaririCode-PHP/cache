@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace KaririCode\Cache\Service;
 
 use KaririCode\Cache\Config\DriverManager;
-use KaririCode\Cache\Config\StoreConfiguration;
+use KaririCode\Cache\Config\DTO\StoreConfig;
 use KaririCode\Cache\Contract\Behavioral\MultiOperationCacheable;
 use KaririCode\Cache\Contract\Cache;
 use KaririCode\Cache\Contract\CacheDriver;
@@ -82,7 +82,7 @@ final class CacheManager implements Cache, MultiOperationCacheable
 
         $this->logger->debug('Cache store created', [
             'store' => $name,
-            'driver' => $storeConfig->getDriver(),
+            'driver' => $storeConfig->driver,
         ]);
 
         return $this->stores[$name];
@@ -148,10 +148,10 @@ final class CacheManager implements Cache, MultiOperationCacheable
         return $this->getDefaultStore()->has($key);
     }
 
-    private function createDriver(StoreConfiguration $storeConfig): CacheDriver
+    private function createDriver(StoreConfig $storeConfig): CacheDriver
     {
-        $driver = $storeConfig->getDriver();
-        $options = $storeConfig->getConfig();
+        $driver = $storeConfig->driver;
+        $options = $storeConfig->config;
 
         $options['expiration_provider'] = $this->expirationProvider;
         $options['serializer'] = $this->serializationService;
@@ -274,8 +274,8 @@ final class CacheManager implements Cache, MultiOperationCacheable
         $this->driverManager->setSerializer($this->serializationService);
         foreach ($this->configuration->getStores() as $storeConfig) {
             $this->driverManager->setDriverOptions(
-                $storeConfig->getDriver(),
-                $storeConfig->getConfig()
+                $storeConfig->driver,
+                $storeConfig->config
             );
         }
     }

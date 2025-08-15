@@ -42,7 +42,12 @@ final class StoreConfig implements ImmutableValue
         }
 
         $config = (isset($data['config']) && is_array($data['config'])) ? $data['config'] : [];
-        $layersData = (isset($config['layers']) && is_array($config['layers'])) ? $config['layers'] : [];
+
+        if ('layered' === $driver && (empty($config['layers']) || !is_array($config['layers']))) {
+            throw ConfigurationException::invalidConfiguration('store.layers', 'Layered cache must have a non-empty "layers" array.');
+        }
+
+        $layersData = $config['layers'] ?? [];
 
         $layers = array_map(function ($layerData) {
             if (!is_array($layerData) || empty($layerData['driver']) || !is_string($layerData['driver'])) {
