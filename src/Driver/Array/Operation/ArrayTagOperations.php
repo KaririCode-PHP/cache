@@ -4,208 +4,93 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Driver\Array\Operation;
 
-use KaririCode\Cache\Operation\Factory\TagNormalizer;
-use KaririCode\Cache\Validation\Trait\CacheKeyValidationTrait;
-use KaririCode\Cache\Validation\Trait\CacheValueValidationTrait;
-use KaririCode\Cache\Validation\Trait\ExpirationManagementTrait;
-use KaririCode\Cache\Validation\Trait\TagValidationTrait;
+use KaririCode\Cache\Contract\Provider\ExpirationProvider;
+use KaririCode\Cache\Driver\Array\Storage\ArrayStorage;
+use KaririCode\Cache\Service\ValidationService;
 use KaririCode\Cache\ValueObject\Tag;
 
 /**
- * Handles tag-based cache operations for ArrayDriver.
+ * Handles tag-based cache operations for the ArrayDriver.
  *
- * This class follows the established architectural pattern by separating
- * tag operations from the main driver class, maintaining consistency with
- * other drivers like RedisTagOperations and MemcachedTagOperations.
- *
- * Key improvements:
- * - Follows SRP by focusing solely on tag operations
- * - Uses TagValidationTrait for consistent validation
- * - Maintains reference-based access to storage for performance
- * - Implements proper Tag object handling
+ * This class is solely responsible for managing the relationship between cache
+ * keys and tags. It uses the central ArrayStorage for data manipulation and
+ * the ExpirationProvider strategy for TTL management, adhering to the Single
+ * Responsibility Principle.
  *
  * @category  Cache
  *
  * @author    Walmir Silva <walmir.silva@kariricode.org>
  * @license   MIT
  *
- * @see      https://kariricode.org/
- * @see       TagValidationTrait for validation logic
- * @see       TagNormalizer for tag normalization utilities
+ * @see       https://kariricode.org/
  */
 final class ArrayTagOperations
 {
-    use CacheKeyValidationTrait;
-    use CacheValueValidationTrait;
-    use TagValidationTrait;
-    use ExpirationManagementTrait;
+    private readonly ValidationService $validator;
 
     /**
-     * @param array<string, mixed> $storage Reference to main storage array
-     * @param array<string, int> $expirations Reference to expiration tracking
-     * @param array<string, list<string>> $tagIndex Reference to tag index
-     * @param callable $removeFromIndexesCallback Callback to remove keys from all indexes
+     * @param ArrayStorage $storage the central in-memory storage
+     * @param ExpirationProvider $expirationProvider the strategy for TTL management
+     * @param callable $removeCallback a callback to completely remove a key from all indexes
      */
     public function __construct(
-        private array &$storage,
-        private array &$expirations,
-        private array &$tagIndex,
-        private $removeFromIndexesCallback
+        private readonly ArrayStorage $storage,
+        private readonly ExpirationProvider $expirationProvider,
+        private readonly \Closure $removeCallback
     ) {
+        $this->validator = new ValidationService();
     }
 
     /**
-     * Sets a cache item with associated tags.
+     * Stores an item with associated tags.
      *
-     * This method follows the established pattern of validating inputs,
-     * storing the value, and then updating tag indices. It maintains
-     * consistency with other driver implementations.
+     * @param string $key the key of the item
+     * @param mixed $value the value to store
+     * @param iterable<string|Tag> $tags the tags to associate
      *
-     * @param string $key The cache key to set
-     * @param mixed $value The value to store
-     * @param array<string|Tag> $tags Array of tags (strings or Tag objects)
-     * @param \DateInterval|int|null $ttl Time to live for the cache item
-     *
-     * @return bool True if the item was successfully stored, false otherwise
-     *
-     * @example
-     * ```php
-     * $success = $tagOps->setWithTags('user:123', $userData, ['user', 'profile'], 3600);
-     * $success = $tagOps->setWithTags('post:456', $post, [new Tag('post'), new Tag('blog')]);
-     * ```
+     * @return bool true on success
      */
-    public function setWithTags(string $key, mixed $value, array $tags, \DateInterval|int|null $ttl = null): bool
+    public function setWithTags(string $key, mixed $value, iterable $tags): bool
     {
-        $this->validateKey($key);
-        $this->validateValue($value);
+        $this->validator->validateKey($key);
+        $this->validator->validateValue($value);
+        $normalizedTags = $this->normalizeTags($tags);
+        $this->validator->validateTags($normalizedTags);
 
-        // Validate and normalize tags using shared trait
-        $normalizedTags = $this->validateAndNormalizeTags($tags);
+        $expiration = $this->expirationProvider->calculateExpiration(null, $key, 'setWithTags');
+        $this->storage->setValue($key, $value, $expiration?->getTimestamp());
 
-        // Calculate expiration time
-        $expiration = $this->calculateExpiration($ttl);
-
-        // Store the value
-        $this->storage[$key] = $value;
-
-        // Set expiration if provided
-        if ($expiration) {
-            $this->expirations[$key] = $expiration->getTimestamp();
-        } else {
-            unset($this->expirations[$key]);
-        }
-
-        // Update tag indices
         foreach ($normalizedTags as $tag) {
-            $tagString = (string) $tag;
-            if (!isset($this->tagIndex[$tagString])) {
-                $this->tagIndex[$tagString] = [];
-            }
-
-            // Avoid duplicates in tag index
-            if (!in_array($key, $this->tagIndex[$tagString], true)) {
-                $this->tagIndex[$tagString][] = $key;
-            }
+            $this->storage->addTagAssociation((string) $tag, $key, $expiration?->getTimestamp());
         }
 
         return true;
     }
 
     /**
-     * Invalidates all cache items associated with the given tags.
+     * Retrieves all items associated with any of the given tags.
      *
-     * This method efficiently collects all keys associated with the specified
-     * tags and removes them from both storage and indices, maintaining
-     * data consistency.
+     * @param iterable<string|Tag> $tags the tags to search for
      *
-     * @param array<string|Tag> $tags Array of tags to invalidate
-     *
-     * @return bool True if tags were successfully invalidated, false otherwise
-     *
-     * @example
-     * ```php
-     * $success = $tagOps->invalidateTags(['user', 'profile']);
-     * $success = $tagOps->invalidateTags([new Tag('post'), new Tag('blog')]);
-     * ```
+     * @return iterable<string, mixed> a map of keys to their values
      */
-    public function invalidateTags(array $tags): bool
+    public function getByTags(iterable $tags): iterable
     {
-        // Validate and normalize tags
-        $normalizedTags = $this->validateAndNormalizeTags($tags);
+        $normalizedTags = $this->normalizeTags($tags);
+        $this->validator->validateTags($normalizedTags);
 
-        $keysToDelete = [];
-
-        // Collect all keys associated with the tags
+        $uniqueKeys = [];
         foreach ($normalizedTags as $tag) {
-            $tagString = (string) $tag;
-            if (isset($this->tagIndex[$tagString])) {
-                $keysToDelete = array_merge($keysToDelete, $this->tagIndex[$tagString]);
-                // Remove the tag index completely
-                unset($this->tagIndex[$tagString]);
+            foreach ($this->storage->getTaggedKeys((string) $tag) as $key) {
+                $uniqueKeys[$key] = true;
             }
         }
-
-        // Remove duplicates
-        $keysToDelete = array_unique($keysToDelete);
-
-        // Delete all associated keys
-        foreach ($keysToDelete as $key) {
-            unset($this->storage[$key], $this->expirations[$key]);
-            // Remove from other indices (topics, etc.)
-            ($this->removeFromIndexesCallback)($key);
-        }
-
-        return true;
-    }
-
-    /**
-     * Retrieves all cache items associated with the given tags.
-     *
-     * This method efficiently collects keys from multiple tags and returns
-     * their values, filtering out expired entries in the process.
-     *
-     * @param array<string|Tag> $tags Array of tags to search for
-     *
-     * @return array<string, mixed> Array of cache items indexed by their keys
-     *
-     * @example
-     * ```php
-     * $userItems = $tagOps->getByTags(['user']);
-     * $blogPosts = $tagOps->getByTags([new Tag('post'), new Tag('blog')]);
-     * ```
-     */
-    public function getByTags(array $tags): array
-    {
-        // Validate and normalize tags
-        $normalizedTags = $this->validateAndNormalizeTags($tags);
-
-        $keys = [];
-
-        // Collect all keys associated with the tags
-        foreach ($normalizedTags as $tag) {
-            $tagString = (string) $tag;
-            if (isset($this->tagIndex[$tagString])) {
-                $keys = array_merge($keys, $this->tagIndex[$tagString]);
-            }
-        }
-
-        // Remove duplicates
-        $uniqueKeys = array_unique($keys);
 
         $results = [];
-
-        // Retrieve values for all keys, checking expiration
-        foreach ($uniqueKeys as $key) {
-            if (isset($this->storage[$key])) {
-                // Check if expired
-                if (isset($this->expirations[$key]) && $this->expirations[$key] < time()) {
-                    // Clean up expired entry
-                    unset($this->storage[$key], $this->expirations[$key]);
-                    ($this->removeFromIndexesCallback)($key);
-                    continue;
-                }
-
-                $results[$key] = $this->storage[$key];
+        foreach (array_keys($uniqueKeys) as $key) {
+            $value = $this->storage->getValue($key);
+            if (null !== $value) {
+                $results[$key] = $value;
             }
         }
 
@@ -213,79 +98,62 @@ final class ArrayTagOperations
     }
 
     /**
-     * Gets all tags currently in use.
+     * Deletes all items associated with any of the given tags.
      *
-     * This method returns all tag strings that currently have associated
-     * cache items, providing visibility into the tag ecosystem.
+     * @param iterable<string|Tag> $tags the tags to invalidate
      *
-     * @return array<string> Array of unique tag strings currently in use
+     * @return bool true on success
      */
-    public function getTags(): array
+    public function invalidateTags(iterable $tags): bool
     {
-        return array_keys($this->tagIndex);
-    }
+        $normalizedTags = $this->normalizeTags($tags);
+        $this->validator->validateTags($normalizedTags);
 
-    /**
-     * Gets all keys associated with a specific tag.
-     *
-     * This method is useful for debugging and administrative purposes,
-     * allowing inspection of tag-to-key relationships.
-     *
-     * @param Tag $tag The tag to search for
-     *
-     * @return array<string> Array of keys associated with the tag
-     */
-    public function getTaggedKeys(Tag $tag): array
-    {
-        $tagString = (string) $tag;
-
-        return $this->tagIndex[$tagString] ?? [];
-    }
-
-    /**
-     * Removes a key from the tag index when the key is deleted.
-     *
-     * This method is called internally when keys are removed to maintain
-     * index consistency and prevent memory leaks.
-     *
-     * @param string $key The key to remove from tag indices
-     */
-    public function removeKeyFromTagIndex(string $key): void
-    {
-        foreach ($this->tagIndex as $tag => &$keys) {
-            if (($index = array_search($key, $keys, true)) !== false) {
-                unset($keys[$index]);
-                // Reindex array to maintain sequential indices
-                $keys = array_values($keys);
-
-                // Remove empty tag indices
-                if (empty($keys)) {
-                    unset($this->tagIndex[$tag]);
-                }
+        $keysToDelete = [];
+        foreach ($normalizedTags as $tag) {
+            $tagName = (string) $tag;
+            foreach ($this->storage->getTaggedKeys($tagName) as $key) {
+                $keysToDelete[$key] = true;
             }
+            // Clear the tag index itself
+            $this->storage->clearTagAssociations($tagName);
+        }
+
+        // Use the callback to ensure keys are removed from all indexes (storage, topics, etc.)
+        foreach (array_keys($keysToDelete) as $key) {
+            ($this->removeCallback)($key);
+        }
+
+        return true;
+    }
+
+    /**
+     * Retrieves all unique tags stored in the cache.
+     *
+     * @return iterable<Tag> a list of Tag objects
+     */
+    public function getTags(): iterable
+    {
+        $tagNames = $this->storage->getAllTags();
+        foreach ($tagNames as $name) {
+            yield new Tag($name);
         }
     }
 
     /**
-     * Gets statistics about tag usage.
+     * Normalizes an iterable of strings or Tag objects into an array of Tag objects.
      *
-     * @return array{total_tags: int, total_tagged_keys: int, average_keys_per_tag: float}
+     * @param iterable<string|Tag> $tags
+     *
+     * @return array<Tag>
      */
-    public function getTagStatistics(): array
+    private function normalizeTags(iterable $tags): array
     {
-        $totalTags = count($this->tagIndex);
-        $totalTaggedKeys = 0;
-
-        foreach ($this->tagIndex as $keys) {
-            $totalTaggedKeys += count($keys);
+        $normalized = [];
+        foreach ($tags as $tag) {
+            $normalized[] = $tag instanceof Tag ? $tag : new Tag((string) $tag);
         }
 
-        $averageKeysPerTag = $totalTags > 0 ? $totalTaggedKeys / $totalTags : 0;
-
-        return [
-            'total_tags' => $totalTags,
-            'total_tagged_keys' => $totalTaggedKeys,
-            'average_keys_per_tag' => round($averageKeysPerTag, 2),
-        ];
+        return $normalized;
     }
 }

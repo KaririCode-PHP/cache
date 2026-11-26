@@ -4,41 +4,25 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Contract;
 
-use KaririCode\Cache\ValueObject\Topic;
+use KaririCode\Cache\Contract\Behavioral\TopicSubscribable;
 
 /**
- *  * Interface TopicAwareCacheDriver.
- *  *
- *  * Extends the base CacheDriver to include support for topic-based invalidation.
- *  * Drivers implementing this interface can manage subscriptions between cache keys
- *  * and topics, allowing for event-driven invalidation.
- *  *.
+ * Extends the base CacheDriver to include support for topic-based invalidation.
  *
- *  * @category  Cache
- *  *
+ * Drivers implementing this interface can manage subscriptions between cache keys
+ * and topics, allowing for event-driven invalidation. It now extends the main
+ * TopicSubscribable interface to ensure a complete and consistent contract.
  *
- *  * @author    Walmir Silva <walmir.silva@kariricode.org>
- *  * @license   MIT
- *  *
+ * @category  Cache
  *
- *  * @see       https://kariricode.org/
- *  */
-interface TopicAwareCacheDriver extends CacheDriver
+ * @author    Walmir Silva <walmir.silva@kariricode.org>
+ * @license   MIT
+ *
+ * @see       https://kariricode.org/
+ */
+interface TopicAwareCacheDriver extends CacheDriver, TopicSubscribable
 {
-    /**
-     * Subscribes a cache key to one or more invalidation topics.
-     *
-     * @param string $key the cache key to subscribe
-     * @param Topic[] $topics an array of topics // CORREÇÃO: Tipo atualizado para Topic[]
-     */
-    public function subscribeTo(string $key, array $topics): void;
-
-    /**
-     * Invalidates all cache keys subscribed to the given topics.
-     *
-     * @param Topic[] $topics the topics to invalidate // CORREÇÃO: Tipo atualizado para Topic[]
-     *
-     * @return bool true on success, false on failure
-     */
-    public function invalidateTopics(array $topics): bool;
+    // This interface remains empty by design.
+    // Its purpose is to group the CacheDriver and TopicSubscribable contracts,
+    // signaling that a driver fully supports all topic-related features.
 }

@@ -4,8 +4,6 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Contract;
 
-use Psr\EventDispatcher\EventDispatcherInterface;
-
 /**
  * Interface CacheEventListener.
  *
@@ -56,25 +54,4 @@ interface CacheEventListener
      * Handles the event when the cache is cleared.
      */
     public function onCacheClear(): void;
-
-    /**
-     * Returns statistics about the events that have occurred.
-     *
-     * @return array<string, int> an associative array of event types to their counts
-     */
-    public function getStats(): array;
-
-    /**
-     * Sets the event dispatcher instance.
-     *
-     * @param EventDispatcherInterface|null $eventDispatcher the event dispatcher
-     */
-    public function setEventDispatcher(?EventDispatcherInterface $eventDispatcher): void;
-
-    /**
-     * Gets the event dispatcher instance.
-     *
-     * @return EventDispatcherInterface|null the event dispatcher or null if not set
-     */
-    public function getEventDispatcher(): ?EventDispatcherInterface;
 }

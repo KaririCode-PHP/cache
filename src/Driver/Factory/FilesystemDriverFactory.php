@@ -5,63 +5,92 @@ declare(strict_types=1);
 namespace KaririCode\Cache\Driver\Factory;
 
 use KaririCode\Cache\Contract\CacheDriver;
-use KaririCode\Cache\Contract\CacheDriverFactory;
 use KaririCode\Cache\Contract\DriverManager;
-use KaririCode\Cache\Driver\Filesystem\Cache\FileSystemCacheOperations;
+use KaririCode\Cache\Contract\Provider\ExpirationProvider;
+use KaririCode\Cache\Driver\Filesystem\Config\FilesystemConfig;
 use KaririCode\Cache\Driver\Filesystem\Directory\DirectoryManager;
-use KaririCode\Cache\Driver\Filesystem\Expiration\ExpirationManager;
 use KaririCode\Cache\Driver\Filesystem\File\FileManager;
+use KaririCode\Cache\Driver\Filesystem\Operation\FilesystemCrudOperations;
 use KaririCode\Cache\Driver\Filesystem\Operation\FilesystemTagOperations;
-use KaririCode\Cache\Driver\Filesystem\Serialization\SerializationManager;
 use KaririCode\Cache\Driver\Filesystem\Statistics\FileSystemStatistics;
 use KaririCode\Cache\Driver\Filesystem\Validation\FileSystemValidator;
 use KaririCode\Cache\Driver\FilesystemDriver;
 use KaririCode\Cache\Exception\ConfigurationException;
-use Psr\Log\NullLogger;
+use KaririCode\Contract\Logging\Logger;
 
 /**
- * Enhanced filesystem driver factory with comprehensive validation.
+ * Factory for creating a fully-configured FilesystemDriver.
+ *
+ * This factory composes the FilesystemDriver with all its required dependencies,
+ * including managers for directories, files, and operations. It follows the
+ * Factory and SRP by encapsulating the complex object creation and composition logic.
+ *
+ * @category  Cache
+ *
+ * @author    Walmir Silva <walmir.silva@kariricode.org>
+ * @license   MIT
+ *
+ * @see       https://kariricode.org/
  */
-final class FilesystemDriverFactory implements CacheDriverFactory
+final class FilesystemDriverFactory extends AbstractDriverFactory
 {
-    private const MIN_MAX_SIZE = 1024 * 1024; // 1MB minimum
-    private const MAX_DIRECTORY_LEVELS = 4;
+    /**
+     * Creates the FilesystemDriver instance.
+     *
+     * Assembles the driver by creating and injecting all its dependencies, which
+     * are all configured via a central FilesystemConfig DTO.
+     *
+     * @param array<string, mixed> $options the validated driver configuration
+     * @param DriverManager $manager the driver manager for resolving shared dependencies
+     * @param ExpirationProvider $expirationProvider the centrally configured expiration provider
+     * @param Logger $logger the logger instance
+     *
+     * @return CacheDriver the fully configured FilesystemDriver instance
+     */
+    protected function doCreateDriver(
+        array $options,
+        DriverManager $manager,
+        ExpirationProvider $expirationProvider,
+        Logger $logger
+    ): CacheDriver {
+        $config = FilesystemConfig::fromConfig($options);
 
-    public function createDriver(array $options, DriverManager $manager): CacheDriver
-    {
-        $this->validateOptions($options);
+        // Resolve the global serializer instead of using a local one.
+        $serializer = $this->resolveSerializer($options, $manager);
+        if (null === $serializer) {
+            throw ConfigurationException::missingConfiguration('A CacheSerializer must be configured in the DriverManager.');
+        }
 
-        $logger = new NullLogger();
-        $keyPrefix = $options['key_prefix'] ?? 'cache_';
-
-        $fileManager = new FileManager($logger, $options['use_locking'] ?? true);
-        $directoryManager = new DirectoryManager($options['directory'] ?? $this->getDefaultDirectory(), $logger, $keyPrefix);
-        $serializer = new SerializationManager($logger, $options['use_compression'] ?? true);
-        $expirationManager = new ExpirationManager((float) ($options['cleanup_probability'] ?? 0.01));
+        // Build Core Components, all configured via the DTO
+        $directoryManager = new DirectoryManager($config, $logger);
+        $fileManager = new FileManager($config, $logger);
+        $validator = new FileSystemValidator($config);
         $statistics = new FileSystemStatistics($directoryManager, $fileManager, $logger);
-        $validator = new FileSystemValidator();
 
-        $cacheOperations = new FileSystemCacheOperations(
-            $fileManager,
+        // Build Operation Handlers
+        $crudOperations = new FilesystemCrudOperations(
+            $config,
             $directoryManager,
+            $fileManager,
             $serializer,
-            $expirationManager,
-            $logger,
-            $keyPrefix,
-            (int) ($options['directory_levels'] ?? 2)
+            $expirationProvider,
+            $logger
         );
 
         $tagOperations = new FilesystemTagOperations(
-            $fileManager,
+            $config,
             $directoryManager,
+            $fileManager,
             $serializer,
+            $expirationProvider,
             $logger,
-            $keyPrefix
+            $crudOperations // Inject CRUD ops for get/delete functionality
         );
 
+        // Assemble the final driver Facade
         return new FilesystemDriver(
             $directoryManager,
-            $cacheOperations,
+            $crudOperations,
             $tagOperations,
             $statistics,
             $validator,
@@ -69,80 +98,40 @@ final class FilesystemDriverFactory implements CacheDriverFactory
         );
     }
 
-    /**
-     * @return list<string>
-     */
-    public function getSupportedOptions(): array
+    protected function getDriverName(): string
+    {
+        return 'filesystem';
+    }
+
+    protected function getRequiredOptions(): array
+    {
+        // A directory is required, but the DTO provides a sensible default.
+        return [];
+    }
+
+    protected function getOptionalOptions(): array
     {
         return [
-            'directory', 'key_prefix', 'max_size', 'cleanup_probability',
-            'directory_levels', 'use_compression', 'use_locking',
+            'directory',
+            'key_prefix',
+            'max_size',
+            'cleanup_probability',
+            'use_locking',
+            'use_compression',
+            'directory_levels',
+            'file_permissions',
+            'directory_permissions',
+            'max_key_length',
+            'max_value_size',
         ];
     }
 
-    public function validateOptions(array $options): bool
+    protected function doValidateOptions(array $options): bool
     {
-        $errors = [];
-
-        // Validate max_size
-        if (isset($options['max_size'])) {
-            if (!is_int($options['max_size']) || $options['max_size'] < self::MIN_MAX_SIZE) {
-                $errors[] = 'max_size must be an integer >= ' . self::MIN_MAX_SIZE;
-            }
-        }
-
-        // Validate cleanup_probability
-        if (isset($options['cleanup_probability'])) {
-            if (!is_float($options['cleanup_probability']) && !is_int($options['cleanup_probability'])) {
-                $errors[] = 'cleanup_probability must be a number';
-            } elseif ($options['cleanup_probability'] < 0 || $options['cleanup_probability'] > 1) {
-                $errors[] = 'cleanup_probability must be between 0 and 1';
-            }
-        }
-
-        // Validate directory_levels
-        if (isset($options['directory_levels'])) {
-            if (!is_int($options['directory_levels']) || $options['directory_levels'] < 1 || $options['directory_levels'] > self::MAX_DIRECTORY_LEVELS) {
-                $errors[] = 'directory_levels must be an integer between 1 and ' . self::MAX_DIRECTORY_LEVELS;
-            }
-        }
-
-        // Validate boolean options
-        $booleanOptions = ['use_compression', 'use_locking'];
-        foreach ($booleanOptions as $option) {
-            if (isset($options[$option]) && !is_bool($options[$option])) {
-                $errors[] = "{$option} must be a boolean";
-            }
-        }
-
-        // Validate directory if provided
-        if (isset($options['directory'])) {
-            if (!is_string($options['directory'])) {
-                $errors[] = 'directory must be a string';
-            }
-        }
-
-        if (!empty($errors)) {
-            throw ConfigurationException::invalidConfiguration('filesystem', implode(', ', $errors));
-        }
+        // Validation is handled by the FilesystemConfig DTO upon creation.
+        // If this doesn't throw an exception, the options are valid.
+        FilesystemConfig::fromConfig($options);
 
         return true;
-    }
-
-    private function getDefaultDirectory(): string
-    {
-        $candidates = [
-            sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'kariricode-cache',
-            __DIR__ . '/../../../storage/cache',
-            '/tmp/kariricode-cache',
-        ];
-
-        foreach ($candidates as $directory) {
-            if (is_dir(dirname($directory)) && is_writable(dirname($directory))) {
-                return $directory;
-            }
-        }
-
-        throw ConfigurationException::invalidConfiguration('filesystem', 'No writable directory found for cache storage');
     }
 }

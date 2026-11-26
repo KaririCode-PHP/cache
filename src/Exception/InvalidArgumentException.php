@@ -23,6 +23,7 @@ final class InvalidArgumentException extends AbstractException
     private const CODE_INVALID_NAMESPACE = 1249;
     private const CODE_INVALID_VALUE = 1250;
     private const CODE_INVALID_CONFIGURATION = 1251;
+    private const CODE_INVALID_STEP = 1252;
 
     public static function emptyKey(): static
     {
@@ -51,14 +52,12 @@ final class InvalidArgumentException extends AbstractException
         );
     }
 
-    public static function invalidTtl(mixed $ttl): static
+    public static function invalidTtl(string $message): static
     {
-        $type = is_object($ttl) ? get_class($ttl) : gettype($ttl);
-
         return static::createException(
             self::CODE_INVALID_TTL,
             'INVALID_TTL',
-            "Invalid TTL value. Expected int, DateInterval or null, got {$type}"
+            $message
         );
     }
 
@@ -71,6 +70,24 @@ final class InvalidArgumentException extends AbstractException
         );
     }
 
+    public static function emptyTag(): static
+    {
+        return static::createException(
+            self::CODE_INVALID_TAG,
+            'EMPTY_TAG',
+            'Tag cannot be empty.'
+        );
+    }
+
+    public static function tagTooLong(string $tag, int $maxLength): static
+    {
+        return static::createException(
+            self::CODE_INVALID_TAG,
+            'TAG_TOO_LONG',
+            sprintf('Tag cannot exceed %d characters. Current length: %d.', $maxLength, strlen($tag))
+        );
+    }
+
     public static function invalidTagFormat(string $tag): static
     {
         return static::createException(
@@ -80,12 +97,50 @@ final class InvalidArgumentException extends AbstractException
         );
     }
 
-    public static function invalidTopic(string $topic): static
+    public static function invalidTopic(string $reason): static
     {
         return static::createException(
             self::CODE_INVALID_TOPIC,
             'INVALID_TOPIC',
-            "Invalid cache topic: '{$topic}'"
+            "Invalid cache topic: {$reason}"
+        );
+    }
+
+    public static function emptyTopic(): static
+    {
+        return static::createException(
+            self::CODE_INVALID_TOPIC,
+            'EMPTY_TOPIC',
+            'Topic cannot be empty.'
+        );
+    }
+
+    public static function topicTooLong(
+        string $topic,
+        int $maxLength
+    ): static {
+        return static::createException(
+            self::CODE_INVALID_TOPIC,
+            'TOPIC_TOO_LONG',
+            sprintf('Topic cannot exceed %d characters. Current length: %d.', $maxLength, mb_strlen($topic))
+        );
+    }
+
+    public static function invalidTopicFormat(string $topic): static
+    {
+        return static::createException(
+            self::CODE_INVALID_TOPIC,
+            'INVALID_TOPIC_FORMAT',
+            "Invalid cache topic format: '{$topic}'. Only alphanumeric characters, underscores, dots, colons, and hyphens are allowed."
+        );
+    }
+
+    public static function forInvalidStep(int $step): static
+    {
+        return static::createException(
+            self::CODE_INVALID_STEP,
+            'INVALID_STEP',
+            "Invalid step value: '{$step}'"
         );
     }
 
@@ -130,7 +185,7 @@ final class InvalidArgumentException extends AbstractException
         return static::createException(
             self::CODE_INVALID_VALUE,
             'UNSERIALIZABLE_VALUE',
-            "The provided value of type '{$type}' cannot be serialized."
+            "Cannot cache value of type '{$type}'."
         );
     }
 

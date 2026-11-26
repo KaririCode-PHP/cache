@@ -4,30 +4,22 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Item;
 
-use KaririCode\Cache\Contract\CacheItem as CacheItemContract;
-use KaririCode\Cache\ValueObject\Tag;
+use Psr\Cache\CacheItemInterface;
 
 /**
- * Enhanced cache item with tagging and topic subscription support.
+ * A DTO representing a cache item, adhering to PSR-6.
+ * This class is a simple data container; all validation is delegated to services.
  */
-final class CacheItem implements CacheItemContract
+final class CacheItem implements CacheItemInterface
 {
-    private string $key;
-    private mixed $value;
-    private bool $isHit;
     private ?\DateTimeInterface $expiration = null;
 
-    /** @var array<string> */
-    private array $tags = [];
-
-    /** @var array<string> */
-    private array $topics = [];
-
-    public function __construct(string $key, mixed $value = null, bool $isHit = false)
-    {
-        $this->key = $key;
-        $this->value = $value;
-        $this->isHit = $isHit;
+    public function __construct(
+        private readonly string $key,
+        private mixed $value = null,
+        private bool $isHit = false,
+        private array $tags = []
+    ) {
     }
 
     public function getKey(): string
@@ -37,12 +29,12 @@ final class CacheItem implements CacheItemContract
 
     public function get(): mixed
     {
-        return $this->value;
+        return $this->isHit ? $this->value : null;
     }
 
     public function isHit(): bool
     {
-        return $this->isHit;
+        return $this->isHit && !$this->isExpired();
     }
 
     public function set(mixed $value): static
@@ -63,10 +55,10 @@ final class CacheItem implements CacheItemContract
     {
         if (null === $time) {
             $this->expiration = null;
-        } elseif ($time instanceof \DateInterval) {
-            $this->expiration = (new \DateTime())->add($time);
         } elseif (is_int($time)) {
-            $this->expiration = new \DateTime('+' . $time . ' seconds');
+            $this->expiration = (new \DateTimeImmutable())->modify("+{$time} seconds");
+        } elseif ($time instanceof \DateInterval) {
+            $this->expiration = (new \DateTimeImmutable())->add($time);
         }
 
         return $this;
@@ -77,13 +69,12 @@ final class CacheItem implements CacheItemContract
         return $this->expiration;
     }
 
-    /**
-     * @param Tag[] $tags an array of tags to associate with the cache item
-     */
-    public function tag(array $tags): static
+    public function tag(iterable $tags): static
     {
-        $tagStrings = array_map(fn (Tag $tag) => (string) $tag, $tags);
-        $this->tags = array_unique(array_merge($this->tags, $tagStrings));
+        foreach ($tags as $tag) {
+            $this->tags[] = (string) $tag;
+        }
+        $this->tags = array_unique($this->tags);
 
         return $this;
     }
@@ -93,15 +84,8 @@ final class CacheItem implements CacheItemContract
         return $this->tags;
     }
 
-    public function subscribeTo(array $topics): static
+    private function isExpired(): bool
     {
-        $this->topics = array_merge($this->topics, $topics);
-
-        return $this;
-    }
-
-    public function getTopics(): array
-    {
-        return $this->topics;
+        return null !== $this->expiration && $this->expiration < new \DateTimeImmutable();
     }
 }

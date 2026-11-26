@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Driver\Apcu\Component;
 
-use Psr\Log\LoggerInterface;
+use KaririCode\Contract\Logging\Logger;
 
 /**
  * Realiza operações de manutenção no cache APCu.
@@ -12,7 +12,7 @@ use Psr\Log\LoggerInterface;
  */
 final class ApcuMaintenanceService
 {
-    public function __construct(private readonly LoggerInterface $logger)
+    public function __construct(private readonly Logger $logger)
     {
     }
 

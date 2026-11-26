@@ -6,7 +6,7 @@ namespace KaririCode\Cache\Driver\Memcached\Component;
 
 use KaririCode\Cache\Contract\DriverStats;
 use KaririCode\Cache\ValueObject\MetricsSnapshot;
-use Psr\Log\LoggerInterface;
+use KaririCode\Contract\Logging\Logger;
 
 /**
  * Monitoring service for Memcached operations.
@@ -23,7 +23,7 @@ final class MemcachedMonitoringService implements DriverStats
 
     public function __construct(
         private \Memcached $memcached,
-        private LoggerInterface $logger
+        private Logger $logger
     ) {
     }
 
@@ -52,6 +52,15 @@ final class MemcachedMonitoringService implements DriverStats
     public function recordError(): void
     {
         ++$this->errors;
+    }
+
+    public function recordClear(): void
+    {
+        $this->hits = 0;
+        $this->misses = 0;
+        $this->writes = 0;
+        $this->deletes = 0;
+        $this->errors = 0;
     }
 
     // --- DriverStats Interface Implementation ---

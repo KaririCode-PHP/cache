@@ -5,10 +5,11 @@ declare(strict_types=1);
 namespace KaririCode\Cache\Event\Listener;
 
 use KaririCode\Cache\Contract\CacheEventListener;
+use KaririCode\Cache\Contract\Structural\EventDispatcherAware;
 use KaririCode\Cache\Event\DTO\IpStats;
 use KaririCode\Cache\Event\DTO\SecurityContext;
+use KaririCode\Contract\Logging\Logger;
 use Psr\EventDispatcher\EventDispatcherInterface;
-use Psr\Log\LoggerInterface;
 use Psr\Log\LogLevel;
 
 /**
@@ -18,7 +19,7 @@ use Psr\Log\LogLevel;
  * and detecting basic suspicious patterns. It follows the SRP by delegating
  * data storage to dedicated DTOs.
  */
-final class SecurityEventListener implements CacheEventListener
+final class SecurityEventListener implements CacheEventListener, EventDispatcherAware
 {
     /** @var array<string, IpStats> */
     private array $ipStatistics = [];
@@ -26,24 +27,29 @@ final class SecurityEventListener implements CacheEventListener
     /** @var array<string, int> */
     private array $blockedIPs = [];
 
-    private ?EventDispatcherInterface $eventDispatcher = null;
+    private EventDispatcherInterface $eventDispatcher;
 
     public function __construct(
-        private readonly LoggerInterface $logger,
+        private readonly Logger $logger,
         private readonly int $rateLimitMaxAttempts = 1000,
         private readonly int $rateLimitWindow = 300, // 5 minutes
         private readonly int $ipBlockDuration = 3600 // 1 hour
     ) {
     }
 
-    public function setEventDispatcher(?EventDispatcherInterface $eventDispatcher): void
+    public function setEventDispatcher(EventDispatcherInterface $eventDispatcher): void
     {
         $this->eventDispatcher = $eventDispatcher;
     }
 
-    public function getEventDispatcher(): ?EventDispatcherInterface
+    public function getEventDispatcher(): EventDispatcherInterface
     {
         return $this->eventDispatcher;
+    }
+
+    public function hasEventDispatcher(): bool
+    {
+        return null !== $this->eventDispatcher;
     }
 
     public function onCacheHit(string $key, mixed $value): void

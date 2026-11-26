@@ -11,16 +11,18 @@ use KaririCode\Exception\AbstractException;
  */
 final class FilesystemException extends AbstractException
 {
+    private const CODE_PERMISSION_DENIED = 1267;
     private const CODE_FILE_NOT_READABLE = 1260;
     private const CODE_FILE_NOT_WRITABLE = 1261;
-    private const CODE_DIRECTORY_CREATION_FAILED = 1262;
     private const CODE_FILE_DELETION_FAILED = 1263;
-    private const CODE_ATOMIC_WRITE_FAILED = 1264;
+    private const CODE_FILE_CORRUPTED = 1268;
     private const CODE_FILE_LOCK_FAILED = 1265;
     private const CODE_DISK_SPACE_INSUFFICIENT = 1266;
-    private const CODE_PERMISSION_DENIED = 1267;
-    private const CODE_FILE_CORRUPTED = 1268;
+    private const CODE_DIRECTORY_CREATION_FAILED = 1262;
     private const CODE_DIRECTORY_NOT_EMPTY = 1269;
+    private const CODE_DIRECTORY_NOT_WRITABLE = 1270;
+    private const CODE_DIRECTORY_CLEAR_FAILED = 1271;
+    private const CODE_ATOMIC_WRITE_FAILED = 1264;
 
     public static function fileNotReadable(string $filename, ?\Throwable $previous = null): static
     {
@@ -38,6 +40,26 @@ final class FilesystemException extends AbstractException
             self::CODE_FILE_NOT_WRITABLE,
             'FILE_NOT_WRITABLE',
             "File is not writable: {$filename}",
+            $previous
+        );
+    }
+
+    public static function directoryClearFailed(string $directory, ?\Throwable $previous = null): static
+    {
+        return static::createException(
+            self::CODE_DIRECTORY_CLEAR_FAILED,
+            'DIRECTORY_CLEAR_FAILED',
+            "Failed to clear directory: {$directory}",
+            $previous
+        );
+    }
+
+    public static function directoryNotWritable(string $directory, ?\Throwable $previous = null): static
+    {
+        return static::createException(
+            self::CODE_DIRECTORY_NOT_WRITABLE,
+            'DIRECTORY_NOT_WRITABLE',
+            "Directory is not writable: {$directory}",
             $previous
         );
     }

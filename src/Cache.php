@@ -4,314 +4,240 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache;
 
-use KaririCode\Cache\Config\CacheConfig;
-use KaririCode\Cache\Contract\Cache as CacheContract;
-use KaririCode\Cache\Contract\CacheSerializer;
-use KaririCode\Cache\Contract\LayeredCache as LayeredCacheContract;
-use KaririCode\Cache\Exception\InvalidArgumentException;
+use KaririCode\Cache\Builder\CacheOperationBuilder;
+use KaririCode\Cache\Command\CommandExecutor;
+use KaririCode\Cache\Command\CommandFactory;
+use KaririCode\Cache\Contract\AdvancedCache;
+use KaririCode\Cache\Contract\Behavioral\Taggable;
+use KaririCode\Cache\Contract\Behavioral\TopicSubscribable;
+use KaririCode\Cache\Driver\LayeredDriver;
 use KaririCode\Cache\Metrics\CacheMetrics;
-use KaririCode\Cache\Operation\AdvancedCacheOperations;
-use KaririCode\Cache\Operation\BasicCacheOperations;
-use KaririCode\Cache\Operation\TaggedCacheOperations;
-use KaririCode\Cache\Operation\TopicCacheOperations;
-use KaririCode\Cache\Validation\Trait\UnifiedCacheValidationTrait;
-use KaririCode\Cache\ValueObject\Tag;
-use Psr\EventDispatcher\EventDispatcherInterface;
-use Psr\Log\LoggerInterface;
-use Psr\Log\NullLogger;
+use KaririCode\Cache\Service\EventService;
+use KaririCode\Cache\Service\HealthCheckService;
+use KaririCode\Cache\Service\LockService;
+use KaririCode\Cache\Service\MetricsService;
+use KaririCode\Cache\Service\SerializationService;
+use KaririCode\Cache\Service\ValidationService;
+use KaririCode\Contract\Logging\Logger;
+use KaririCode\Logging\SilentLogger;
 
 /**
- * A comprehensive cache component acting as a facade for various cache operations.
- * It follows the Single Responsibility Principle by delegating tasks to specialized
- * operation handlers, ensuring a clean and maintainable architecture.
- * This class implements the primary Cache contract.
+ * Main Cache Facade.
+ *
+ * Provides a simple, unified public API for interacting with the complex caching subsystem.
+ * It follows the Facade pattern, delegating all operations to specialized command
+ * objects, which are created by a factory and executed by an executor.
+ *
+ * @category  Cache
+ *
+ * @author    Walmir Silva <walmir.silva@kariricode.org>
+ * @license   MIT
+ *
+ * @see       https://kariricode.org/
  */
-final class Cache implements CacheContract
+final class Cache implements AdvancedCache, Taggable, TopicSubscribable
 {
-    use UnifiedCacheValidationTrait;
-
-    private readonly BasicCacheOperations $basicOperations;
-    private readonly TaggedCacheOperations $taggedOperations;
-    private readonly TopicCacheOperations $topicOperations;
-    private readonly AdvancedCacheOperations $advancedOperations;
+    private readonly CommandExecutor $commandExecutor;
+    private readonly CommandFactory $commandFactory;
 
     /**
-     * @param LayeredCacheContract $layeredCache the underlying layered cache pool
-     * @param CacheConfig $config the cache configuration
-     * @param CacheSerializer|null $serializer the serializer for cache values
-     * @param LoggerInterface|null $logger a PSR-3 logger
-     * @param EventDispatcherInterface|null $eventDispatcher a PSR-14 event dispatcher
+     * Constructor with dependency injection of all required services.
      */
     public function __construct(
-        LayeredCacheContract $layeredCache,
-        CacheConfig $config,
-        ?CacheSerializer $serializer = null,
-        ?LoggerInterface $logger = null,
-        ?EventDispatcherInterface $eventDispatcher = null,
-        private readonly string $name = 'default'
+        private readonly string $name,
+        private readonly LayeredDriver $driver,
+        // Services
+        private readonly ValidationService $validator,
+        private readonly SerializationService $serializer,
+        private readonly EventService $events,
+        private readonly MetricsService $metrics,
+        private readonly HealthCheckService $health,
+        private readonly LockService $locks,
+        private readonly Logger $logger = new SilentLogger()
     ) {
-        $logger = $logger ?? new NullLogger();
-
-        $this->basicOperations = new BasicCacheOperations(
-            $layeredCache,
-            $serializer,
-            $logger,
-            $eventDispatcher
-        );
-
-        $this->taggedOperations = new TaggedCacheOperations(
-            $layeredCache,
-            $logger,
-            $eventDispatcher
-        );
-
-        $this->topicOperations = new TopicCacheOperations(
-            $layeredCache,
-            $logger,
-            $eventDispatcher
-        );
-
-        $this->advancedOperations = new AdvancedCacheOperations(
-            $layeredCache,
-            $serializer,
-            $logger,
-            $eventDispatcher,
-            $config
+        $this->commandExecutor = new CommandExecutor($this->logger);
+        $this->commandFactory = new CommandFactory(
+            $this->driver,
+            $this->validator,
+            $this->serializer,
+            $this->events,
+            $this->metrics
         );
     }
 
-    // Basic Cache Operations (PSR-16)
+    // --- Fluent Interface ---
+
+    public function with(): CacheOperationBuilder
+    {
+        return new CacheOperationBuilder($this->commandFactory, $this->commandExecutor);
+    }
+
+    // --- Basic Operations (Delegated to Command Pattern) ---
 
     public function get(string $key, mixed $default = null): mixed
     {
-        $this->validateKey($key);
+        $command = $this->commandFactory->createGetCommand($key, $default);
 
-        return $this->basicOperations->get($key, $default);
+        return $this->commandExecutor->execute($command);
     }
 
-    public function set(string $key, mixed $value, \DateInterval|int|null $ttl = null): bool
+    public function set(string $key, mixed $value): bool
     {
-        $this->validateKey($key);
-        $this->validateTtl($ttl);
+        $command = $this->commandFactory->createSetCommand($key, $value);
 
-        return $this->basicOperations->set($key, $value, $ttl);
+        return $this->commandExecutor->execute($command);
     }
 
     public function delete(string $key): bool
     {
-        $this->validateKey($key);
+        $command = $this->commandFactory->createDeleteCommand($key);
 
-        return $this->basicOperations->delete($key);
+        return $this->commandExecutor->execute($command);
     }
 
     public function clear(): bool
     {
-        return $this->basicOperations->clear();
+        $command = $this->commandFactory->createClearCommand();
+
+        return $this->commandExecutor->execute($command);
     }
 
     public function has(string $key): bool
     {
-        $this->validateKey($key);
+        $command = $this->commandFactory->createHasCommand($key);
 
-        return $this->basicOperations->has($key);
+        return $this->commandExecutor->execute($command);
     }
 
-    public function getMultiple(iterable $keys, mixed $default = null): iterable
-    {
-        $keysArray = is_array($keys) ? $keys : iterator_to_array($keys);
-        $this->validateKeys($keysArray);
+    // --- Batch Operations (Delegated to Command Pattern) ---
 
-        return $this->basicOperations->getMultiple($keysArray, $default);
+    public function getMultiple(iterable $keys): iterable
+    {
+        $command = $this->commandFactory->createGetMultipleCommand($keys);
+
+        return $this->commandExecutor->execute($command);
     }
 
-    public function setMultiple(iterable $values, \DateInterval|int|null $ttl = null): bool
+    public function setMultiple(iterable $values): bool
     {
-        $this->validateKeyValuePairs($values);
-        $this->validateTtl($ttl);
+        $command = $this->commandFactory->createSetMultipleCommand($values);
 
-        return $this->basicOperations->setMultiple($values, $ttl);
+        return $this->commandExecutor->execute($command);
     }
 
     public function deleteMultiple(iterable $keys): bool
     {
-        $keysArray = is_array($keys) ? $keys : iterator_to_array($keys);
-        $this->validateKeys($keysArray);
+        $command = $this->commandFactory->createDeleteMultipleCommand($keys);
 
-        return $this->basicOperations->deleteMultiple($keysArray);
+        return $this->commandExecutor->execute($command);
     }
 
-    // Tagged Cache Operations
+    // --- Atomic Operations (Delegated to Command Pattern) ---
 
-    public function setWithTags(string $key, mixed $value, array $tags, \DateInterval|int|null $ttl = null): bool
+    public function increment(string $key, int $step = 1, int $initialValue = 0): int
     {
-        $this->validateKey($key);
-        $this->validateTags($tags);
-        $this->validateTtl($ttl);
+        $command = $this->commandFactory->createIncrementCommand($key, $step, $initialValue);
 
-        return $this->taggedOperations->setWithTags($key, $value, $tags, $ttl);
+        return $this->commandExecutor->execute($command);
     }
 
-    /**
-     * @param Tag[] $tags an array of Tag objects
-     *
-     * @return bool true if the tags were successfully invalidated, false otherwise
-     */
-    public function invalidateTags(array $tags): bool
+    public function decrement(string $key, int $step = 1, int $initialValue = 0): int
     {
-        $this->validateTags($tags);
+        $command = $this->commandFactory->createDecrementCommand($key, $step, $initialValue);
 
-        return $this->taggedOperations->invalidateTags($tags);
+        return $this->commandExecutor->execute($command);
     }
 
-    /**
-     * @param Tag[] $tags
-     */
-    public function getByTags(array $tags): array
+    public function add(string $key, mixed $value): bool
     {
-        $this->validateTags($tags);
+        $command = $this->commandFactory->createAddCommand($key, $value);
 
-        return $this->taggedOperations->getByTags($tags);
+        return $this->commandExecutor->execute($command);
     }
 
-    public function getTags(): array
+    public function compareAndSwap(string $key, mixed $expected, mixed $value): bool
     {
-        return $this->taggedOperations->getAllTags();
+        $command = $this->commandFactory->createCompareAndSwapCommand($key, $expected, $value);
+
+        return $this->commandExecutor->execute($command);
     }
 
-    // Topic Cache Operations
+    // --- Taggable Operations (Delegated to Command Pattern) ---
 
-    public function subscribeTo(string $key, array $topics): void
+    public function setWithTags(string $key, mixed $value, iterable $tags = []): bool
     {
-        $this->validateKey($key);
-        $this->validateTopics($topics);
-        $this->topicOperations->subscribeTo($key, $topics);
+        $command = $this->commandFactory->createSetWithTagsCommand($key, $value, $tags);
+
+        return $this->commandExecutor->execute($command);
     }
 
-    public function invalidateTopics(array $topics): bool
+    public function invalidateTags(iterable $tags): bool
     {
-        $this->validateTopics($topics);
+        $command = $this->commandFactory->createInvalidateTagsCommand($tags);
 
-        return $this->topicOperations->invalidateTopics($topics);
+        return $this->commandExecutor->execute($command);
     }
 
-    public function unsubscribeFrom(string $key, array $topics): void
+    public function getByTags(iterable $tags): iterable
     {
-        $this->validateKey($key);
-        $this->validateTopics($topics);
-        $this->topicOperations->unsubscribeFrom($key, $topics);
+        $command = $this->commandFactory->createGetByTagsCommand($tags);
+
+        return $this->commandExecutor->execute($command);
+    }
+
+    public function getTags(): iterable
+    {
+        return $this->driver->getTags();
+    }
+
+    // --- Topic Operations (Delegated to Driver) ---
+
+    public function subscribeTo(string $key, iterable $topics): void
+    {
+        $this->driver->subscribeTo($key, $topics);
+    }
+
+    public function unsubscribeFrom(string $key, iterable $topics): void
+    {
+        if (method_exists($this->driver, 'unsubscribeFrom')) {
+            $this->driver->unsubscribeFrom($key, $topics);
+        }
+    }
+
+    public function invalidateTopics(iterable $topics): bool
+    {
+        return $this->driver->invalidateTopics($topics);
     }
 
     public function getSubscribedTopics(string $key): array
     {
-        $this->validateKey($key);
-
-        return $this->topicOperations->getSubscribedTopics($key);
+        return $this->driver->getSubscribedTopics($key);
     }
 
     public function getSubscribersForTopic(string $topic): array
     {
-        return $this->topicOperations->getSubscribersForTopic($topic);
+        return $this->driver->getSubscribersForTopic($topic);
     }
 
-    // Advanced Cache Operations
-
-    public function getWithCallback(string $key, ?callable $callback = null, \DateInterval|int|null $ttl = null, array $tags = []): mixed
-    {
-        if (null === $callback) {
-            return $this->get($key);
-        }
-
-        $this->validateKey($key);
-        $this->validateTtl($ttl);
-        if (!empty($tags)) {
-            $this->validateTags($tags);
-        }
-
-        return $this->advancedOperations->getWithCallback($key, $callback, $ttl, $tags);
-    }
-
-    public function increment(string $key, int $step = 1, int $initialValue = 0, \DateInterval|int|null $ttl = null): int
-    {
-        $this->validateKey($key);
-        $this->validateTtl($ttl);
-
-        return $this->advancedOperations->increment($key, $step, $initialValue, $ttl);
-    }
-
-    public function decrement(string $key, int $step = 1, int $initialValue = 0, \DateInterval|int|null $ttl = null): int
-    {
-        $this->validateKey($key);
-        $this->validateTtl($ttl);
-
-        return $this->advancedOperations->decrement($key, $step, $initialValue, $ttl);
-    }
-
-    public function add(string $key, mixed $value, \DateInterval|int|null $ttl = null): bool
-    {
-        $this->validateKey($key);
-        $this->validateTtl($ttl);
-
-        return $this->advancedOperations->add($key, $value, $ttl);
-    }
-
-    public function compareAndSwap(string $key, mixed $expected, mixed $value, \DateInterval|int|null $ttl = null): bool
-    {
-        $this->validateKey($key);
-        $this->validateTtl($ttl);
-
-        return $this->advancedOperations->compareAndSwap($key, $expected, $value, $ttl);
-    }
-
-    public function warm(array $data, \DateInterval|int|null $ttl = null): void
-    {
-        $this->validateKeyValuePairs($data);
-        $this->validateTtl($ttl);
-        $this->advancedOperations->warmup($data, $ttl);
-    }
-
-    public function maintenance(array $options = []): bool
-    {
-        return $this->advancedOperations->maintenance($options);
-    }
-
-    public function getMetrics(): CacheMetrics
-    {
-        return $this->advancedOperations->getMetrics();
-    }
-
-    public function isHealthy(): bool
-    {
-        $healthCheck = $this->advancedOperations->getHealthCheck();
-
-        return ($healthCheck['status'] ?? 'unhealthy') === 'healthy';
-    }
+    // --- Metadata and Health ---
 
     public function getName(): string
     {
         return $this->name;
     }
 
-    private function validateTtl(\DateInterval|int|null $ttl): void
+    public function isHealthy(): bool
     {
-        if (null === $ttl) {
-            return;
-        }
-
-        if (is_int($ttl) && $ttl < 0) {
-            throw InvalidArgumentException::invalidTtl($ttl);
-        }
+        return $this->health->isHealthy();
     }
 
-    /**
-     * @param iterable<string, mixed> $values
-     */
-    private function validateKeyValuePairs(iterable $values): void
+    public function getMetrics(): CacheMetrics
     {
-        foreach ($values as $key => $value) {
-            if (!is_string($key)) {
-                throw InvalidArgumentException::invalidKeyFormat((string) $key);
-            }
-            $this->validateKey($key);
-        }
+        return new CacheMetrics($this->metrics->getMetrics());
+    }
+
+    public function getCapabilities(): array
+    {
+        return $this->driver->getCapabilities();
     }
 }

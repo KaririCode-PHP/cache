@@ -4,13 +4,8 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Driver;
 
-use KaririCode\Cache\Contract\AtomicCacheDriver;
-use KaririCode\Cache\Contract\Behavioral\CompareAndSwapAware;
-use KaririCode\Cache\Contract\Behavioral\Maintainable;
 use KaririCode\Cache\Contract\CacheCapabilities;
 use KaririCode\Cache\Contract\DriverStats;
-use KaririCode\Cache\Contract\TaggableCacheDriver;
-use KaririCode\Cache\Contract\TopicAwareCacheDriver;
 use KaririCode\Cache\Driver\Apcu\Component\ApcuMaintenanceService;
 use KaririCode\Cache\Driver\Apcu\Component\ApcuMonitoringService;
 use KaririCode\Cache\Driver\Apcu\Operation\ApcuAtomicOperations;
@@ -18,22 +13,32 @@ use KaririCode\Cache\Driver\Apcu\Operation\ApcuBatchOperations;
 use KaririCode\Cache\Driver\Apcu\Operation\ApcuCrudOperations;
 use KaririCode\Cache\Driver\Apcu\Operation\ApcuTagOperations;
 use KaririCode\Cache\Driver\Apcu\Operation\ApcuTopicOperations;
-use KaririCode\Cache\Validation\Trait\ExpirationManagementTrait;
 
 /**
- * Acts as a Facade for all APCu operations.
+ * Acts as a pure Facade for all APCu operations.
+ *
  * Its single responsibility is to delegate cache operations to the specialized
- * handler classes it is composed of, following SRP and Dependency Injection.
+ * handler classes it is composed of. It does not contain any business logic,
+ * adhering strictly to the Facade and Single Responsibility principles.
+ *
+ * @category  Cache
+ *
+ * @author    Walmir Silva <walmir.silva@kariricode.org>
+ * @license   MIT
+ *
+ * @see       https://kariricode.org/
  */
-final class ApcuDriver implements
-    AtomicCacheDriver,
-    TaggableCacheDriver,
-    TopicAwareCacheDriver,
-    CompareAndSwapAware,
-    Maintainable
+final class ApcuDriver
 {
-    use ExpirationManagementTrait;
-
+    /**
+     * @param ApcuCrudOperations $crudOperations handles basic get/set/delete operations
+     * @param ApcuBatchOperations $batchOperations handles multi-key operations
+     * @param ApcuAtomicOperations $atomicOperations handles increment/decrement/add operations
+     * @param ApcuTagOperations $tagOperations handles tag-based operations
+     * @param ApcuTopicOperations $topicOperations handles topic-based invalidation
+     * @param ApcuMonitoringService $monitoringService provides driver statistics
+     * @param ApcuMaintenanceService $maintenanceService handles cleanup tasks
+     */
     public function __construct(
         private readonly ApcuCrudOperations $crudOperations,
         private readonly ApcuBatchOperations $batchOperations,
@@ -45,16 +50,17 @@ final class ApcuDriver implements
     ) {
     }
 
-    // --- Basic CRUD Operations ---
+    // --- Basic CRUD Operations (Delegated) ---
 
     public function get(string $key): mixed
     {
         return $this->crudOperations->get($key);
     }
 
-    public function set(string $key, mixed $value, ?\DateTimeInterface $expiration = null): bool
+    public function set(string $key, mixed $value): bool
     {
-        return $this->crudOperations->set($key, $value, $expiration);
+        // The responsibility of handling TTL is now inside ApcuCrudOperations.
+        return $this->crudOperations->set($key, $value);
     }
 
     public function has(string $key): bool
@@ -72,105 +78,93 @@ final class ApcuDriver implements
         return $this->crudOperations->clear();
     }
 
-    // --- Batch Operations ---
+    // --- Batch Operations (Delegated) ---
 
-    public function getMultiple(array $keys): array
+    public function getMultiple(iterable $keys): iterable
     {
         return $this->batchOperations->getMultiple($keys);
     }
 
-    public function setMultiple(array $values, ?\DateTimeInterface $expiration = null): bool
+    public function setMultiple(iterable $values): bool
     {
-        return $this->batchOperations->setMultiple($values, $expiration);
+        // The responsibility of handling TTL is now inside ApcuBatchOperations.
+        return $this->batchOperations->setMultiple($values);
     }
 
-    public function deleteMultiple(array $keys): bool
+    public function deleteMultiple(iterable $keys): bool
     {
         return $this->batchOperations->deleteMultiple($keys);
     }
 
-    // --- Atomic Operations ---
+    // --- Atomic Operations (Delegated) ---
 
-    public function increment(string $key, int $step = 1, int $initialValue = 0, \DateInterval|int|null $ttl = null): int
+    public function increment(string $key, int $step = 1, int $initialValue = 0): int
     {
-        // APCu's native increment does not support custom TTLs or initial values in the same atomic operation.
-        // The handler simulates this behavior.
-        return $this->atomicOperations->increment($key, $step);
+        return $this->atomicOperations->increment($key, $step, $initialValue);
     }
 
-    public function add(string $key, mixed $value, \DateInterval|int|null $ttl = null): bool
+    public function decrement(string $key, int $step = 1, int $initialValue = 0): int
     {
-        $expiration = $this->calculateExpiration($ttl);
-
-        return $this->atomicOperations->add($key, $value, $expiration);
+        return $this->atomicOperations->decrement($key, $step, $initialValue);
     }
 
-    // --- Compare and Swap ---
-
-    public function compareAndSwap(string $key, mixed $expected, mixed $value, \DateInterval|int|null $ttl = null): bool
+    public function add(string $key, mixed $value): bool
     {
-        $expiration = $this->calculateExpiration($ttl);
-
-        return $this->atomicOperations->compareAndSwap($key, $expected, $value, $expiration);
+        return $this->atomicOperations->add($key, $value);
     }
 
-    // --- Tag Operations ---
+    // --- Compare and Swap (Delegated) ---
 
-    public function setWithTags(
-        string $key,
-        mixed $value,
-        array $tags,
-        \DateInterval|int|null $ttl = null
-    ): bool {
-        $expiration = $this->calculateExpiration($ttl);
-
-        return $this->tagOperations->setWithTags($key, $value, $tags, $expiration);
+    public function compareAndSwap(string $key, mixed $expected, mixed $value): bool
+    {
+        return $this->atomicOperations->compareAndSwap($key, $expected, $value);
     }
 
-    public function invalidateTags(array $tags): bool
+    // --- Tag Operations (Delegated) ---
+
+    public function setWithTags(string $key, mixed $value, iterable $tags): bool
+    {
+        return $this->tagOperations->setWithTags($key, $value, $tags);
+    }
+
+    public function invalidateTags(iterable $tags): bool
     {
         return $this->tagOperations->invalidateTags($tags);
     }
 
-    public function getByTags(array $tags): array
+    public function getByTags(iterable $tags): iterable
     {
-        $allKeys = [];
-        foreach ($tags as $tag) {
-            $taggedKeys = $this->tagOperations->getTaggedKeys((string) $tag);
-            $allKeys = array_merge($allKeys, $taggedKeys);
-        }
-
-        $uniqueKeys = array_unique($allKeys);
-        if (empty($uniqueKeys)) {
-            return [];
-        }
-
-        return $this->batchOperations->getMultiple($uniqueKeys);
+        return $this->tagOperations->getByTags($tags);
     }
 
-    public function getTags(): array
+    public function getTags(): iterable
     {
-        return $this->tagOperations->getAllTags();
+        return $this->tagOperations->getTags();
     }
 
-    // --- Topic Operations ---
+    // --- Topic Operations (Delegated) ---
 
-    public function subscribeTo(string $key, array $topics): void
+    public function subscribeTo(string $key, iterable $topics): void
     {
         $this->topicOperations->subscribeTo($key, $topics);
     }
 
-    public function invalidateTopics(array $topics): bool
+    public function invalidateTopics(iterable $topics): bool
     {
         return $this->topicOperations->invalidateTopics($topics);
     }
 
-    public function maintenance(array $options = []): bool
+    public function getSubscribedTopics(string $key): array
     {
-        return $this->maintenanceService->perform($options);
+        return $this->topicOperations->getSubscribedTopics($key);
     }
 
-    // --- Statistics, Capabilities, and Maintenance ---
+    public function getSubscribersForTopic(string $topic): array
+    {
+        return $this->topicOperations->getSubscribersForTopic($topic);
+    }
+
+    // --- Statistics, Capabilities, and Maintenance (Delegated) ---
 
     public function getStats(): DriverStats
     {
@@ -181,8 +175,14 @@ final class ApcuDriver implements
     {
         return [
             CacheCapabilities::ATOMIC_OPERATIONS,
-            CacheCapabilities::TAGGING,
-            CacheCapabilities::TOPICS,
+            CacheCapabilities::TAGGING_OPERATIONS,
+            CacheCapabilities::TOPICS_OPERATIONS,
+            CacheCapabilities::MAINTENANCE_OPERATIONS,
         ];
+    }
+
+    public function maintenance(array $options = []): bool
+    {
+        return $this->maintenanceService->perform($options);
     }
 }

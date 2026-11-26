@@ -5,11 +5,12 @@ declare(strict_types=1);
 namespace KaririCode\Cache\Driver\Factory;
 
 use KaririCode\Cache\Contract\CacheDriver;
-use KaririCode\Cache\Contract\CacheDriverFactory;
 use KaririCode\Cache\Contract\DriverManager;
+use KaririCode\Cache\Contract\Provider\ExpirationProvider;
 use KaririCode\Cache\Driver\Redis\Component\RedisConnectionManager;
 use KaririCode\Cache\Driver\Redis\Component\RedisErrorHandler;
 use KaririCode\Cache\Driver\Redis\Component\RedisLuaScriptManager;
+use KaririCode\Cache\Driver\Redis\Component\RedisMaintenanceService;
 use KaririCode\Cache\Driver\Redis\Component\RedisMonitoringService;
 use KaririCode\Cache\Driver\Redis\Config\RedisConfig;
 use KaririCode\Cache\Driver\Redis\Operation\RedisAtomicOperations;
@@ -19,204 +20,199 @@ use KaririCode\Cache\Driver\Redis\Operation\RedisTagOperations;
 use KaririCode\Cache\Driver\Redis\Operation\RedisTopicOperations;
 use KaririCode\Cache\Driver\RedisDriver;
 use KaririCode\Cache\Exception\ConfigurationException;
-use KaririCode\Cache\Serializer\IgbinarySerializer;
-use Psr\Log\LoggerInterface;
-use Psr\Log\NullLogger;
+use KaririCode\Contract\Logging\Logger;
 
 /**
- * Factory for creating a fully-configured RedisDriver with all its dependencies.
- * This class follows the Factory pattern and SRP by encapsulating the entire
- * object creation and composition logic.
+ * Factory for creating a fully-configured RedisDriver.
  *
- * @see https://redis.io/documentation Redis Documentation
- * @see https://github.com/phpredis/phpredis PHPRedis Extension
+ * This factory handles the complex creation of a RedisDriver with all its
+ * dependencies properly configured. It composes the final driver object from
+ * specialized operation handlers and core components.
+ *
+ * It adheres to the AbstractDriverFactory contract, expecting a pre-configured
+ * ExpirationProvider to be passed in, ensuring consistent TTL management.
+ *
+ * @category  Cache
+ *
+ * @author    Walmir Silva <walmir.silva@kariricode.org>
+ * @license   MIT
+ *
+ * @see       https://kariricode.org/
  */
-final class RedisDriverFactory implements CacheDriverFactory
+final class RedisDriverFactory extends AbstractDriverFactory
 {
     private const REQUIRED_EXTENSION = 'redis';
-    private const DEFAULT_TIMEOUT = 2.0;
-    private const DEFAULT_READ_TIMEOUT = 2.0;
-    private const MIN_PORT = 1;
-    private const MAX_PORT = 65535;
-    private const CONNECTION_RETRY_ATTEMPTS = 3;
-    private const CONNECTION_RETRY_DELAY = 0.1;
 
-    public function createDriver(array $options, DriverManager $manager): CacheDriver
-    {
-        $this->validateExtension();
-        $this->validateOptions($options);
+    /**
+     * Creates the RedisDriver instance.
+     *
+     * Assembles the RedisDriver by creating and injecting all its dependencies,
+     * such as the Redis client, connection manager, and various operation handlers.
+     *
+     * @param array<string, mixed> $options the validated driver configuration
+     * @param DriverManager $manager the driver manager for resolving shared dependencies
+     * @param ExpirationProvider $expirationProvider the centrally configured expiration provider
+     * @param Logger $logger the logger instance
+     *
+     * @return CacheDriver the fully configured RedisDriver instance
+     */
+    protected function doCreateDriver(
+        array $options,
+        DriverManager $manager,
+        ExpirationProvider $expirationProvider,
+        Logger $logger
+    ): CacheDriver {
+        $config = RedisConfig::fromArray($options);
 
+        // Build Core Components
         $redis = new \Redis();
-        $logger = $this->resolveLogger($options, $manager);
-
-        $config = RedisConfig::fromArray($options + $this->getDefaultOptions());
-        $config->validate();
-
         $errorHandler = new RedisErrorHandler($logger, $config);
         $connectionManager = new RedisConnectionManager($redis, $config, $logger);
         $luaScriptManager = new RedisLuaScriptManager($redis);
+        $monitoringService = new RedisMonitoringService($redis, $logger);
+        $maintenanceService = new RedisMaintenanceService($redis, $config, $logger);
 
-        // Pass the manager to the configuration method to inspect the serializer.
+        // Configure the Redis instance itself
         $this->configureRedisInstance($redis, $config, $connectionManager, $manager);
 
-        $crudOperations = new RedisCrudOperations($redis, $config, $errorHandler, $connectionManager);
-        $batchOperations = new RedisBatchOperations($redis, $config, $errorHandler, $connectionManager);
-        $atomicOperations = new RedisAtomicOperations($redis, $config, $errorHandler, $connectionManager, $luaScriptManager);
-        $tagOperations = new RedisTagOperations($redis, $config, $errorHandler, $connectionManager);
-        $topicOperations = new RedisTopicOperations($redis, $config, $errorHandler, $connectionManager);
-        $monitoringService = new RedisMonitoringService($redis, $logger);
+        // Build Operation Handlers, injecting the ExpirationProvider
+        $crudOperations = new RedisCrudOperations(
+            $redis,
+            $config,
+            $errorHandler,
+            $connectionManager,
+            $monitoringService,
+            $expirationProvider
+        );
 
+        $batchOperations = new RedisBatchOperations(
+            $redis,
+            $config,
+            $errorHandler,
+            $connectionManager,
+            $expirationProvider
+        );
+
+        $atomicOperations = new RedisAtomicOperations(
+            $redis,
+            $config,
+            $errorHandler,
+            $connectionManager,
+            $luaScriptManager,
+            $expirationProvider
+        );
+
+        $tagOperations = new RedisTagOperations(
+            $redis,
+            $config,
+            $errorHandler,
+            $connectionManager,
+            $expirationProvider // Assuming Lua is not needed here based on previous code
+        );
+
+        $topicOperations = new RedisTopicOperations(
+            $redis,
+            $config,
+            $errorHandler,
+            $connectionManager
+            // Note: TopicOperations for Redis might not need expiration provider. Pass it if needed.
+        );
+
+        // Assemble the final driver
         return new RedisDriver(
             $crudOperations,
             $batchOperations,
             $atomicOperations,
             $tagOperations,
             $topicOperations,
+            $maintenanceService,
             $monitoringService,
-            $connectionManager
+            $connectionManager,
+            $config,
+            $logger
         );
     }
 
-    public function getSupportedOptions(): array
+    /**
+     * Returns the unique name of the driver.
+     *
+     * @return string the driver's name
+     */
+    protected function getDriverName(): string
     {
-        return [
-            'host', 'port', 'password', 'username', 'database',
-            'timeout', 'read_timeout', 'persistent', 'persistent_id',
-            'compression', 'serializer', 'retry_attempts', 'retry_delay',
-            'scan_batch_size', 'pipeline_ops', 'key_prefix', 'tag_prefix',
-            'topic_prefix', 'cluster_mode', 'sentinel_mode', 'max_connections',
-            'logger', 'connection', 'ssl_context',
-        ];
+        return 'redis';
     }
 
-    public function validateOptions(array $options): bool
+    /**
+     * Specifies the configuration options required for this driver.
+     *
+     * @return array<string> a list of required option keys
+     */
+    protected function getRequiredOptions(): array
     {
-        $this->validateRequiredOptions($options);
-        $this->validateConnectionOptions($options);
-        $this->validateOptionalOptions($options);
-        $this->validateSecurityOptions($options);
+        return ['host'];
+    }
+
+    /**
+     * Performs driver-specific validation of the provided options.
+     *
+     * @param array<string, mixed> $options the options to validate
+     *
+     * @return bool true if the options are valid
+     */
+    protected function doValidateOptions(array $options): bool
+    {
+        // Validation is handled by the RedisConfig DTO.
+        RedisConfig::fromArray($options);
 
         return true;
     }
 
-    private function validateExtension(): void
+    /**
+     * Validates the runtime environment prerequisites for the Redis driver.
+     *
+     * @throws ConfigurationException if the required 'redis' extension is not loaded or is outdated
+     */
+    protected function validatePrerequisites(): void
     {
-        if (!extension_loaded(self::REQUIRED_EXTENSION)) {
-            throw ConfigurationException::missingExtension(self::REQUIRED_EXTENSION);
-        }
-    }
+        $this->validateExtension(self::REQUIRED_EXTENSION);
 
-    private function resolveLogger(array $options, DriverManager $manager): LoggerInterface
-    {
-        if (isset($options['logger']) && $options['logger'] instanceof LoggerInterface) {
-            return $options['logger'];
+        $version = phpversion('redis');
+        if ($version && version_compare($version, '5.0.0', '<')) {
+            throw ConfigurationException::invalidConfiguration('redis', 'Redis extension version 5.0.0 or higher is required');
         }
-
-        return new NullLogger();
     }
 
     /**
-     * @return array<string, mixed>
+     * Configures the \Redis instance with options from the config DTO.
+     *
+     * @param \Redis $redis the Redis client instance
+     * @param RedisConfig $config the configuration DTO
+     * @param RedisConnectionManager $connectionManager the connection manager
+     * @param DriverManager $manager the main driver manager
      */
-    private function getDefaultOptions(): array
-    {
-        return [
-            'host' => 'localhost',
-            'port' => 6379,
-            'timeout' => self::DEFAULT_TIMEOUT,
-            'read_timeout' => self::DEFAULT_READ_TIMEOUT,
-            'retry_attempts' => self::CONNECTION_RETRY_ATTEMPTS,
-            'retry_delay' => self::CONNECTION_RETRY_DELAY,
-            'persistent' => false,
-            'database' => 0,
-            'compression' => false,
-            'serializer' => 'php',
-            'scan_batch_size' => 500,
-            'pipeline_ops' => true,
-        ];
-    }
-
-    private function validateRequiredOptions(array $options): void
-    {
-        if (!isset($options['host']) || !is_string($options['host']) || '' === trim($options['host'])) {
-            throw ConfigurationException::invalidConfiguration('host', 'Required option is missing or empty');
-        }
-    }
-
-    private function validateConnectionOptions(array $options): void
-    {
-        if (isset($options['port'])) {
-            $port = (int) $options['port'];
-            if ($port < self::MIN_PORT || $port > self::MAX_PORT) {
-                throw ConfigurationException::invalidPort($port, self::MIN_PORT, self::MAX_PORT);
-            }
-        }
-
-        $timeoutOptions = ['timeout', 'read_timeout'];
-        foreach ($timeoutOptions as $option) {
-            if (isset($options[$option]) && is_numeric($options[$option])) {
-                $timeout = (float) $options[$option];
-                if ($timeout <= 0) {
-                    throw ConfigurationException::invalidConfiguration($option, 'Timeout must be a positive number');
-                }
-            }
-        }
-
-        if (!empty($options['persistent']) && empty($options['persistent_id'])) {
-            throw ConfigurationException::invalidConfiguration('persistent_id', 'Persistent ID is required for persistent connections');
-        }
-    }
-
-    private function validateOptionalOptions(array $options): void
-    {
-        if (isset($options['database'])) {
-            $database = (int) $options['database'];
-            if ($database < 0 || $database > 15) {
-                throw ConfigurationException::invalidConfiguration('database', 'Database must be between 0 and 15');
-            }
-        }
-
-        if (isset($options['serializer']) && is_string($options['serializer'])) {
-            if (!in_array($options['serializer'], ['php', 'igbinary', 'json'], true)) {
-                throw ConfigurationException::invalidConfiguration('serializer', 'Serializer must be one of: php, igbinary, json');
-            }
-        }
-    }
-
-    private function validateSecurityOptions(array $options): void
-    {
-        if (isset($options['password']) && !is_string($options['password'])) {
-            throw ConfigurationException::invalidConfiguration('password', 'Password must be a string');
-        }
-
-        if (isset($options['ssl_context']) && !is_array($options['ssl_context'])) {
-            throw ConfigurationException::invalidConfiguration('ssl_context', 'SSL context must be an array');
-        }
-    }
-
     private function configureRedisInstance(
         \Redis $redis,
         RedisConfig $config,
         RedisConnectionManager $connectionManager,
         DriverManager $manager
     ): void {
-        try {
-            $phpSerializer = $manager->getSerializer();
-            $serializerOption = \Redis::SERIALIZER_PHP; // Default
+        $connectionManager->ensureConnection();
 
-            if ($phpSerializer instanceof IgbinarySerializer) {
-                $serializerOption = \Redis::SERIALIZER_IGBINARY;
+        $serializer = $this->resolveSerializer([], $manager);
+        if (null !== $serializer) {
+            // Configure Redis serialization based on our serializer
+            if (str_contains(get_class($serializer), 'Igbinary')) {
+                $redis->setOption(\Redis::OPT_SERIALIZER, \Redis::SERIALIZER_IGBINARY);
+            } else {
+                $redis->setOption(\Redis::OPT_SERIALIZER, \Redis::SERIALIZER_PHP);
             }
-
-            $redis->setOption(\Redis::OPT_SERIALIZER, $serializerOption);
-
-            $connectionManager->ensureConnection();
-
-            if ($config->readTimeout > 0) {
-                $redis->setOption(\Redis::OPT_READ_TIMEOUT, $config->readTimeout);
-            }
-        } catch (\RedisException $e) {
-            throw ConfigurationException::invalidConfiguration('redis_configuration', 'Failed to configure Redis instance: ' . $e->getMessage());
         }
+
+        if (!empty($config->keyPrefix)) {
+            $redis->setOption(\Redis::OPT_PREFIX, $config->keyPrefix);
+        }
+
+        $redis->setOption(\Redis::OPT_SCAN, \Redis::SCAN_RETRY);
     }
 }

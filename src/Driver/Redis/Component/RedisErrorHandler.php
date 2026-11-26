@@ -6,7 +6,7 @@ namespace KaririCode\Cache\Driver\Redis\Component;
 
 use KaririCode\Cache\Driver\Redis\Config\RedisConfig;
 use KaririCode\Cache\Exception\CacheException;
-use Psr\Log\LoggerInterface;
+use KaririCode\Contract\Logging\Logger;
 
 /**
  * Centralized error handling and retry logic.
@@ -15,7 +15,7 @@ use Psr\Log\LoggerInterface;
 final class RedisErrorHandler
 {
     public function __construct(
-        private LoggerInterface $logger,
+        private Logger $logger,
         private RedisConfig $config
     ) {
     }

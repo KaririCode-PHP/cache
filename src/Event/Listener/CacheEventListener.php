@@ -5,12 +5,13 @@ declare(strict_types=1);
 namespace KaririCode\Cache\Event\Listener;
 
 use KaririCode\Cache\Contract\CacheEventListener as CacheEventListenerContract;
+use KaririCode\Cache\Contract\Structural\EventDispatcherAware;
 use Psr\EventDispatcher\EventDispatcherInterface;
 
 /**
  * Event listener for cache operations with logging and metrics.
  */
-final class CacheEventListener implements CacheEventListenerContract
+final class CacheEventListener implements CacheEventListenerContract, EventDispatcherAware
 {
     /**
      * @var array<int, array{type: string, key: string, timestamp: float, data: array<mixed>}>
@@ -18,16 +19,21 @@ final class CacheEventListener implements CacheEventListenerContract
     private array $events = [];
 
     private int $maxEvents = 1000;
-    private ?EventDispatcherInterface $eventDispatcher = null;
+    private EventDispatcherInterface $eventDispatcher;
 
-    public function setEventDispatcher(?EventDispatcherInterface $eventDispatcher): void
+    public function setEventDispatcher(EventDispatcherInterface $eventDispatcher): void
     {
         $this->eventDispatcher = $eventDispatcher;
     }
 
-    public function getEventDispatcher(): ?EventDispatcherInterface
+    public function getEventDispatcher(): EventDispatcherInterface
     {
         return $this->eventDispatcher;
+    }
+
+    public function hasEventDispatcher(): bool
+    {
+        return null !== $this->eventDispatcher;
     }
 
     public function onCacheHit(string $key, mixed $value): void

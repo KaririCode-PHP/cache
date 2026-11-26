@@ -4,34 +4,44 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Driver;
 
-use KaririCode\Cache\Contract\AtomicCacheDriver;
-use KaririCode\Cache\Contract\Behavioral\CompareAndSwapAware;
 use KaririCode\Cache\Contract\CacheCapabilities;
+use KaririCode\Cache\Contract\CacheDriver;
 use KaririCode\Cache\Contract\DriverStats;
-use KaririCode\Cache\Contract\TaggableCacheDriver;
-use KaririCode\Cache\Contract\TopicAwareCacheDriver;
 use KaririCode\Cache\Driver\Redis\Component\RedisConnectionManager;
+use KaririCode\Cache\Driver\Redis\Component\RedisMaintenanceService;
 use KaririCode\Cache\Driver\Redis\Component\RedisMonitoringService;
 use KaririCode\Cache\Driver\Redis\Operation\RedisAtomicOperations;
 use KaririCode\Cache\Driver\Redis\Operation\RedisBatchOperations;
 use KaririCode\Cache\Driver\Redis\Operation\RedisCrudOperations;
 use KaririCode\Cache\Driver\Redis\Operation\RedisTagOperations;
 use KaririCode\Cache\Driver\Redis\Operation\RedisTopicOperations;
-use KaririCode\Cache\ValueObject\Tag;
+use KaririCode\Cache\Item\CacheItem;
 
 /**
- * Acts as a Facade for all Redis operations.
+ * Acts as a pure Facade for all Redis operations.
+ *
  * Its single responsibility is to delegate cache operations to the specialized
- * handler classes it is composed of, following SRP and Dependency Injection.
+ * handler classes it is composed of. It does not contain any business logic,
+ * adhering strictly to the Facade and Single Responsibility principles.
+ *
+ * @category  Cache
+ *
+ * @author    Walmir Silva <walmir.silva@kariricode.org>
+ * @license   MIT
+ *
+ * @see       https://kariricode.org/
  */
-final class RedisDriver implements
-    AtomicCacheDriver,
-    TopicAwareCacheDriver,
-    TaggableCacheDriver,
-    CompareAndSwapAware
+final class RedisDriver implements CacheDriver
 {
     /**
-     * Receives pre-configured components to delegate operations to.
+     * @param RedisCrudOperations $crudOperations handles basic get/set/delete operations
+     * @param RedisBatchOperations $batchOperations handles multi-key operations
+     * @param RedisAtomicOperations $atomicOperations handles increment/decrement/add operations
+     * @param RedisTagOperations $tagOperations handles tag-based operations
+     * @param RedisTopicOperations $topicOperations handles topic-based invalidation
+     * @param RedisMaintenanceService $maintenanceService handles cleanup and maintenance tasks
+     * @param RedisMonitoringService $monitoringService provides driver statistics
+     * @param RedisConnectionManager $connectionManager manages the connection lifecycle
      */
     public function __construct(
         private readonly RedisCrudOperations $crudOperations,
@@ -39,21 +49,23 @@ final class RedisDriver implements
         private readonly RedisAtomicOperations $atomicOperations,
         private readonly RedisTagOperations $tagOperations,
         private readonly RedisTopicOperations $topicOperations,
+        private readonly RedisMaintenanceService $maintenanceService,
         private readonly RedisMonitoringService $monitoringService,
         private readonly RedisConnectionManager $connectionManager
     ) {
     }
 
-    // --- Basic CRUD Operations ---
+    // --- Basic CRUD Operations (Delegated) ---
 
     public function get(string $key): mixed
     {
         return $this->crudOperations->get($key);
     }
 
-    public function set(string $key, mixed $value, ?\DateTimeInterface $expiration = null): bool
+    public function set(string $key, mixed $value): bool
     {
-        return $this->crudOperations->set($key, $value, $expiration);
+        // The responsibility of handling TTL is now inside RedisCrudOperations.
+        return $this->crudOperations->set($key, $value);
     }
 
     public function has(string $key): bool
@@ -71,120 +83,166 @@ final class RedisDriver implements
         return $this->crudOperations->clear();
     }
 
-    // --- Batch Operations ---
+    // --- Batch Operations (Delegated) ---
 
-    public function getMultiple(array $keys): array
+    public function getMultiple(iterable $keys): iterable
     {
         return $this->batchOperations->getMultiple($keys);
     }
 
-    public function setMultiple(array $values, ?\DateTimeInterface $expiration = null): bool
+    public function setMultiple(iterable $values): bool
     {
-        return $this->batchOperations->setMultiple($values, $expiration);
+        // The responsibility of handling TTL is now inside RedisBatchOperations.
+        return $this->batchOperations->setMultiple($values);
     }
 
-    public function deleteMultiple(array $keys): bool
+    public function deleteMultiple(iterable $keys): bool
     {
         return $this->batchOperations->deleteMultiple($keys);
     }
 
-    // --- Atomic Operations ---
-
-    public function increment(string $key, int $step = 1, int $initialValue = 0, \DateInterval|int|null $ttl = null): int
+    public function getItem(string $key): \Psr\Cache\CacheItemInterface
     {
-        return $this->atomicOperations->increment($key, $step, $initialValue, $ttl);
+        $value = $this->crudOperations->get($key);
+
+        return new CacheItem($key, $value, null !== $value);
     }
 
-    public function add(string $key, mixed $value, \DateInterval|int|null $ttl = null): bool
+    public function getItems(iterable $keys = []): iterable
     {
-        return $this->atomicOperations->add($key, $value, $ttl);
+        $items = [];
+        foreach ($keys as $key) {
+            $items[$key] = $this->getItem($key);
+        }
+
+        return $items;
     }
 
-    public function compareAndSwap(string $key, mixed $expected, mixed $value, \DateInterval|int|null $ttl = null): bool
+    public function hasItem(string $key): bool
     {
-        return $this->atomicOperations->compareAndSwap($key, $expected, $value, $ttl);
+        return $this->crudOperations->has($key);
     }
 
-    // --- Tagging Operations ---
-
-    /**
-     * Sets a cache item with associated tags.
-     *
-     * @param string $key the cache item key
-     * @param mixed $value the value to store in the cache
-     * @param Tag[] $tags the tags to associate with the cache item
-     * @param \DateInterval|int|null $ttl the time-to-live for the cache item, or null for no expiration
-     *
-     * @return bool true on success, false on failure
-     */
-    public function setWithTags(string $key, mixed $value, array $tags, \DateInterval|int|null $ttl = null): bool
+    public function deleteItem(string $key): bool
     {
-        return $this->tagOperations->setWithTags($key, $value, $tags, $ttl);
+        return $this->crudOperations->delete($key);
     }
 
-    /**
-     * Invalidates all cache items associated with one or more specified tags.
-     *
-     * @param Tag[] $tags the tags to invalidate
-     *
-     * @return bool true on success, false on failure
-     */
-    public function invalidateTags(array $tags): bool
+    public function deleteItems(array $keys): bool
     {
-        return $this->tagOperations->invalidateTags($tags);
+        return $this->batchOperations->deleteMultiple($keys);
     }
 
-    /**
-     * @param Tag[] $tags an array of Tag objects
-     *
-     * @return array <string, mixed> an array of cache items indexed by their keys
-     */
-    public function getByTags(array $tags): array
+    public function save(\Psr\Cache\CacheItemInterface $item): bool
+    {
+        return $this->crudOperations->set($item->getKey(), $item->get());
+    }
+
+    // --- Atomic Operations (Delegated) ---
+
+    public function increment(string $key, int $step = 1, int $initialValue = 0): int
+    {
+        return $this->atomicOperations->increment($key, $step, $initialValue);
+    }
+
+    public function decrement(string $key, int $step = 1, int $initialValue = 0): int
+    {
+        return $this->atomicOperations->decrement($key, $step, $initialValue);
+    }
+
+    public function add(string $key, mixed $value): bool
+    {
+        return $this->atomicOperations->add($key, $value);
+    }
+
+    // --- Compare and Swap (Delegated) ---
+
+    public function compareAndSwap(string $key, mixed $expected, mixed $value): bool
+    {
+        return $this->atomicOperations->compareAndSwap($key, $expected, $value);
+    }
+
+    // --- Tag Operations (Delegated) ---
+
+    public function setWithTags(string $key, mixed $value, iterable $tags): bool
+    {
+        return $this->tagOperations->setWithTags($key, $value, $tags);
+    }
+
+    public function getByTags(iterable $tags): iterable
     {
         return $this->tagOperations->getByTags($tags);
     }
 
-    public function getTags(): array
+    public function invalidateTags(iterable $tags): bool
+    {
+        return $this->tagOperations->invalidateTags($tags);
+    }
+
+    public function getTags(): iterable
     {
         return $this->tagOperations->getTags();
     }
 
-    // --- Topic Operations ---
+    // --- Topic Operations (Delegated) ---
 
-    public function subscribeTo(string $key, array $topics): void
+    public function subscribeTo(string $key, iterable $topics): void
     {
         $this->topicOperations->subscribeTo($key, $topics);
     }
 
-    public function invalidateTopics(array $topics): bool
+    public function invalidateTopics(iterable $topics): bool
     {
         return $this->topicOperations->invalidateTopics($topics);
     }
 
-    // --- Monitoring & Management ---
-
-    public function getCapabilities(): array
+    public function getSubscribedTopics(string $key): array
     {
-        return [
-            CacheCapabilities::ATOMIC_OPERATIONS,
-            CacheCapabilities::TAGGING,
-            CacheCapabilities::TOPICS,
-            CacheCapabilities::TRANSACTIONS,
-        ];
+        return $this->topicOperations->getSubscribedTopics($key);
     }
+
+    public function getSubscribersForTopic(string $topic): array
+    {
+        return $this->topicOperations->getSubscribersForTopic($topic);
+    }
+
+    // --- Statistics, Capabilities, and Maintenance (Delegated) ---
 
     public function getStats(): DriverStats
     {
         return $this->monitoringService->getStats();
     }
 
-    public function isHealthy(): bool
+    public function saveDeferred(\Psr\Cache\CacheItemInterface $item): bool
     {
-        return $this->connectionManager->isHealthy();
+        // Redis driver doesn't inherently support deferred saving.
+        // We'll save immediately, effectively making saveDeferred behave like save.
+        return $this->save($item);
+    }
+
+    public function commit(): bool
+    {
+        // No deferred operations to commit for the Redis driver.
+        return true;
+    }
+
+    public function getCapabilities(): array
+    {
+        return [
+            CacheCapabilities::ATOMIC_OPERATIONS,
+            CacheCapabilities::TAGGING_OPERATIONS,
+            CacheCapabilities::TOPICS_OPERATIONS,
+            CacheCapabilities::MAINTENANCE_OPERATIONS,
+        ];
     }
 
     public function maintenance(array $options = []): bool
     {
-        return $this->monitoringService->performMaintenance($options);
+        return $this->maintenanceService->perform($options);
+    }
+
+    public function isConnected(): bool
+    {
+        return $this->connectionManager->isHealthy();
     }
 }

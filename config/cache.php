@@ -1,394 +1,339 @@
 <?php
 
-// config/cache.php
 declare(strict_types=1);
 
 use function KaririCode\Dotenv\env;
 
 /**
- * Improved cache configuration that maximizes the use of KaririCode\Configurator
- * features while maintaining clean separation of concerns.
+ * KaririCode Cache Configuration.
  *
- * This configuration file demonstrates:
- * - Environment variable support with defaults
- * - Hierarchical configuration structure
- * - Feature toggles
- * - Driver-specific optimizations
- * - Security and observability settings
+ * A fully‑fledged, layered cache definition embracing:
+ *   • Hot‑key promotion (read‑through)
+ *   • Per‑layer circuit‑breaker
+ *   • Multi‑store fallbacks (Redis, Memcached, APCu, Filesystem, Array)
+ *
+ * The file is environment‑driven; override any value via your `.env`.
  */
-
 return [
-    // =============================================================================
-    // CORE CACHE SETTINGS
-    // =============================================================================
-
+    // ────────────────────────────────────────────────────────────────────────
+    // Default Cache Store
+    // ────────────────────────────────────────────────────────────────────────
     'default' => env('CACHE_DEFAULT_STORE', 'layered'),
 
-    // =============================================================================
-    // CACHE STORES CONFIGURATION
-    // =============================================================================
-
+    // ────────────────────────────────────────────────────────────────────────
+    // Cache Stores
+    // ────────────────────────────────────────────────────────────────────────
     'stores' => [
-
-        // High-performance layered cache for production
+        // ------------------------------------------------------------------
+        // LAYERED: 3‑tier hierarchy (APCu ➜ Redis ➜ Filesystem)
+        // ------------------------------------------------------------------
         'layered' => [
             'driver' => 'layered',
-            'layers' => [
-                // L1: APCu for ultra-fast local access
-                [
-                    'driver' => 'apcu',
-                    'priority' => 5,
-                    'config' => [
-                        'key_prefix' => env('CACHE_APCU_PREFIX', 'l1:'),
-                    ],
-                ],
+            'config' => [
+                // ––– Hot‑key promotion ––––––––––––––––––––––––––––––––––––
+                'promotion_enabled'   => env('CACHE_PROMOTION_ENABLED', true),
+                'promotion_threshold' => (int) env('CACHE_PROMOTION_THRESHOLD', 3),
 
-                // L2: Redis for distributed caching
-                [
-                    'driver' => 'redis',
-                    'priority' => 10,
-                    'config' => [
-                        'host' => env('REDIS_HOST', 'localhost'),
-                        'port' => (int) env('REDIS_PORT', 6379),
-                        'password' => env('REDIS_PASSWORD', null),
-                        'database' => (int) env('REDIS_CACHE_DB', 1),
-                        'key_prefix' => env('CACHE_REDIS_PREFIX', 'l2:'),
-                        'tag_prefix' => env('CACHE_REDIS_TAG_PREFIX', 'tag:'),
-                        'topic_prefix' => env('CACHE_REDIS_TOPIC_PREFIX', 'topic:'),
-                        'persistent' => env('REDIS_PERSISTENT', true),
-                        'compression' => env('REDIS_COMPRESSION', true),
-                        'timeout' => (float) env('REDIS_TIMEOUT', 2.0),
-                        'read_timeout' => (float) env('REDIS_READ_TIMEOUT', 2.0),
-                    ],
-                ],
+                // ––– Circuit‑breaker ––––––––––––––––––––––––––––––––––––––
+                'circuit_breaker_enabled' => env('CACHE_CIRCUIT_BREAKER_ENABLED', true),
+                'max_failures'            => (int) env('CACHE_CIRCUIT_MAX_FAILURES', 5),
+                'circuit_timeout'         => (int) env('CACHE_CIRCUIT_TIMEOUT', 60),
 
-                // L3: Filesystem for persistence and fallback
-                [
-                    'driver' => 'filesystem',
-                    'priority' => 90,
-                    'config' => [
-                        'directory' => env('CACHE_FILESYSTEM_DIR', storage_path('cache')),
-                        'key_prefix' => env('CACHE_FILESYSTEM_PREFIX', 'l3_'),
-                        'max_size' => (int) env('CACHE_FILESYSTEM_MAX_SIZE', 104857600), // 100MB
-                        'cleanup_probability' => (float) env('CACHE_CLEANUP_PROBABILITY', 0.01),
+                // ––– Layer definitions (fast ➜ durable) –––––––––––––––––––
+                'layers' => [
+                    [
+                        'driver'   => 'apcu',
+                        'priority' => 1,
+                        'config'   => [
+                            'key_prefix'          => env('CACHE_APCU_PREFIX', 'l1:'),
+                            'enable_statistics'   => env('APCU_ENABLE_STATISTICS', true),
+                            'cleanup_probability' => (float) env('APCU_CLEANUP_PROBABILITY', 0.01),
+                        ],
+                    ],
+                    [
+                        'driver'   => 'redis',
+                        'priority' => 10,
+                        'config'   => [
+                            'host'         => env('REDIS_HOST', 'localhost'),
+                            'port'         => (int) env('REDIS_PORT', 6379),
+                            'password'     => env('REDIS_PASSWORD'),
+                            'database'     => (int) env('REDIS_CACHE_DB', 1),
+                            'key_prefix'   => env('CACHE_REDIS_PREFIX', 'l2:'),
+                            'persistent'   => env('REDIS_PERSISTENT', true),
+                            'persistent_id' => env('REDIS_PERSISTENT_ID', 'layered_cache'),
+                            'timeout'      => (float) env('REDIS_TIMEOUT', 2.0),
+                            'read_timeout' => (float) env('REDIS_READ_TIMEOUT', 2.0),
+                        ],
+                    ],
+                    [
+                        'driver'   => 'filesystem',
+                        'priority' => 100, // deepest tier
+                        'config'   => [
+                            'directory'         => env('CACHE_FILESYSTEM_DIR', storage_path('cache/layered')),
+                            'key_prefix'        => env('CACHE_FILESYSTEM_PREFIX', 'l3_'),
+                            'max_size'          => (int) env('CACHE_FILESYSTEM_MAX_SIZE', 104857600),
+                            'cleanup_probability' => (float) env('CACHE_CLEANUP_PROBABILITY', 0.01),
+                            'use_locking'       => env('FILESYSTEM_FILE_LOCKING', true),
+                            'use_compression'   => env('FILESYSTEM_COMPRESSION', true),
+                            'directory_levels'  => (int) env('FILESYSTEM_DIR_LEVELS', 2),
+                        ],
                     ],
                 ],
             ],
         ],
 
-        // Dedicated Redis store for specific use cases
+        // ------------------------------------------------------------------
+        // TWO_TIER: Redis + Memcached (no APCu, useful in container swarms)
+        // ------------------------------------------------------------------
+        'two_tier' => [
+            'driver' => 'layered',
+            'config' => [
+                'promotion_enabled'   => env('CACHE_PROMOTION_ENABLED', true),
+                'promotion_threshold' => (int) env('CACHE_PROMOTION_THRESHOLD', 5),
+                'layers' => [
+                    [
+                        'driver'   => 'redis',
+                        'priority' => 1,
+                        'config'   => [
+                            'host'       => env('REDIS_HOST', 'localhost'),
+                            'port'       => (int) env('REDIS_PORT', 6379),
+                            'database'   => 2,
+                            'key_prefix' => 'fast:',
+                        ],
+                    ],
+                    [
+                        'driver'   => 'memcached',
+                        'priority' => 10,
+                        'config'   => [
+                            'servers' => [[
+                                'host'   => env('MEMCACHED_HOST', '127.0.0.1'),
+                                'port'   => (int) env('MEMCACHED_PORT', 11211),
+                                'weight' => 100,
+                            ]],
+                            'key_prefix' => 'backup:',
+                        ],
+                    ],
+                ],
+            ],
+        ],
+
+        // ------------------------------------------------------------------
+        // Stand‑alone drivers (for direct access or health checks)
+        // ------------------------------------------------------------------
         'redis' => [
             'driver' => 'redis',
             'config' => [
-                'host' => env('REDIS_HOST', 'localhost'),
-                'port' => (int) env('REDIS_PORT', 6379),
-                'password' => env('REDIS_PASSWORD', null),
-                'database' => (int) env('REDIS_CACHE_DB', 1),
-                'username' => env('REDIS_USERNAME', null),
+                'host'       => env('REDIS_HOST', 'localhost'),
+                'port'       => (int) env('REDIS_PORT', 6379),
+                'password'   => env('REDIS_PASSWORD'),
+                'username'   => env('REDIS_USERNAME'),
+                'database'   => (int) env('REDIS_CACHE_DB', 1),
                 'key_prefix' => env('CACHE_REDIS_PREFIX', 'cache:'),
                 'tag_prefix' => env('CACHE_REDIS_TAG_PREFIX', 'tag:'),
                 'topic_prefix' => env('CACHE_REDIS_TOPIC_PREFIX', 'topic:'),
                 'persistent' => env('REDIS_PERSISTENT', true),
                 'persistent_id' => env('REDIS_PERSISTENT_ID', 'kariricode_cache'),
                 'compression' => env('REDIS_COMPRESSION', true),
-                'timeout' => (float) env('REDIS_TIMEOUT', 2.0),
+                'timeout'     => (float) env('REDIS_TIMEOUT', 2.0),
                 'read_timeout' => (float) env('REDIS_READ_TIMEOUT', 2.0),
+                'pipeline_ops' => env('REDIS_PIPELINE_OPS', true),
+                'lua_scripts' => env('REDIS_LUA_SCRIPTS', true),
             ],
         ],
 
-        // High-performance Memcached store
         'memcached' => [
             'driver' => 'memcached',
             'config' => [
-                'servers' => [
-                    [
-                        env('MEMCACHED_HOST', 'localhost'),
-                        (int) env('MEMCACHED_PORT', 11211),
-                        (int) env('MEMCACHED_WEIGHT', 100),
-                    ],
-                ],
-                'persistent_id' => env('MEMCACHED_PERSISTENT_ID', 'kariricode_cache'),
-                'username' => env('MEMCACHED_USERNAME', null),
-                'password' => env('MEMCACHED_PASSWORD', null),
-                'compression' => env('MEMCACHED_COMPRESSION', true),
-                'serializer' => env('MEMCACHED_SERIALIZER', 'igbinary'),
-                'key_prefix' => env('CACHE_MEMCACHED_PREFIX', 'cache:'),
-                'connect_timeout' => (int) env('MEMCACHED_CONNECT_TIMEOUT', 1),
-                'poll_timeout' => (int) env('MEMCACHED_POLL_TIMEOUT', 1),
-                'recv_timeout' => (int) env('MEMCACHED_RECV_TIMEOUT', 1),
-                'send_timeout' => (int) env('MEMCACHED_SEND_TIMEOUT', 1),
-                'options' => [
-                    // Additional Memcached options can be set here
-                ],
+                'servers' => [[
+                    'host'   => env('MEMCACHED_HOST', 'localhost'),
+                    'port'   => (int) env('MEMCACHED_PORT', 11211),
+                    'weight' => (int) env('MEMCACHED_WEIGHT', 100),
+                ]],
+                'persistent_id'      => env('MEMCACHED_PERSISTENT_ID', 'kariricode_cache'),
+                'username'           => env('MEMCACHED_USERNAME'),
+                'password'           => env('MEMCACHED_PASSWORD'),
+                'key_prefix'         => env('CACHE_MEMCACHED_PREFIX', 'cache:'),
+                'compression'        => env('MEMCACHED_COMPRESSION', true),
+                'serializer'         => env('MEMCACHED_SERIALIZER', 'igbinary'),
+                'binary_protocol'    => env('MEMCACHED_BINARY_PROTOCOL', true),
+                'consistent_hashing' => env('MEMCACHED_CONSISTENT_HASHING', true),
+                'tcp_nodelay'        => env('MEMCACHED_TCP_NODELAY', true),
+                'buffer_writes'      => env('MEMCACHED_BUFFER_WRITES', true),
             ],
         ],
 
-        // Filesystem cache for development and fallback
-        'filesystem' => [
-            'driver' => 'filesystem',
-            'config' => [
-                'directory' => env('CACHE_FILESYSTEM_DIR', storage_path('cache')),
-                'key_prefix' => env('CACHE_FILESYSTEM_PREFIX', 'fs_'),
-                'max_size' => (int) env('CACHE_FILESYSTEM_MAX_SIZE', 104857600), // 100MB
-                'cleanup_probability' => (float) env('CACHE_CLEANUP_PROBABILITY', 0.01),
-            ],
-        ],
-
-        // APCu for ultra-fast local caching
         'apcu' => [
             'driver' => 'apcu',
             'config' => [
-                'key_prefix' => env('CACHE_APCU_PREFIX', 'apcu:'),
+                'key_prefix'          => env('CACHE_APCU_PREFIX', 'apcu:'),
+                'tag_prefix'          => env('CACHE_APCU_TAG_PREFIX', 'tag:'),
+                'topic_prefix'        => env('CACHE_APCU_TOPIC_PREFIX', 'topic:'),
+                'enable_statistics'   => env('APCU_ENABLE_STATISTICS', true),
+                'cleanup_probability' => (float) env('APCU_CLEANUP_PROBABILITY', 0.01),
             ],
         ],
 
-        // In-memory array cache for testing
+        'filesystem' => [
+            'driver' => 'filesystem',
+            'config' => [
+                'directory'           => env('CACHE_FILESYSTEM_DIR', storage_path('cache')),
+                'key_prefix'          => env('CACHE_FILESYSTEM_PREFIX', 'fs_'),
+                'max_size'            => (int) env('CACHE_FILESYSTEM_MAX_SIZE', 104857600),
+                'cleanup_probability' => (float) env('CACHE_CLEANUP_PROBABILITY', 0.01),
+                'use_locking'         => env('FILESYSTEM_FILE_LOCKING', true),
+                'use_compression'     => env('FILESYSTEM_COMPRESSION', false),
+                'directory_levels'    => (int) env('FILESYSTEM_DIR_LEVELS', 2),
+                'file_permissions'    => 0644,
+                'directory_permissions' => 0755,
+            ],
+        ],
+
         'array' => [
             'driver' => 'array',
             'config' => [],
         ],
-
-        // Session-specific cache configuration
-        'sessions' => [
-            'driver' => 'redis',
-            'config' => [
-                'host' => env('SESSION_REDIS_HOST', env('REDIS_HOST', 'localhost')),
-                'port' => (int) env('SESSION_REDIS_PORT', env('REDIS_PORT', 6379)),
-                'password' => env('SESSION_REDIS_PASSWORD', env('REDIS_PASSWORD', null)),
-                'database' => (int) env('SESSION_REDIS_DB', 2),
-                'key_prefix' => env('SESSION_CACHE_PREFIX', 'sess:'),
-                'persistent' => true,
-                'compression' => false, // Sessions are usually small
-                'timeout' => 1.0,
-            ],
-        ],
-
-        // API response cache
-        'api_responses' => [
-            'driver' => 'layered',
-            'layers' => [
-                [
-                    'driver' => 'apcu',
-                    'priority' => 5,
-                    'config' => [
-                        'key_prefix' => 'api:l1:',
-                    ],
-                ],
-                [
-                    'driver' => 'redis',
-                    'priority' => 15,
-                    'config' => [
-                        'host' => env('REDIS_HOST', 'localhost'),
-                        'port' => (int) env('REDIS_PORT', 6379),
-                        'database' => (int) env('API_CACHE_REDIS_DB', 3),
-                        'key_prefix' => 'api:l2:',
-                        'compression' => true,
-                        'timeout' => 1.0,
-                    ],
-                ],
-            ],
-        ],
     ],
 
-    // =============================================================================
-    // SERIALIZATION CONFIGURATION
-    // =============================================================================
-
-    'serializer' => env('CACHE_SERIALIZER', 'native'), // native, igbinary, json, compressed, compressed_igbinary
-
-    // =============================================================================
-    // FEATURE TOGGLES
-    // =============================================================================
-
-    'features' => [
-        'stampede_protection' => env('CACHE_STAMPEDE_PROTECTION', true),
-        'metrics_enabled' => env('CACHE_METRICS_ENABLED', true),
+    // ────────────────────────────────────────────────────────────────────────
+    // Expiration Provider (Strategy pattern)
+    // ────────────────────────────────────────────────────────────────────────
+    'expiration_provider' => [
+        'default_ttl' => (int) env('CACHE_DEFAULT_TTL', 3600),
+        'operation_ttls' => [
+            'set'            => (int) env('CACHE_SET_TTL', 1800),
+            'setMultiple'    => (int) env('CACHE_SET_MULTIPLE_TTL', 1800),
+            'add'            => (int) env('CACHE_ADD_TTL', 1800),
+            'increment'      => (int) env('CACHE_INCREMENT_TTL', 7200),
+            'decrement'      => (int) env('CACHE_DECREMENT_TTL', 7200),
+            'setWithTags'    => (int) env('CACHE_TAGGED_TTL', 900),
+            'compareAndSwap' => (int) env('CACHE_CAS_TTL', 1800),
+        ],
+        'key_pattern_ttls' => [
+            'session:*'   => (int) env('SESSION_TTL', 7200),
+            'api:*'       => (int) env('API_CACHE_TTL', 1800),
+            'user:*'      => (int) env('USER_CACHE_TTL', 900),
+            'temp:*'      => (int) env('TEMP_CACHE_TTL', 300),
+            'config:*'    => (int) env('CONFIG_CACHE_TTL', 3600),
+            'counter:*'   => (int) env('COUNTER_CACHE_TTL', 86400),
+            'critical:*'  => (int) env('CRITICAL_CACHE_TTL', 60),
+            'analytics:*' => (int) env('ANALYTICS_CACHE_TTL', 21600),
+        ],
         'sliding_expiration' => env('CACHE_SLIDING_EXPIRATION', false),
-        'events_enabled' => env('CACHE_EVENTS_ENABLED', true),
-        'psr14_events_enabled' => env('CACHE_PSR14_EVENTS_ENABLED', false),
-        'strict_validation' => env('CACHE_STRICT_VALIDATION', true),
+        'max_ttl'            => (int) env('CACHE_MAX_TTL', 2592000), // 30 days
     ],
 
-    // =============================================================================
-    // DEFAULT SETTINGS
-    // =============================================================================
-
-    'defaults' => [
-        'ttl' => (int) env('CACHE_DEFAULT_TTL', 3600), // 1 hour
-        'key_prefix' => env('CACHE_DEFAULT_PREFIX', ''),
-        'namespace_separator' => env('CACHE_NAMESPACE_SEPARATOR', ':'),
-    ],
-
-    // =============================================================================
-    // SECURITY CONFIGURATION
-    // =============================================================================
-
-    'security' => [
-        'rate_limit' => (int) env('CACHE_RATE_LIMIT', 1000),
-        'whitelisted_ips' => array_filter(
-            explode(',', env('CACHE_WHITELISTED_IPS', '127.0.0.1,::1'))
-        ),
-        'audit_salt' => env('CACHE_AUDIT_SALT', 'cache_security_salt_change_in_production'),
-        'enable_geo_location' => env('CACHE_ENABLE_GEO_LOCATION', false),
-        'retention_days' => (int) env('CACHE_AUDIT_RETENTION_DAYS', 30),
-        'max_key_length' => (int) env('CACHE_MAX_KEY_LENGTH', 250),
-        'max_value_size' => (int) env('CACHE_MAX_VALUE_SIZE', 1048576), // 1MB
-    ],
-
-    // =============================================================================
-    // OBSERVABILITY AND MONITORING
-    // =============================================================================
-
-    'observability' => [
-        'enable_performance_tracking' => env('CACHE_PERFORMANCE_TRACKING', true),
-        'enable_security_monitoring' => env('CACHE_SECURITY_MONITORING', false),
-        'max_events' => (int) env('CACHE_MAX_EVENTS', 1000),
-        'slow_threshold' => (float) env('CACHE_SLOW_THRESHOLD', 0.1), // 100ms
-        'enable_debug_logging' => env('CACHE_DEBUG_LOGGING', false),
-        'metrics_collection_interval' => (int) env('CACHE_METRICS_INTERVAL', 60), // seconds
-    ],
-
-    // =============================================================================
-    // ENVIRONMENT-SPECIFIC OVERRIDES
-    // =============================================================================
-
-    'environments' => [
-        'local' => [
-            'default' => 'array',
-            'features' => [
-                'metrics_enabled' => true,
-                'events_enabled' => true,
-                'strict_validation' => false, // More lenient for development
-            ],
-            'observability' => [
-                'enable_debug_logging' => true,
-                'slow_threshold' => 0.01, // More sensitive in development
+    // ────────────────────────────────────────────────────────────────────────
+    // Serializer stack
+    // ────────────────────────────────────────────────────────────────────────
+    'serializers' => [
+        'native'    => \KaririCode\Cache\Serializer\NativeSerializer::class,
+        'igbinary'  => \KaririCode\Cache\Serializer\IgbinarySerializer::class,
+        'json_pretty' => [
+            'class' => \KaririCode\Cache\Serializer\JsonSerializer::class,
+            'options' => [
+                'flags' => JSON_PRETTY_PRINT,
+                'depth' => 256,
             ],
         ],
-
-        'testing' => [
-            'default' => 'array',
-            'features' => [
-                'stampede_protection' => false, // Simplify for tests
-                'metrics_enabled' => false,
-                'events_enabled' => false,
-            ],
-        ],
-
-        'staging' => [
-            'features' => [
-                'security_monitoring' => true,
-                'performance_tracking' => true,
-            ],
-            'observability' => [
-                'enable_debug_logging' => true,
-            ],
-        ],
-
-        'production' => [
-            'features' => [
-                'security_monitoring' => true,
-                'performance_tracking' => true,
-                'strict_validation' => true,
-            ],
-            'security' => [
-                'enable_geo_location' => true,
-                'retention_days' => 90,
-            ],
-            'observability' => [
-                'enable_debug_logging' => false,
-                'slow_threshold' => 0.2, // Less sensitive in production
+        'compressed' => [
+            'class'             => \KaririCode\Cache\Serializer\CompressingSerializer::class,
+            'inner'             => 'igbinary',
+            'options' => [
+                'compression_level' => 6,
+                'threshold' => 1024,
             ],
         ],
     ],
+    'serializer' => env('CACHE_SERIALIZER', 'igbinary'),
 
-    // =============================================================================
-    // SPECIALIZED CACHE CONFIGURATIONS
-    // =============================================================================
-
-    'specialized' => [
-
-        // Rate limiting cache
-        'rate_limiting' => [
-            'store' => 'redis',
-            'prefix' => 'rate_limit:',
-            'default_window' => 3600, // 1 hour
-            'default_limit' => 1000,
-        ],
-
-        // API response cache
-        'api_responses' => [
-            'store' => 'api_responses',
-            'prefix' => 'api:',
-            'default_ttl' => 1800, // 30 minutes
-            'max_response_size' => 1048576, // 1MB
-            'compress_responses' => true,
-            'cache_headers' => true,
-            'vary_on_headers' => ['Accept', 'Accept-Language', 'Authorization'],
-        ],
-
-        // Session cache
-        'sessions' => [
-            'store' => 'sessions',
-            'prefix' => 'session:',
-            'default_ttl' => 7200, // 2 hours
-        ],
-
-        // File cache for compiled views/templates
-        'compiled' => [
-            'store' => 'filesystem',
-            'prefix' => 'compiled:',
-            'default_ttl' => 86400, // 24 hours
-        ],
+    // ────────────────────────────────────────────────────────────────────────
+    // Feature Toggles
+    // ────────────────────────────────────────────────────────────────────────
+    'features' => [
+        'debug_mode'          => env('CACHE_DEBUG_MODE', false),
+        'stampede_protection' => env('CACHE_STAMPEDE_PROTECTION', true),
+        'metrics_enabled'     => env('CACHE_METRICS_ENABLED', true),
+        'events_enabled'      => env('CACHE_EVENTS_ENABLED', true),
+        'strict_validation'   => env('CACHE_STRICT_VALIDATION', true),
+        'compression_enabled' => env('CACHE_COMPRESSION_ENABLED', true),
+        'async_operations'    => env('CACHE_ASYNC_OPERATIONS', false),
+        'encryption_enabled'  => env('CACHE_ENCRYPTION_ENABLED', false),
+        'encryption_key'      => env('CACHE_ENCRYPTION_KEY'),
     ],
 
-    // =============================================================================
-    // DRIVER-SPECIFIC OPTIMIZATIONS
-    // =============================================================================
+    // ────────────────────────────────────────────────────────────────────────
+    // Validation
+    // ────────────────────────────────────────────────────────────────────────
+    'validation' => [
+        'max_key_length'      => (int) env('CACHE_MAX_KEY_LENGTH', 250),
+        'max_value_size'      => (int) env('CACHE_MAX_VALUE_SIZE', 2097152),
+        'reserved_characters' => ['{}()', '/', '@', ':'],
+        'key_pattern'         => '/^[a-zA-Z0-9_\-.]+$/',
+    ],
 
+    // ────────────────────────────────────────────────────────────────────────
+    // Metrics
+    // ────────────────────────────────────────────────────────────────────────
+    'metrics' => [
+        'enabled'              => env('CACHE_METRICS_ENABLED', true),
+        'collector'            => env('CACHE_METRICS_COLLECTOR', 'default'),
+        'export_format'        => env('CACHE_METRICS_FORMAT', 'json'),
+        'export_interval'      => (int) env('CACHE_METRICS_INTERVAL', 60),
+        'include_driver_stats' => env('CACHE_METRICS_DRIVER_STATS', true),
+    ],
+
+    // ────────────────────────────────────────────────────────────────────────
+    // Logging
+    // ────────────────────────────────────────────────────────────────────────
+    'logging' => [
+        'enabled'            => env('CACHE_LOGGING_ENABLED', true),
+        'channel'            => env('CACHE_LOG_CHANNEL', 'cache'),
+        'level'              => env('CACHE_LOG_LEVEL', 'info'),
+        'include_values'     => env('CACHE_LOG_VALUES', false),
+        'max_value_length'   => (int) env('CACHE_LOG_MAX_VALUE_LENGTH', 100),
+    ],
+
+    // ────────────────────────────────────────────────────────────────────────
+    // Health Checks
+    // ────────────────────────────────────────────────────────────────────────
+    'health_checks' => [
+        'enabled'            => env('CACHE_HEALTH_CHECKS', true),
+        'interval'           => (int) env('CACHE_HEALTH_CHECK_INTERVAL', 300),
+        'timeout'            => (int) env('CACHE_HEALTH_CHECK_TIMEOUT', 5),
+        'stores_to_check'    => array_filter(explode(',', env('CACHE_HEALTH_CHECK_STORES', 'redis,memcached'))),
+        'failure_threshold'  => (int) env('CACHE_HEALTH_FAILURE_THRESHOLD', 3),
+        'recovery_threshold' => (int) env('CACHE_HEALTH_RECOVERY_THRESHOLD', 2),
+    ],
+
+    // ────────────────────────────────────────────────────────────────────────
+    // Driver‑specific optimizations
+    // ────────────────────────────────────────────────────────────────────────
     'optimizations' => [
         'redis' => [
-            'pipeline_operations' => env('REDIS_PIPELINE_OPS', true),
-            'cluster_mode' => env('REDIS_CLUSTER_MODE', false),
-            'sentinel_mode' => env('REDIS_SENTINEL_MODE', false),
-            'max_connections' => (int) env('REDIS_MAX_CONNECTIONS', 20),
+            'pipeline_batch_size' => (int) env('REDIS_PIPELINE_BATCH_SIZE', 100),
+            'scan_count'          => (int) env('REDIS_SCAN_COUNT', 100),
+            'lua_script_caching'  => env('REDIS_LUA_CACHE', true),
         ],
-
         'memcached' => [
-            'consistent_hashing' => env('MEMCACHED_CONSISTENT_HASHING', true),
-            'binary_protocol' => env('MEMCACHED_BINARY_PROTOCOL', true),
-            'tcp_nodelay' => env('MEMCACHED_TCP_NODELAY', true),
+            'cas_tokens' => env('MEMCACHED_CAS_TOKENS', true),
+            'no_block'   => env('MEMCACHED_NO_BLOCK', true),
         ],
-
         'filesystem' => [
-            'atomic_writes' => env('FILESYSTEM_ATOMIC_WRITES', true),
-            'file_locking' => env('FILESYSTEM_FILE_LOCKING', true),
-            'directory_levels' => (int) env('FILESYSTEM_DIR_LEVELS', 2),
+            'atomic_writes'    => env('FILESYSTEM_ATOMIC_WRITES', true),
+            'metadata_caching' => env('FILESYSTEM_META_CACHE', true),
         ],
-    ],
-
-    // =============================================================================
-    // HEALTH CHECK CONFIGURATION
-    // =============================================================================
-
-    'health_checks' => [
-        'enabled' => env('CACHE_HEALTH_CHECKS', true),
-        'interval' => (int) env('CACHE_HEALTH_CHECK_INTERVAL', 300), // 5 minutes
-        'timeout' => (int) env('CACHE_HEALTH_CHECK_TIMEOUT', 5), // 5 seconds
-        'stores_to_check' => array_filter(
-            explode(',', env('CACHE_HEALTH_CHECK_STORES', 'redis,memcached'))
-        ),
+        'apcu' => [
+            'slam_defense'   => env('APCU_SLAM_DEFENSE', true),
+            'preload_enabled' => env('APCU_PRELOAD', false),
+        ],
     ],
 ];
 
-
-/**
- * Helper function for storage path
- */
+// Helper: resolves path within storage directory
 if (!function_exists('storage_path')) {
     function storage_path(string $path = ''): string
     {
-        $basePath =  __DIR__ . '/../storage';
+        $basePath = dirname(__DIR__) . '/storage';
         return rtrim($basePath, '/') . ($path ? '/' . ltrim($path, '/') : '');
     }
 }

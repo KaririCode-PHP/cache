@@ -4,88 +4,134 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Driver\Apcu\Operation;
 
+use KaririCode\Cache\Contract\Provider\ExpirationProvider;
 use KaririCode\Cache\Driver\Apcu\Component\ApcuErrorHandler;
 use KaririCode\Cache\Driver\Apcu\Config\ApcuConfig;
-use KaririCode\Cache\Exception\InvalidArgumentException;
-use KaririCode\Cache\Validation\Trait\CacheKeyValidationTrait;
-use KaririCode\Cache\Validation\Trait\ExpirationManagementTrait;
-use KaririCode\Cache\Validation\Trait\TagValidationTrait;
+use KaririCode\Cache\Service\ValidationService;
 use KaririCode\Cache\ValueObject\Tag;
 
 /**
- * Manages tag-based cache invalidation for APCu.
- * SRP: This class is only responsible for tag operations.
+ * Manages tag-based cache operations for APCu.
+ *
+ * This class is solely responsible for emulating tag functionality, including
+ * setting items with tags, invalidating by tag, and retrieving by tag. It
+ * uses the ExpirationProvider to manage TTLs for both the cache items and
+ * the tag indexes, adhering to SRP and the Strategy Pattern.
+ *
+ * @category  Cache
+ *
+ * @author    Walmir Silva <walmir.silva@kariricode.org>
+ * @license   MIT
+ *
+ * @see       https://kariricode.org/
  */
 final class ApcuTagOperations
 {
-    use CacheKeyValidationTrait;
-    use TagValidationTrait;
-    use ExpirationManagementTrait;
+    private readonly ValidationService $validator;
 
+    /**
+     * @param ApcuConfig $config configuration settings for APCu
+     * @param ApcuErrorHandler $errorHandler error handling and retry logic
+     * @param ApcuCrudOperations $crudOperations for storing the primary cache item
+     * @param ExpirationProvider $expirationProvider strategy for TTL management
+     */
     public function __construct(
-        private ApcuConfig $config,
-        private ApcuErrorHandler $errorHandler,
-        private ApcuCrudOperations $crudOperations
+        private readonly ApcuConfig $config,
+        private readonly ApcuErrorHandler $errorHandler,
+        private readonly ApcuCrudOperations $crudOperations,
+        private readonly ExpirationProvider $expirationProvider
     ) {
+        $this->validator = new ValidationService();
     }
 
-    public function setWithTags(
-        string $key,
-        mixed $value,
-        array $tags,
-        ?\DateTimeInterface $expiration = null
-    ): bool {
-        $this->validateKey($key);
-        $normalizedTags = $this->validateAndNormalizeTags($tags); // MUDANÇA
+    /**
+     * Stores an item with associated tags, calculating the TTL internally.
+     *
+     * @param string $key the key of the item
+     * @param mixed $value the value to store
+     * @param iterable<string|Tag> $tags the tags to associate
+     *
+     * @return bool true on success
+     */
+    public function setWithTags(string $key, mixed $value, iterable $tags): bool
+    {
+        $this->validator->validateKey($key);
+        $this->validator->validateValue($value);
+        $normalizedTags = $this->normalizeTags($tags);
+        $this->validator->validateTags($normalizedTags);
+
+        $finalExpiration = $this->expirationProvider->calculateExpiration(null, $key, 'setWithTags');
 
         return (bool) $this->errorHandler->executeWithRetry(
-            fn () => $this->performSetWithTags($key, $value, $normalizedTags, $expiration),
+            fn () => $this->performSetWithTags($key, $value, $normalizedTags, $finalExpiration),
             'setWithTags',
             $key
         );
     }
 
-    public function invalidateTags(array $tags): bool
+    /**
+     * Invalidates all cache items associated with the given tags.
+     *
+     * @param iterable<string|Tag> $tags the tags to invalidate
+     *
+     * @return bool true on success
+     */
+    public function invalidateTags(iterable $tags): bool
     {
-        $this->validateTags($tags);
+        $normalizedTags = $this->normalizeTags($tags);
+        $this->validator->validateTags($normalizedTags);
 
-        if (empty($tags)) {
+        if (empty($normalizedTags)) {
             return true;
         }
 
-        $tagNames = array_map(fn (Tag $tag) => (string) $tag, $tags);
+        $tagNames = array_map(strval(...), $normalizedTags);
 
         return (bool) $this->errorHandler->executeWithRetry(
-            fn () => $this->performInvalidateTags($tags),
+            fn () => $this->performInvalidateTags($normalizedTags),
             'invalidateTags',
             implode(',', $tagNames)
         );
     }
 
-    public function getTaggedKeys(string $tag): array
+    /**
+     * Retrieves all items that have all of the given tags.
+     *
+     * @param iterable<string|Tag> $tags the tags to search for
+     *
+     * @return iterable<string, mixed> a map of keys to their values
+     */
+    public function getByTags(iterable $tags): iterable
     {
-        $this->validateSingleTag($tag);
+        $normalizedTags = $this->normalizeTags($tags);
+        $this->validator->validateTags($normalizedTags);
 
         $result = $this->errorHandler->executeWithRetry(
-            fn () => $this->performGetTaggedKeys($tag),
-            'getTaggedKeys',
-            $tag
+            fn () => $this->performGetByTags($normalizedTags),
+            'getByTags',
+            implode(',', array_map(strval(...), $normalizedTags))
         );
 
-        return is_array($result) ? $result : [];
+        return is_iterable($result) ? $result : [];
     }
 
     /**
-     * @return array<string>
+     * Retrieves all unique tags stored in the cache.
+     *
+     * @return iterable<Tag> a list of Tag objects
      */
-    public function getAllTags(): array
+    public function getTags(): iterable
     {
-        $result = $this->errorHandler->executeWithRetry(
-            fn () => $this->performGetAllTags(),
-            'getAllTags'
-        );
+        $tagKeys = [];
+        $prefix = $this->config->getTagIndexPrefix();
+        $iterator = new \APCUIterator('/^' . preg_quote($prefix, '/') . '/');
 
-        return is_array($result) ? $result : [];
+        foreach ($iterator as $item) {
+            if (is_array($item) && isset($item['key'])) {
+                $tagName = substr($item['key'], strlen($prefix));
+                yield new Tag($tagName);
+            }
+        }
     }
 
     /**
@@ -93,16 +139,16 @@ final class ApcuTagOperations
      */
     private function performSetWithTags(string $key, mixed $value, array $tags, ?\DateTimeInterface $expiration): bool
     {
-        // To maintain consistency, delegate the SET operation to the appropriate handler.
+        // First, store the main cache item using the dedicated CRUD handler.
         if (!$this->crudOperations->set($key, $value, $expiration)) {
             return false;
         }
 
         $fullKey = $this->config->keyPrefix . $key;
 
+        // Then, update tag indexes.
         foreach ($tags as $tag) {
-            $tagName = (string) $tag;
-            $tagKey = $this->config->getTagIndexPrefix() . $tagName;
+            $tagKey = $this->config->getTagIndexPrefix() . (string) $tag;
 
             $success = false;
             $taggedKeys = apcu_fetch($tagKey, $success);
@@ -113,7 +159,12 @@ final class ApcuTagOperations
 
             if (!in_array($fullKey, $taggedKeys, true)) {
                 $taggedKeys[] = $fullKey;
-                apcu_store($tagKey, $taggedKeys);
+
+                // Set tag expiration with a buffer to ensure tags outlive the cached item.
+                $itemTtl = $expiration ? max(0, $expiration->getTimestamp() - time()) : 0;
+                $tagTtl = $itemTtl > 0 ? $itemTtl + 3600 : 86400; // 1 hour buffer or 24h default
+
+                apcu_store($tagKey, $taggedKeys, $tagTtl);
             }
         }
 
@@ -127,17 +178,17 @@ final class ApcuTagOperations
     {
         $keysToDelete = [];
 
+        // Collect all keys associated with the tags.
         foreach ($tags as $tag) {
-            $tagName = (string) $tag;
-            $tagKey = $this->config->getTagIndexPrefix() . $tagName;
-
+            $tagKey = $this->config->getTagIndexPrefix() . (string) $tag;
             $success = false;
             $taggedKeys = apcu_fetch($tagKey, $success);
 
             if ($success && is_array($taggedKeys)) {
                 $keysToDelete = array_merge($keysToDelete, $taggedKeys);
             }
-            // Delete the tag index
+
+            // Delete the tag index itself.
             apcu_delete($tagKey);
         }
 
@@ -147,97 +198,71 @@ final class ApcuTagOperations
             return true;
         }
 
-        // Delete the associated cache items
+        // Delete all tagged items. apcu_delete returns an array of failed keys.
         $failures = apcu_delete($keysToDelete);
-
-        // Clean up references to deleted keys from other tag indices
-        $this->cleanupTagIndices($keysToDelete);
-
-        if (!is_array($failures)) {
-            return false;
-        }
 
         return empty($failures);
     }
 
     /**
-     * @return array<string>
+     * @param array<Tag> $tags
+     *
+     * @return iterable<string, mixed>
      */
-    private function performGetTaggedKeys(string $tag): array
+    private function performGetByTags(array $tags): iterable
     {
-        $tagKey = $this->config->getTagIndexPrefix() . $tag;
-
-        $success = false;
-        $taggedKeys = apcu_fetch($tagKey, $success);
-
-        if (!$success || !is_array($taggedKeys)) {
+        if (empty($tags)) {
             return [];
         }
 
-        return array_map(
-            fn ($key) => substr($key, strlen($this->config->keyPrefix)),
-            $taggedKeys
-        );
-    }
-
-    /**
-     * @return array<string>
-     */
-    private function performGetAllTags(): array
-    {
-        $tags = [];
-        $pattern = '#^' . preg_quote($this->config->getTagIndexPrefix()) . '#';
-        $iterator = new \APCUIterator($pattern);
-
-        foreach ($iterator as $item) {
-            if (is_array($item) && isset($item['key'])) {
-                $tag = substr(
-                    (string) $item['key'],
-                    strlen($this->config->getTagIndexPrefix())
-                );
-                $tags[] = $tag;
-            }
-        }
-
-        return $tags;
-    }
-
-    /**
-     * @param array<string> $deletedKeys
-     */
-    private function cleanupTagIndices(array $deletedKeys): void
-    {
-        $pattern = '#^' . preg_quote($this->config->getTagIndexPrefix()) . '#';
-        $iterator = new \APCUIterator($pattern);
-
-        foreach ($iterator as $tagItem) {
-            if (!is_array($tagItem) || !isset($tagItem['key'])) {
-                continue;
-            }
-
-            $tagKey = (string) $tagItem['key'];
-
+        $keySets = [];
+        foreach ($tags as $tag) {
+            $tagKey = $this->config->getTagIndexPrefix() . (string) $tag;
             $success = false;
             $taggedKeys = apcu_fetch($tagKey, $success);
 
             if (!$success || !is_array($taggedKeys)) {
-                continue;
+                return []; // If any tag has no keys, the intersection will be empty.
             }
-
-            $updatedKeys = array_diff($taggedKeys, $deletedKeys);
-
-            if (empty($updatedKeys)) {
-                apcu_delete($tagKey);
-            } elseif (count($updatedKeys) < count($taggedKeys)) {
-                apcu_store($tagKey, array_values($updatedKeys));
-            }
+            $keySets[] = $taggedKeys;
         }
+
+        // Find the intersection of all tag key sets.
+        $intersectionKeys = count($keySets) > 1 ? array_intersect(...$keySets) : ($keySets[0] ?? []);
+
+        if (empty($intersectionKeys)) {
+            return [];
+        }
+
+        // Retrieve the values for the matching keys.
+        $values = apcu_fetch($intersectionKeys);
+        if (!is_array($values)) {
+            return [];
+        }
+
+        // Return the final key-value map with unserialized values.
+        $results = [];
+        $prefixLength = strlen($this->config->keyPrefix);
+        foreach ($values as $fullKey => $value) {
+            $originalKey = substr($fullKey, $prefixLength);
+            $results[$originalKey] = $this->unserialize($value);
+        }
+
+        return $results;
     }
 
-    private function validateSingleTag(string $tag): void
+    /**
+     * @param iterable<string|Tag> $tags
+     *
+     * @return array<Tag>
+     */
+    private function normalizeTags(iterable $tags): array
     {
-        if (empty($tag)) {
-            throw InvalidArgumentException::invalidTag('Tag cannot be empty.');
+        $normalized = [];
+        foreach ($tags as $tag) {
+            $normalized[] = $tag instanceof Tag ? $tag : new Tag((string) $tag);
         }
+
+        return $normalized;
     }
 }

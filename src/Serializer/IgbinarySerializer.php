@@ -13,8 +13,11 @@ use KaririCode\Contract\ImmutableValue;
 /**
  * High-performance igbinary serializer.
  */
-final class IgbinarySerializer implements CacheSerializer, ImmutableValue
+final class IgbinarySerializer implements CacheSerializer
 {
+    /**
+     * @throws ConfigurationException if the 'igbinary' extension is not loaded
+     */
     public function __construct()
     {
         if (!extension_loaded('igbinary')) {
@@ -24,31 +27,48 @@ final class IgbinarySerializer implements CacheSerializer, ImmutableValue
 
     public function serialize(mixed $data): string
     {
-        $result = \igbinary_serialize($data);
-        if (null === $result) {
-            throw CacheException::serializationFailed('igbinary');
-        }
+        try {
+            // Suppress the expected warning when serializing a resource.
+            $result = @\igbinary_serialize($data);
+            if (null === $result) {
+                // This case is now correctly triggered by resources.
+                throw CacheException::serializationFailed('igbinary', new \RuntimeException('igbinary_serialize returned null, possibly due to an unserializable type like a resource.'));
+            }
 
-        return $result;
+            return $result;
+        } catch (\Throwable $e) {
+            throw CacheException::serializationFailed('igbinary', $e);
+        }
     }
 
     public function unserialize(string $data): mixed
     {
-        $result = \igbinary_unserialize($data);
-        if (null === $result && $data !== \igbinary_serialize(null)) {
-            throw CacheException::deserializationFailed('igbinary');
-        }
+        try {
+            // Suppress the expected warning on failure.
+            $result = @\igbinary_unserialize($data);
 
-        return $result;
+            if ($this->isUnserializationFailure($result, $data)) {
+                throw CacheException::deserializationFailed('igbinary', new \RuntimeException('Failed to unserialize data, it might be corrupt.'));
+            }
+
+            return $result;
+        } catch (\Throwable $e) {
+            throw CacheException::deserializationFailed('igbinary', $e);
+        }
     }
 
     public function canSerialize(mixed $data): bool
     {
+        // Explicitly check for resources, as igbinary_serialize() does not throw for them.
+        if (is_resource($data)) {
+            return false;
+        }
+
         try {
             \igbinary_serialize($data);
 
             return true;
-        } catch (\Exception) {
+        } catch (\Throwable) {
             return false;
         }
     }
@@ -60,8 +80,19 @@ final class IgbinarySerializer implements CacheSerializer, ImmutableValue
 
     public function getConfiguration(): ImmutableValue
     {
-        return new SerializationScheme([
-            'type' => 'igbinary',
-        ]);
+        return new SerializationScheme(type: 'igbinary');
+    }
+
+    /**
+     * Checks if the unserialization result indicates a failure.
+     *
+     * @param mixed $result the result of the unserialization
+     * @param string $originalData the original serialized string
+     *
+     * @return bool true if the result indicates a failure
+     */
+    private function isUnserializationFailure(mixed $result, string $originalData): bool
+    {
+        return null === $result && $originalData !== \igbinary_serialize(null);
     }
 }

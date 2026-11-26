@@ -12,8 +12,12 @@ use KaririCode\Contract\ImmutableValue;
 /**
  * JSON serializer for interoperability.
  */
-final class JsonSerializer implements CacheSerializer, ImmutableValue
+final class JsonSerializer implements CacheSerializer
 {
+    /**
+     * @param int $flags bitmask of JSON encode options
+     * @param int $depth maximum depth for encoding/decoding
+     */
     public function __construct(
         private readonly int $flags = JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE,
         private readonly int $depth = 512
@@ -22,33 +26,41 @@ final class JsonSerializer implements CacheSerializer, ImmutableValue
 
     public function serialize(mixed $data): string
     {
-        $result = json_encode($data, $this->flags);
+        try {
+            $result = json_encode($data, $this->flags, $this->depth);
 
-        if (false === $result) {
-            throw CacheException::serializationFailed('unknown', new \Exception(json_last_error_msg()));
+            if (JSON_ERROR_NONE !== json_last_error()) {
+                throw new \Exception(json_last_error_msg());
+            }
+
+            return $result;
+        } catch (\Throwable $e) {
+            throw CacheException::serializationFailed('json', $e);
         }
-
-        return $result;
     }
 
     public function unserialize(string $data): mixed
     {
-        $result = json_decode($data, true);
+        try {
+            $result = json_decode($data, true, $this->depth);
 
-        if (JSON_ERROR_NONE !== json_last_error()) {
-            throw CacheException::deserializationFailed('unknown', new \Exception(json_last_error_msg()));
+            if (JSON_ERROR_NONE !== json_last_error()) {
+                throw new \Exception(json_last_error_msg());
+            }
+
+            return $result;
+        } catch (\Throwable $e) {
+            throw CacheException::deserializationFailed('json', $e);
         }
-
-        return $result;
     }
 
     public function canSerialize(mixed $data): bool
     {
         try {
-            json_encode($data, $this->flags);
+            json_encode($data, $this->flags, $this->depth);
 
             return JSON_ERROR_NONE === json_last_error();
-        } catch (\Exception) {
+        } catch (\Throwable) {
             return false;
         }
     }
@@ -60,10 +72,10 @@ final class JsonSerializer implements CacheSerializer, ImmutableValue
 
     public function getConfiguration(): ImmutableValue
     {
-        return new SerializationScheme([
-            'type' => 'json',
-            'flags' => $this->flags,
-            'depth' => $this->depth,
-        ]);
+        return new SerializationScheme(
+            type: 'json',
+            flags: $this->flags,
+            depth: $this->depth
+        );
     }
 }

@@ -24,26 +24,26 @@ interface TopicSubscribable
      * Subscribe a cache item to invalidation topics.
      *
      * @param string $key the unique cache key
-     * @param array $topics the topics to subscribe to
+     * @param iterable $topics the topics to subscribe to
      */
-    public function subscribeTo(string $key, array $topics): void;
+    public function subscribeTo(string $key, iterable $topics): void;
 
     /**
      * Unsubscribe a cache item from invalidation topics.
      *
      * @param string $key the unique cache key
-     * @param array $topics the topics to unsubscribe from
+     * @param iterable $topics the topics to unsubscribe from
      */
-    public function unsubscribeFrom(string $key, array $topics): void;
+    public function unsubscribeFrom(string $key, iterable $topics): void;
 
     /**
      * Trigger invalidation for all items subscribed to specified topics.
      *
-     * @param array $topics the topics to trigger invalidation for
+     * @param iterable $topics the topics to trigger invalidation for
      *
      * @return bool true on success, false on failure
      */
-    public function invalidateTopics(array $topics): bool;
+    public function invalidateTopics(iterable $topics): bool;
 
     /**
      * Get all topics a cache item is subscribed to.

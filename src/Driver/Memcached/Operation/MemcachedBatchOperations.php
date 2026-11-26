@@ -4,85 +4,115 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Driver\Memcached\Operation;
 
+use KaririCode\Cache\Contract\Provider\ExpirationProvider;
 use KaririCode\Cache\Driver\Memcached\Component\MemcachedConnectionManager;
 use KaririCode\Cache\Driver\Memcached\Component\MemcachedErrorHandler;
 use KaririCode\Cache\Driver\Memcached\Component\MemcachedMonitoringService;
 use KaririCode\Cache\Driver\Memcached\Config\MemcachedConfig;
-use KaririCode\Cache\Exception\CacheException;
-use KaririCode\Cache\Exception\InvalidArgumentException;
-use KaririCode\Cache\Validation\Trait\CacheKeyValidationTrait;
-use KaririCode\Cache\Validation\Trait\CacheValueValidationTrait;
-use KaririCode\Cache\Validation\Trait\ExpirationManagementTrait;
+use KaririCode\Cache\Service\ValidationService;
 
 /**
- * Handles batch operations for Memcached (multi-key operations).
- * SRP: This class is only responsible for multi-key operations.
+ * Handles batch operations (get/set/delete multiple) for the MemcachedDriver.
+ *
+ * This class is solely responsible for multi-key operations, adhering to SRP.
+ * It internally uses the ExpirationProvider to calculate the appropriate TTL
+ * for batch-set operations, following the Strategy Pattern.
+ *
+ * @category  Cache
+ *
+ * @author    Walmir Silva <walmir.silva@kariricode.org>
+ * @license   MIT
+ *
+ * @see       https://kariricode.org/
  */
 final class MemcachedBatchOperations
 {
-    use CacheKeyValidationTrait;
-    use CacheValueValidationTrait;
-    use ExpirationManagementTrait;
+    private const MAX_BATCH_SIZE = 100;
 
-    private const MAX_BATCH_SIZE = 1000;
+    private readonly ValidationService $validator;
 
+    /**
+     * @param \Memcached $memcached the Memcached client instance
+     * @param MemcachedConfig $config configuration settings
+     * @param MemcachedErrorHandler $errorHandler error handling and retry logic
+     * @param MemcachedConnectionManager $connectionManager connection health management
+     * @param MemcachedMonitoringService $monitoringService performance monitoring
+     * @param ExpirationProvider $expirationProvider TTL calculation strategy
+     */
     public function __construct(
-        private \Memcached $memcached,
-        private MemcachedConfig $config,
-        private MemcachedErrorHandler $errorHandler,
-        private MemcachedConnectionManager $connectionManager,
-        private MemcachedMonitoringService $monitoringService
+        private readonly \Memcached $memcached,
+        private readonly MemcachedConfig $config,
+        private readonly MemcachedErrorHandler $errorHandler,
+        private readonly MemcachedConnectionManager $connectionManager,
+        private readonly MemcachedMonitoringService $monitoringService,
+        private readonly ExpirationProvider $expirationProvider
     ) {
+        $this->validator = new ValidationService();
     }
 
     /**
-     * @param array<string> $keys
+     * Retrieves multiple items from the cache.
      *
-     * @return array<string, mixed>
+     * @param iterable<string> $keys a list of keys to retrieve
+     *
+     * @return iterable<string, mixed> a map of keys to their values
      */
-    public function getMultiple(array $keys): array
+    public function getMultiple(iterable $keys): iterable
     {
-        if (empty($keys)) {
+        $keyArray = $this->normalizeToArray($keys);
+        if (empty($keyArray)) {
             return [];
         }
-        $this->validateKeys($keys);
+        $this->validator->validateKeys($keyArray);
 
         return (array) $this->errorHandler->executeWithRetry(
-            fn () => $this->performGetMultiple($keys),
+            fn () => $this->performGetMultiple($keyArray),
             $this->connectionManager,
             'getMultiple'
         );
     }
 
     /**
-     * @param array<string, mixed> $values
+     * Stores multiple items in the cache, calculating the TTL internally.
+     *
+     * @param iterable<string, mixed> $values a map of keys to their values
+     *
+     * @return bool true on success
      */
-    public function setMultiple(array $values, ?\DateTimeInterface $expiration = null): bool
+    public function setMultiple(iterable $values): bool
     {
-        if (empty($values)) {
+        $valueArray = $this->normalizeToArray($values);
+        if (empty($valueArray)) {
             return true;
         }
-        $this->validateMultipleValues($values);
+        $this->validator->validateMultipleValues($valueArray);
+
+        $finalExpiration = $this->expirationProvider->calculateExpiration(null, null, 'setMultiple');
 
         return (bool) $this->errorHandler->executeWithRetry(
-            fn () => $this->performSetMultiple($values, $expiration),
+            fn () => $this->performSetMultiple($valueArray, $finalExpiration),
             $this->connectionManager,
             'setMultiple'
         );
     }
 
     /**
-     * @param array<string> $keys
+     * Deletes multiple items from the cache.
+     *
+     * @param iterable<string> $keys a list of keys to delete
+     *
+     * @return bool true on success
      */
-    public function deleteMultiple(array $keys): bool
+    public function deleteMultiple(iterable $keys): bool
     {
-        if (empty($keys)) {
+        $keyArray = $this->normalizeToArray($keys);
+        if (empty($keyArray)) {
             return true;
         }
-        $this->validateKeys($keys);
+        $this->validator->validateKeys($keyArray);
 
         return (bool) $this->errorHandler->executeWithRetry(
-            fn () => $this->performDeleteMultiple($keys),
+            fn () => $this->performDeleteMultiple($keyArray),
             $this->connectionManager,
             'deleteMultiple'
         );
@@ -95,48 +125,27 @@ final class MemcachedBatchOperations
      */
     private function performGetMultiple(array $keys): array
     {
-        if (count($keys) > self::MAX_BATCH_SIZE) {
-            return $this->performGetMultipleInBatches($keys);
-        }
-
-        $prefixedKeys = array_map(fn ($key) => $this->config->keyPrefix . $key, $keys);
+        $prefixedKeys = array_map(fn (string $key) => $this->config->keyPrefix . $key, $keys);
         $values = $this->memcached->getMulti($prefixedKeys);
 
-        if (false === $values) {
-            $resultCode = $this->memcached->getResultCode();
-            if (\Memcached::RES_NOTFOUND !== $resultCode) {
-                throw CacheException::operationFailed('getMultiple', implode(',', $keys));
-            }
-            $values = [];
+        if (!is_array($values)) {
+            $this->monitoringService->recordError();
+
+            return [];
         }
 
         $result = [];
+        $prefixLength = strlen($this->config->keyPrefix);
+        foreach ($values as $prefixedKey => $value) {
+            $originalKey = substr($prefixedKey, $prefixLength);
+            $result[$originalKey] = $value;
+            $this->monitoringService->recordHit();
+        }
+
         foreach ($keys as $key) {
-            $prefixedKey = $this->config->keyPrefix . $key;
-            if (array_key_exists($prefixedKey, $values)) {
-                $result[$key] = $values[$prefixedKey];
-                $this->monitoringService->recordHit();
-            } else {
-                $result[$key] = null;
+            if (!isset($result[$key])) {
                 $this->monitoringService->recordMiss();
             }
-        }
-
-        return $result;
-    }
-
-    /**
-     * @param array<int, string> $keys
-     *
-     * @return array<string, mixed>
-     */
-    private function performGetMultipleInBatches(array $keys): array
-    {
-        $result = [];
-        $batches = array_chunk($keys, self::MAX_BATCH_SIZE);
-        foreach ($batches as $batch) {
-            $batchResult = $this->performGetMultiple($batch);
-            $result = array_merge($result, $batchResult);
         }
 
         return $result;
@@ -151,40 +160,23 @@ final class MemcachedBatchOperations
             return $this->performSetMultipleInBatches($values, $expiration);
         }
 
-        $ttlInSeconds = $this->calculateTtlInSeconds($expiration);
         $prefixedValues = [];
         foreach ($values as $key => $value) {
             $prefixedValues[$this->config->keyPrefix . $key] = $value;
         }
 
-        $result = $this->memcached->setMulti($prefixedValues, $ttlInSeconds);
+        $ttl = $expiration ? max(0, $expiration->getTimestamp() - time()) : 0;
+        $success = $this->memcached->setMulti($prefixedValues, $ttl);
 
-        if ($result) {
-            $count = count($values);
-            for ($i = 0; $i < $count; ++$i) {
+        if ($success) {
+            for ($i = 0; $i < count($values); ++$i) {
                 $this->monitoringService->recordWrite();
             }
         } else {
             $this->monitoringService->recordError();
         }
 
-        return $result;
-    }
-
-    /**
-     * @param array<string, mixed> $values
-     */
-    private function performSetMultipleInBatches(array $values, ?\DateTimeInterface $expiration): bool
-    {
-        $batches = array_chunk($values, self::MAX_BATCH_SIZE, true);
-        $allSuccessful = true;
-        foreach ($batches as $batch) {
-            if (!$this->performSetMultiple($batch, $expiration)) {
-                $allSuccessful = false;
-            }
-        }
-
-        return $allSuccessful;
+        return $success;
     }
 
     /**
@@ -196,12 +188,10 @@ final class MemcachedBatchOperations
             return $this->performDeleteMultipleInBatches($keys);
         }
 
-        $prefixedKeys = array_map(fn ($key) => $this->config->keyPrefix . $key, $keys);
+        $prefixedKeys = array_map(fn (string $key) => $this->config->keyPrefix . $key, $keys);
         $result = $this->memcached->deleteMulti($prefixedKeys);
 
-        // The modern memcached extension returns an array of statuses.
         if (!is_array($result)) {
-            // This case should ideally not happen with modern extensions, but we handle it.
             $this->monitoringService->recordError();
 
             return false;
@@ -214,6 +204,22 @@ final class MemcachedBatchOperations
             } else {
                 $allSuccessful = false;
                 $this->monitoringService->recordError();
+            }
+        }
+
+        return $allSuccessful;
+    }
+
+    /**
+     * @param array<string, mixed> $values
+     */
+    private function performSetMultipleInBatches(array $values, ?\DateTimeInterface $expiration): bool
+    {
+        $batches = array_chunk($values, self::MAX_BATCH_SIZE, true);
+        $allSuccessful = true;
+        foreach ($batches as $batch) {
+            if (!$this->performSetMultiple($batch, $expiration)) {
+                $allSuccessful = false;
             }
         }
 
@@ -237,30 +243,12 @@ final class MemcachedBatchOperations
     }
 
     /**
-     * @param array<string> $keys
+     * @param iterable<mixed> $iterable
+     *
+     * @return array<mixed>
      */
-    private function validateKeys(array $keys): void
+    private function normalizeToArray(iterable $iterable): array
     {
-        foreach ($keys as $key) {
-            $this->validateKey($key);
-        }
-    }
-
-    /**
-     * @param array<string, mixed> $values
-     */
-    private function validateMultipleValues(array $values): void
-    {
-        foreach ($values as $key => $value) {
-            try {
-                $this->validateKey((string) $key);
-                $this->validateValue($value);
-            } catch (\Throwable $e) {
-                if ($e instanceof InvalidArgumentException) {
-                    throw $e;
-                }
-                throw InvalidArgumentException::invalidValue("Invalid value for key '{$key}': " . $e->getMessage(), $e);
-            }
-        }
+        return is_array($iterable) ? $iterable : iterator_to_array($iterable);
     }
 }

@@ -7,7 +7,7 @@ namespace KaririCode\Cache\Driver\Redis\Component;
 use KaririCode\Cache\Driver\Redis\Config\RedisConfig;
 use KaririCode\Cache\Exception\CacheException;
 use KaririCode\Cache\Exception\ConfigurationException;
-use Psr\Log\LoggerInterface;
+use KaririCode\Contract\Logging\Logger;
 
 /**
  * Handles Redis connection lifecycle management.
@@ -20,7 +20,7 @@ final class RedisConnectionManager
     public function __construct(
         private \Redis $redis,
         private RedisConfig $config,
-        private LoggerInterface $logger
+        private Logger $logger
     ) {
         $this->initialize();
     }

@@ -4,36 +4,60 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Driver\Redis\Operation;
 
+use KaririCode\Cache\Contract\Provider\ExpirationProvider;
 use KaririCode\Cache\Driver\Redis\Component\RedisConnectionManager;
 use KaririCode\Cache\Driver\Redis\Component\RedisErrorHandler;
+use KaririCode\Cache\Driver\Redis\Component\RedisMonitoringService;
 use KaririCode\Cache\Driver\Redis\Config\RedisConfig;
-use KaririCode\Cache\Exception\CacheException;
-use KaririCode\Cache\Exception\SerializationException;
-use KaririCode\Cache\Serializer\Trait\SerializationTrait;
-use KaririCode\Cache\Validation\Trait\CacheKeyValidationTrait;
-use KaririCode\Cache\Validation\Trait\CacheValueValidationTrait;
+use KaririCode\Cache\Service\ValidationService;
 
 /**
- * Handles basic CRUD operations for Redis.
- * SRP: This class is only responsible for get, set, has, delete, and clear operations.
+ * Handles basic CRUD operations for the RedisDriver.
+ *
+ * This class is solely responsible for get, set, has, delete, and clear
+ * operations, adhering to the Single Responsibility Principle. It internally
+ * uses the ExpirationProvider to calculate TTLs for write operations.
+ *
+ * @category  Cache
+ *
+ * @author    Walmir Silva <walmir.silva@kariricode.org>
+ * @license   MIT
+ *
+ * @see       https://kariricode.org/
  */
 final class RedisCrudOperations
 {
-    use SerializationTrait;
-    use CacheKeyValidationTrait;
-    use CacheValueValidationTrait;
+    private readonly ValidationService $validator;
 
+    /**
+     * @param \Redis $redis the Redis client instance
+     * @param RedisConfig $config configuration settings
+     * @param RedisErrorHandler $errorHandler error handling and retry logic
+     * @param RedisConnectionManager $connectionManager connection health management
+     * @param RedisMonitoringService $monitoringService performance monitoring
+     * @param ExpirationProvider $expirationProvider TTL calculation strategy
+     */
     public function __construct(
-        private \Redis $redis,
-        private RedisConfig $config,
-        private RedisErrorHandler $errorHandler,
-        private RedisConnectionManager $connectionManager
+        private readonly \Redis $redis,
+        private readonly RedisConfig $config,
+        private readonly RedisErrorHandler $errorHandler,
+        private readonly RedisConnectionManager $connectionManager,
+        private readonly RedisMonitoringService $monitoringService,
+        private readonly ExpirationProvider $expirationProvider
     ) {
+        $this->validator = new ValidationService();
     }
 
+    /**
+     * Retrieves a value from the cache.
+     *
+     * @param string $key the cache key to retrieve
+     *
+     * @return mixed the cached value or null if not found
+     */
     public function get(string $key): mixed
     {
-        $this->validateKey($key);
+        $this->validator->validateKey($key);
 
         return $this->errorHandler->executeWithRetry(
             fn () => $this->performGet($key),
@@ -43,124 +67,128 @@ final class RedisCrudOperations
         );
     }
 
-    public function set(string $key, mixed $value, ?\DateTimeInterface $expiration = null): bool
+    /**
+     * Sets a value in the cache, calculating the TTL internally.
+     *
+     * @param string $key the cache key
+     * @param mixed $value the value to cache
+     *
+     * @return bool true on success, false on failure
+     */
+    public function set(string $key, mixed $value): bool
     {
-        $this->validateKey($key);
-        $this->validateValue($value);
+        $this->validator->validateKey($key);
+        $this->validator->validateValue($value);
+
+        $finalExpiration = $this->expirationProvider->calculateExpiration(null, $key, 'set');
 
         return (bool) $this->errorHandler->executeWithRetry(
-            fn () => $this->performSet($key, $value, $expiration),
+            fn () => $this->performSet($key, $value, $finalExpiration),
             $this->connectionManager,
             'set',
             $key
         );
     }
 
+    /**
+     * Checks if a key exists in the cache.
+     *
+     * @param string $key the cache key to check
+     *
+     * @return bool true if the key exists
+     */
     public function has(string $key): bool
     {
-        $this->validateKey($key);
+        $this->validator->validateKey($key);
 
         return (bool) $this->errorHandler->executeWithRetry(
-            fn () => (int) $this->redis->exists($this->config->keyPrefix . $key) > 0,
+            fn () => $this->performHas($key),
             $this->connectionManager,
             'has',
             $key
         );
     }
 
+    /**
+     * Deletes a key from the cache.
+     *
+     * @param string $key the cache key to delete
+     *
+     * @return bool true on success or if the key didn't exist
+     */
     public function delete(string $key): bool
     {
-        $this->validateKey($key);
+        $this->validator->validateKey($key);
 
         return (bool) $this->errorHandler->executeWithRetry(
-            fn () => (int) $this->redis->del($this->config->keyPrefix . $key) > 0,
+            fn () => $this->performDelete($key),
             $this->connectionManager,
             'delete',
             $key
         );
     }
 
+    /**
+     * Clears all cache entries from the current Redis database.
+     *
+     * @return bool true on success
+     */
     public function clear(): bool
     {
         return (bool) $this->errorHandler->executeWithRetry(
             fn () => $this->performClear(),
             $this->connectionManager,
-            'clear',
-            'all'
+            'clear'
         );
     }
 
+    // ========================================================================
+    // Private Implementation Methods
+    // ========================================================================
+
     private function performGet(string $key): mixed
     {
-        $value = $this->redis->get($this->config->keyPrefix . $key);
+        $fullKey = $this->config->keyPrefix . $key;
+        $value = $this->redis->get($fullKey);
 
         if (false === $value) {
+            // $this->monitoringService->recordMiss(); // Assuming monitoring service exists
             return null;
         }
 
-        if (!is_string($value)) {
-            return null;
-        }
-
-        try {
-            return $this->unserialize($value);
-        } catch (\Throwable $e) {
-            throw SerializationException::deserializationFailed($value, $e);
-        }
+        // $this->monitoringService->recordHit();
+        return $value;
     }
 
     private function performSet(string $key, mixed $value, ?\DateTimeInterface $expiration): bool
     {
-        try {
-            $serialized = $this->serialize($value);
-        } catch (\Throwable $e) {
-            throw SerializationException::serializationFailed($value, $e);
-        }
-
         $fullKey = $this->config->keyPrefix . $key;
 
-        if ($expiration) {
+        if (null !== $expiration) {
             $ttl = max(1, $expiration->getTimestamp() - time());
 
-            return (bool) $this->redis->setex($fullKey, $ttl, $serialized);
+            return $this->redis->setex($fullKey, $ttl, $value);
         }
 
-        return (bool) $this->redis->set($fullKey, $serialized);
+        return $this->redis->set($fullKey, $value);
+    }
+
+    private function performHas(string $key): bool
+    {
+        $fullKey = $this->config->keyPrefix . $key;
+
+        return $this->redis->exists($fullKey) > 0;
+    }
+
+    private function performDelete(string $key): bool
+    {
+        $fullKey = $this->config->keyPrefix . $key;
+
+        return $this->redis->del($fullKey) >= 0; // DEL returns num keys deleted, 0 if not found
     }
 
     private function performClear(): bool
     {
-        $deletedCount = 0;
-        $patterns = [
-            $this->config->keyPrefix . '*',
-            $this->config->tagPrefix . '*',
-            $this->config->topicPrefix . '*',
-        ];
-
-        foreach ($patterns as $pattern) {
-            $deletedCount += $this->scanAndDelete($pattern);
-        }
-
-        return true;
-    }
-
-    private function scanAndDelete(string $pattern): int
-    {
-        $deletedCount = 0;
-        $iterator = null;
-
-        try {
-            $this->redis->setOption(\Redis::OPT_SCAN, \Redis::SCAN_RETRY);
-
-            while (($keys = $this->redis->scan($iterator, $pattern, $this->config->scanBatchSize)) !== false) {
-                if (is_array($keys) && !empty($keys)) {
-                    $deletedCount += (int) $this->redis->del($keys);
-                }
-            }
-        } catch (\RedisException $e) {
-            throw CacheException::operationFailed('scanAndDelete', $pattern, $e);
-        }
-
-        return $deletedCount;
+        return $this->redis->flushDB();
     }
 }

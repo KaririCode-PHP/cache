@@ -4,86 +4,104 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Driver\Apcu\Operation;
 
+use KaririCode\Cache\Contract\Provider\ExpirationProvider;
 use KaririCode\Cache\Driver\Apcu\Component\ApcuErrorHandler;
 use KaririCode\Cache\Driver\Apcu\Component\ApcuMonitoringService;
 use KaririCode\Cache\Driver\Apcu\Config\ApcuConfig;
-use KaririCode\Cache\Exception\InvalidArgumentException;
 use KaririCode\Cache\Serializer\Trait\SerializationTrait;
-use KaririCode\Cache\Validation\Trait\CacheKeyValidationTrait;
-use KaririCode\Cache\Validation\Trait\CacheValueValidationTrait;
-use KaririCode\Cache\Validation\Trait\ExpirationManagementTrait;
+use KaririCode\Cache\Service\ValidationService;
 
 /**
- * Handles batch operations for APCu.
- * SRP: This class is only responsible for multi-key operations.
+ * Handles batch operations (get/set/delete multiple) for the ApcuDriver.
+ *
+ * This class is solely responsible for multi-key operations, adhering to SRP.
+ * It internally uses the ExpirationProvider to calculate the appropriate TTL
+ * for batch-set operations, following the Strategy Pattern.
+ *
+ * @category  Cache
+ *
+ * @author    Walmir Silva <walmir.silva@kariricode.org>
+ * @license   MIT
+ *
+ * @see       https://kariricode.org/
  */
 final class ApcuBatchOperations
 {
     use SerializationTrait;
-    use CacheKeyValidationTrait;
-    use CacheValueValidationTrait;
-    use ExpirationManagementTrait;
 
+    private readonly ValidationService $validator;
+
+    /**
+     * @param ApcuConfig $config configuration settings for APCu
+     * @param ApcuErrorHandler $errorHandler error handling and retry logic
+     * @param ApcuMonitoringService $monitoringService performance monitoring
+     * @param ExpirationProvider $expirationProvider strategy for TTL management
+     */
     public function __construct(
-        private ApcuConfig $config,
-        private ApcuErrorHandler $errorHandler,
-        private ApcuMonitoringService $monitoringService
+        private readonly ApcuConfig $config,
+        private readonly ApcuErrorHandler $errorHandler,
+        private readonly ApcuMonitoringService $monitoringService,
+        private readonly ExpirationProvider $expirationProvider
     ) {
+        $this->validator = new ValidationService();
     }
 
     /**
-     * @param array<string> $keys
+     * Retrieves multiple items from the cache.
      *
-     * @return array<string, mixed>
+     * @param iterable<string> $keys a list of keys to retrieve
+     *
+     * @return iterable<string, mixed> a map of keys to their values
      */
-    public function getMultiple(array $keys): array
+    public function getMultiple(iterable $keys): iterable
     {
-        $this->validateKeys($keys);
+        $keyArray = $this->normalizeToArray($keys);
+        $this->validator->validateKeys($keyArray);
 
-        if (empty($keys)) {
-            return [];
-        }
-
-        return (array) $this->errorHandler->executeWithRetry(
-            fn () => $this->performGetMultiple($keys),
+        return $this->errorHandler->executeWithRetry(
+            fn () => $this->performGetMultiple($keyArray),
             'getMultiple',
-            implode(',', $keys)
+            implode(',', $keyArray)
         );
     }
 
     /**
-     * @param array<string, mixed> $values
+     * Stores multiple items in the cache, calculating the TTL internally.
+     *
+     * @param iterable<string, mixed> $values a map of keys to their values
+     *
+     * @return bool true on success
      */
-    public function setMultiple(array $values, ?\DateTimeInterface $expiration = null): bool
+    public function setMultiple(iterable $values): bool
     {
-        if (empty($values)) {
-            return true;
-        }
+        $valueArray = $this->normalizeToArray($values);
+        $this->validator->validateMultipleValues($valueArray);
 
-        $this->validateMultipleValues($values);
+        // Calculate expiration using the provider's strategy for batch operations.
+        $finalExpiration = $this->expirationProvider->calculateExpiration(null, null, 'setMultiple');
 
         return (bool) $this->errorHandler->executeWithRetry(
-            fn () => $this->performSetMultiple($values, $expiration),
-            'setMultiple',
-            implode(',', array_keys($values))
+            fn () => $this->performSetMultiple($valueArray, $finalExpiration),
+            'setMultiple'
         );
     }
 
     /**
-     * @param array<string> $keys
+     * Deletes multiple items from the cache.
+     *
+     * @param iterable<string> $keys a list of keys to delete
+     *
+     * @return bool true on success
      */
-    public function deleteMultiple(array $keys): bool
+    public function deleteMultiple(iterable $keys): bool
     {
-        $this->validateKeys($keys);
-
-        if (empty($keys)) {
-            return true;
-        }
+        $keyArray = $this->normalizeToArray($keys);
+        $this->validator->validateKeys($keyArray);
 
         return (bool) $this->errorHandler->executeWithRetry(
-            fn () => $this->performDeleteMultiple($keys),
+            fn () => $this->performDeleteMultiple($keyArray),
             'deleteMultiple',
-            implode(',', $keys)
+            implode(',', $keyArray)
         );
     }
 
@@ -99,9 +117,14 @@ final class ApcuBatchOperations
             $keys
         );
 
-        $rawValues = apcu_fetch($prefixedKeys, $success);
+        $rawValues = apcu_fetch($prefixedKeys);
 
         if (!is_array($rawValues)) {
+            // On failure, apcu_fetch can return false. Treat as a miss for all keys.
+            foreach ($keys as $key) {
+                $this->monitoringService->recordMiss();
+            }
+
             return array_fill_keys($keys, null);
         }
 
@@ -126,32 +149,31 @@ final class ApcuBatchOperations
      */
     private function performSetMultiple(array $values, ?\DateTimeInterface $expiration): bool
     {
+        $ttl = $expiration ? max(0, $expiration->getTimestamp() - time()) : 0;
+
         $prefixedValues = [];
-        $ttl = $this->calculateTtlInSeconds($expiration);
-
         foreach ($values as $key => $value) {
-            $prefixedValues[$this->config->keyPrefix . $key] = $this->serialize($value);
+            $prefixedValues[$this->config->keyPrefix . (string) $key] = $this->serialize($value);
         }
 
-        $failures = apcu_store($prefixedValues, null, $ttl);
+        // apcu_store returns an array of failed keys on failure.
+        $failedKeys = apcu_store($prefixedValues, null, $ttl);
 
-        if (!is_array($failures)) {
-            // A non-array return indicates a catastrophic failure.
-            $this->monitoringService->recordError();
+        $success = empty($failedKeys);
 
-            return false;
-        }
-
-        $successCount = count($prefixedValues) - count($failures);
+        // Record metrics based on success/failure.
+        $totalItems = count($values);
+        $failedCount = count($failedKeys);
+        $successCount = $totalItems - $failedCount;
 
         for ($i = 0; $i < $successCount; ++$i) {
             $this->monitoringService->recordWrite();
         }
-        for ($i = 0; $i < count($failures); ++$i) {
+        for ($i = 0; $i < $failedCount; ++$i) {
             $this->monitoringService->recordError();
         }
 
-        return empty($failures);
+        return $success;
     }
 
     /**
@@ -164,40 +186,25 @@ final class ApcuBatchOperations
             $keys
         );
 
-        // ANÁLISE: apcu_delete() com um array de chaves sempre retorna um array com as chaves que falharam.
         $failures = apcu_delete($prefixedKeys);
 
-        // Se o retorno não for um array, algo muito errado aconteceu (falha catastrófica).
-        if (!is_array($failures)) {
-            $this->monitoringService->recordError();
-
-            return false;
-        }
+        $success = empty($failures);
 
         $deletedCount = count($prefixedKeys) - count($failures);
         for ($i = 0; $i < $deletedCount; ++$i) {
             $this->monitoringService->recordDelete();
         }
 
-        // A operação é considerada um sucesso se o array de falhas estiver vazio.
-        return empty($failures);
+        return $success;
     }
 
     /**
-     * @param array<string, mixed> $values
+     * @param iterable<mixed> $iterable
+     *
+     * @return array<mixed>
      */
-    private function validateMultipleValues(array $values): void
+    private function normalizeToArray(iterable $iterable): array
     {
-        foreach ($values as $key => $value) {
-            try {
-                $this->validateKey((string) $key);
-                $this->validateValue($value);
-            } catch (\Throwable $e) {
-                if ($e instanceof InvalidArgumentException) {
-                    throw $e;
-                }
-                throw InvalidArgumentException::invalidValue("Invalid value for key '{$key}': " . $e->getMessage(), $e);
-            }
-        }
+        return is_array($iterable) ? $iterable : iterator_to_array($iterable);
     }
 }

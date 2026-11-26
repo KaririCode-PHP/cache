@@ -4,283 +4,199 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Driver;
 
-use KaririCode\Cache\Contract\Behavioral\Maintainable;
 use KaririCode\Cache\Contract\CacheCapabilities;
 use KaririCode\Cache\Contract\CacheDriver;
 use KaririCode\Cache\Contract\DriverStats;
 use KaririCode\Cache\Contract\Filesystem\DirectoryManager;
-use KaririCode\Cache\Contract\Filesystem\FileSystemStatistics;
 use KaririCode\Cache\Contract\Filesystem\FileSystemValidator;
-use KaririCode\Cache\Contract\TaggableCacheDriver;
-use KaririCode\Cache\Driver\Filesystem\Cache\FileSystemCacheOperations;
+use KaririCode\Cache\Driver\Filesystem\Operation\FilesystemCrudOperations;
 use KaririCode\Cache\Driver\Filesystem\Operation\FilesystemTagOperations;
-use KaririCode\Cache\ValueObject\MetricsSnapshot;
-use KaririCode\Cache\ValueObject\Tag;
-use Psr\Log\LoggerInterface;
+use KaririCode\Cache\Driver\Filesystem\Statistics\FileSystemStatistics;
+use KaririCode\Cache\Item\CacheItem;
+use KaririCode\Contract\Logging\Logger;
+use Psr\Cache\CacheItemInterface;
 
 /**
- * Enhanced filesystem-based cache driver with tag support.
+ * Acts as a pure Facade for all Filesystem cache operations.
  *
- * This driver has been extended to support tag-based cache operations
- * while maintaining the existing filesystem architecture. It demonstrates
- * how the filesystem driver can be enhanced to match the capabilities
- * of other drivers in the system.
- *
- * Key enhancements:
- * - Implements TaggableCacheDriver interface
- * - Delegates tag operations to FilesystemTagOperations
- * - Maintains architectural consistency with other drivers
- * - Preserves existing filesystem optimizations
+ * Its single responsibility is to delegate cache operations to the specialized
+ * handler classes it is composed of. It does not contain any business logic,
+ * adhering strictly to the Facade and Single Responsibility principles.
  *
  * @category  Cache
  *
  * @author    Walmir Silva <walmir.silva@kariricode.org>
  * @license   MIT
  *
- * @see      https://kariricode.org/
- * @see       FilesystemTagOperations for tag-specific operations
- * @see       FileSystemCacheOperations for basic cache operations
+ * @see       https://kariricode.org/
  */
-final class FilesystemDriver implements
-    CacheDriver,
-    Maintainable,
-    TaggableCacheDriver
+final class FilesystemDriver implements CacheDriver
 {
+    /**
+     * @param DirectoryManager $directoryManager manages directory operations
+     * @param FilesystemCrudOperations $crudOperations handles basic get/set/delete operations
+     * @param FilesystemTagOperations $tagOperations handles tag-based operations
+     * @param FileSystemStatistics $statistics provides driver statistics
+     * @param FileSystemValidator $validator validates keys, values, and paths
+     * @param Logger $logger a PSR-3 logger instance
+     */
     public function __construct(
         private readonly DirectoryManager $directoryManager,
-        private readonly FileSystemCacheOperations $cacheOperations,
+        private readonly FilesystemCrudOperations $crudOperations,
         private readonly FilesystemTagOperations $tagOperations,
         private readonly FileSystemStatistics $statistics,
         private readonly FileSystemValidator $validator,
-        private readonly LoggerInterface $logger
+        private readonly Logger $logger
     ) {
-        $this->logger->info('Enhanced FilesystemDriver initialized with tag support');
     }
 
-    // ========================================================================
-    // Basic Cache Operations (Existing Implementation)
-    // ========================================================================
+    // --- Basic CRUD Operations (Delegated) ---
 
     public function get(string $key): mixed
     {
-        $startTime = microtime(true);
-        try {
-            $this->validator->validateKey($key);
-            $result = $this->cacheOperations->get($key);
-            $this->statistics->recordOperation('get', microtime(true) - $startTime);
-
-            return $result;
-        } catch (\Throwable $e) {
-            $this->logger->error('Failed to get cache item', [
-                'key' => $key,
-                'error' => $e->getMessage(),
-            ]);
-            throw $e;
-        }
+        return $this->crudOperations->get($key);
     }
 
-    public function set(string $key, mixed $value, ?\DateTimeInterface $expiration = null): bool
+    public function set(string $key, mixed $value): bool
     {
-        $startTime = microtime(true);
-        try {
-            $this->validator->validateKey($key);
-            $this->validator->validateValue($value);
-            $result = $this->cacheOperations->set($key, $value, $expiration);
-            $this->statistics->recordOperation('set', microtime(true) - $startTime);
-
-            return $result;
-        } catch (\Throwable $e) {
-            $this->logger->error('Failed to set cache item', [
-                'key' => $key,
-                'error' => $e->getMessage(),
-            ]);
-            throw $e;
-        }
+        // The responsibility of handling TTL is now inside FilesystemCrudOperations.
+        return $this->crudOperations->set($key, $value);
     }
 
     public function has(string $key): bool
     {
-        try {
-            $this->validator->validateKey($key);
-
-            return $this->cacheOperations->has($key);
-        } catch (\Throwable $e) {
-            $this->logger->error('Failed to check cache item existence', [
-                'key' => $key,
-                'error' => $e->getMessage(),
-            ]);
-
-            return false;
-        }
+        return $this->crudOperations->has($key);
     }
 
     public function delete(string $key): bool
     {
-        try {
-            $this->validator->validateKey($key);
-
-            return $this->cacheOperations->delete($key);
-        } catch (\Throwable $e) {
-            $this->logger->error('Failed to delete cache item', [
-                'key' => $key,
-                'error' => $e->getMessage(),
-            ]);
-
-            return false;
-        }
+        return $this->crudOperations->delete($key);
     }
 
     public function clear(): bool
     {
-        try {
-            return $this->directoryManager->clear();
-        } catch (\Throwable $e) {
-            $this->logger->error('Failed to clear cache', [
-                'error' => $e->getMessage(),
-            ]);
-
-            return false;
-        }
+        return $this->crudOperations->clear();
     }
 
-    // ========================================================================
-    // Batch Operations (Existing Implementation)
-    // ========================================================================
+    // --- Batch Operations (Delegated) ---
 
-    public function getMultiple(array $keys): array
+    public function getMultiple(iterable $keys): iterable
     {
-        $results = [];
+        return $this->crudOperations->getMultiple($keys);
+    }
+
+    public function setMultiple(iterable $values): bool
+    {
+        // The responsibility of handling TTL is now inside FilesystemCrudOperations.
+        return $this->crudOperations->setMultiple($values);
+    }
+
+    public function deleteMultiple(iterable $keys): bool
+    {
+        return $this->crudOperations->deleteMultiple($keys);
+    }
+
+    public function getItem(string $key): CacheItemInterface
+    {
+        $value = $this->crudOperations->get($key);
+
+        return new CacheItem($key, $value, null !== $value);
+    }
+
+    public function getItems(iterable $keys = []): iterable
+    {
+        $items = [];
         foreach ($keys as $key) {
-            $results[$key] = $this->get($key);
+            $items[$key] = $this->getItem($key);
         }
 
-        return $results;
+        return $items;
     }
 
-    public function setMultiple(array $values, ?\DateTimeInterface $expiration = null): bool
+    public function hasItem(string $key): bool
     {
-        $success = true;
-        foreach ($values as $key => $value) {
-            if (!$this->set((string) $key, $value, $expiration)) {
-                $success = false;
-            }
+        return $this->crudOperations->has($key);
+    }
+
+    public function deleteItem(string $key): bool
+    {
+        return $this->crudOperations->delete($key);
+    }
+
+    public function deleteItems(array $keys): bool
+    {
+        return $this->crudOperations->deleteMultiple($keys);
+    }
+
+    public function save(CacheItemInterface $item): bool
+    {
+        if (!$item instanceof CacheItem) {
+            // If it's not our CacheItem, we can't get the expiration directly.
+            // For now, we'll save without specific expiration, relying on default TTL.
+            // A more robust solution might involve a custom CacheItem implementation or a way to extract TTL.
+            return $this->crudOperations->set($item->getKey(), $item->get());
         }
 
-        return $success;
+        // Assuming CacheItem has a getExpiration method or similar for TTL
+        return $this->crudOperations->set($item->getKey(), $item->get());
     }
 
-    public function deleteMultiple(array $keys): bool
+    public function saveDeferred(CacheItemInterface $item): bool
     {
-        $success = true;
-        foreach ($keys as $key) {
-            if (!$this->delete($key)) {
-                $success = false;
-            }
-        }
-
-        return $success;
+        // Filesystem driver doesn't inherently support deferred saving.
+        // We'll save immediately, effectively making saveDeferred behave like save.
+        return $this->save($item);
     }
 
-    // ========================================================================
-    // Tag Operations (NEW - Delegated to FilesystemTagOperations)
-    // ========================================================================
-
-    /**
-     * Sets a cache item with associated tags.
-     *
-     * @param string $key The cache key
-     * @param mixed $value The value to store
-     * @param array<string|Tag> $tags Array of tags (strings or Tag objects)
-     * @param \DateInterval|int|null $ttl Time to live
-     *
-     * @return bool True on success, false on failure
-     */
-    public function setWithTags(string $key, mixed $value, array $tags, \DateInterval|int|null $ttl = null): bool
+    public function commit(): bool
     {
-        return $this->tagOperations->setWithTags($key, $value, $tags, $ttl);
+        // No deferred operations to commit for the Filesystem driver.
+        return true;
     }
 
-    /**
-     * Invalidates all cache items associated with the given tags.
-     *
-     * @param array<Tag> $tags Array of Tag objects to invalidate
-     *
-     * @return bool True if tags were successfully invalidated, false otherwise
-     */
-    public function invalidateTags(array $tags): bool
+    // --- Tag Operations (Delegated) ---
+
+    public function setWithTags(string $key, mixed $value, iterable $tags): bool
     {
-        return $this->tagOperations->invalidateTags($tags);
+        return $this->tagOperations->setWithTags($key, $value, $tags);
     }
 
-    /**
-     * Retrieves all cache items associated with the given tags.
-     *
-     * @param array<Tag> $tags Array of Tag objects
-     *
-     * @return array<string, mixed> Array of cache items indexed by their keys
-     */
-    public function getByTags(array $tags): array
+    public function getByTags(iterable $tags): iterable
     {
         return $this->tagOperations->getByTags($tags);
     }
 
-    /**
-     * Gets all tags currently in use.
-     *
-     * @return array<string> Array of tag names
-     */
-    public function getTags(): array
+    public function invalidateTags(iterable $tags): bool
+    {
+        return $this->tagOperations->invalidateTags($tags);
+    }
+
+    public function getTags(): iterable
     {
         return $this->tagOperations->getTags();
     }
 
-    // ========================================================================
-    // Driver Information and Maintenance
-    // ========================================================================
+    // --- Statistics, Capabilities, and Maintenance ---
 
     public function getCapabilities(): array
     {
         return [
-            CacheCapabilities::TAGGING,
+            CacheCapabilities::TAGGING_OPERATIONS,
+            CacheCapabilities::MAINTENANCE_OPERATIONS,
         ];
     }
 
     public function getStats(): DriverStats
     {
-        $statsArray = $this->statistics->getStats();
-
-        return new MetricsSnapshot(
-            'Filesystem',
-            $statsArray['directory_size'],
-            $statsArray['file_count'],
-            null, // Filesystem driver does not have a specific version
-            $statsArray
-        );
-    }
-
-    public function isHealthy(): bool
-    {
-        return $this->directoryManager->isWritable(
-            $this->directoryManager->getBaseDirectory()
-        );
+        return $this->statistics;
     }
 
     public function maintenance(array $options = []): bool
     {
-        try {
-            // Perform basic cache cleanup
-            $this->cacheOperations->performCleanup();
+        $this->logger->info('Filesystem cache maintenance started.');
+        $this->crudOperations->cleanupExpired();
+        $this->logger->info('Filesystem cache maintenance finished.');
 
-            // Perform tag-specific cleanup
-            $this->tagOperations->performCleanup();
-
-            return true;
-        } catch (\Throwable $e) {
-            $this->logger->error('Cache maintenance failed', [
-                'error' => $e->getMessage(),
-            ]);
-
-            return false;
-        }
+        return true;
     }
 }

@@ -5,23 +5,37 @@ declare(strict_types=1);
 namespace KaririCode\Cache\Driver\Filesystem\Directory;
 
 use KaririCode\Cache\Contract\Filesystem\DirectoryManager as DirectoryManagerContract;
+use KaririCode\Cache\Driver\Filesystem\Config\FilesystemConfig;
 use KaririCode\Cache\Exception\FilesystemException;
-use Psr\Log\LoggerInterface;
+use KaririCode\Contract\Logging\Logger;
 
 /**
- * Directory manager following SRP.
- * Responsible ONLY for directory management operations.
+ * Manages all directory-related operations for the FilesystemDriver.
+ *
+ * This class is solely responsible for creating, clearing, and inspecting
+ * cache directories. It adheres to the Single Responsibility Principle and
+ * is configured via a dedicated DTO for consistency and type safety.
+ *
+ * @category  Cache
+ *
+ * @author    Walmir Silva <walmir.silva@kariricode.org>
+ * @license   MIT
+ *
+ * @see       https://kariricode.org/
  */
 final class DirectoryManager implements DirectoryManagerContract
 {
-    private const DIR_PERMISSIONS = 0755;
+    private readonly string $baseDirectory;
 
+    /**
+     * @param FilesystemConfig $config the configuration DTO for the filesystem driver
+     * @param Logger $logger a PSR-3 logger instance
+     */
     public function __construct(
-        private string $baseDirectory,
-        private LoggerInterface $logger,
-        private string $keyPrefix = 'cache_'
+        private readonly FilesystemConfig $config,
+        private readonly Logger $logger
     ) {
-        $this->baseDirectory = rtrim($baseDirectory, '/\\') . DIRECTORY_SEPARATOR;
+        $this->baseDirectory = rtrim($this->config->directory, '/\\') . DIRECTORY_SEPARATOR;
         $this->initializeBaseDirectory();
     }
 
@@ -32,12 +46,9 @@ final class DirectoryManager implements DirectoryManagerContract
         }
 
         try {
-            $result = mkdir($directory, self::DIR_PERMISSIONS, true);
-
+            $result = mkdir($directory, $this->config->directoryPermissions, true);
             if ($result) {
-                $this->logger->debug('Directory created', [
-                    'directory' => $directory,
-                ]);
+                $this->logger->debug('Cache directory created', ['directory' => $directory]);
             }
 
             return $result;
@@ -46,7 +57,6 @@ final class DirectoryManager implements DirectoryManagerContract
                 'directory' => $directory,
                 'error' => $e->getMessage(),
             ]);
-
             throw FilesystemException::directoryCreationFailed($directory, $e);
         }
     }
@@ -55,10 +65,9 @@ final class DirectoryManager implements DirectoryManagerContract
     {
         try {
             $deletedCount = $this->clearDirectoryRecursive($this->baseDirectory);
-
             $this->logger->info('Cache directory cleared', [
                 'directory' => $this->baseDirectory,
-                'files_deleted' => $deletedCount,
+                'items_deleted' => $deletedCount,
             ]);
 
             return true;
@@ -67,21 +76,23 @@ final class DirectoryManager implements DirectoryManagerContract
                 'directory' => $this->baseDirectory,
                 'error' => $e->getMessage(),
             ]);
-
-            throw FilesystemException::directoryCreationFailed($this->baseDirectory, $e);
+            // Use a more specific exception
+            throw FilesystemException::directoryClearFailed($this->baseDirectory, $e);
         }
     }
 
     public function getSize(): int
     {
         $size = 0;
-        $files = $this->getCacheFiles();
-
-        foreach ($files as $file) {
-            $fileSize = filesize($file);
-            if (false !== $fileSize) {
-                $size += $fileSize;
+        try {
+            $iterator = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($this->baseDirectory, \RecursiveDirectoryIterator::SKIP_DOTS));
+            foreach ($iterator as $file) {
+                if ($file->isFile()) {
+                    $size += $file->getSize();
+                }
             }
+        } catch (\Throwable $e) {
+            $this->logger->error('Could not calculate directory size.', ['error' => $e->getMessage()]);
         }
 
         return $size;
@@ -97,32 +108,39 @@ final class DirectoryManager implements DirectoryManagerContract
         return is_dir($directory) && is_writable($directory);
     }
 
-    /**
-     * Get all cache files matching the prefix pattern.
-     *
-     * @return array<string>
-     */
     public function getCacheFiles(): array
     {
         $files = [];
-        $pattern = $this->keyPrefix . '*.cache';
-
-        $this->scanDirectory($this->baseDirectory, $pattern, $files);
+        if (!is_dir($this->baseDirectory)) {
+            return [];
+        }
+        try {
+            $iterator = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($this->baseDirectory, \RecursiveDirectoryIterator::SKIP_DOTS));
+            foreach ($iterator as $file) {
+                if ($file->isFile()) {
+                    $files[] = $file->getPathname();
+                }
+            }
+        } catch (\Throwable $e) {
+            $this->logger->error('Could not scan cache files.', ['error' => $e->getMessage()]);
+        }
 
         return $files;
     }
 
-    /**
-     * Create subdirectory structure for better performance.
-     */
-    public function createSubdirectoryPath(string $hash, int $levels = 2): string
+    public function createSubdirectoryPath(string $hash): string
     {
+        $levels = $this->config->directoryLevels;
+        if ($levels <= 0) {
+            return $this->baseDirectory;
+        }
+
         $subdirs = [];
         for ($i = 0; $i < $levels; ++$i) {
             $subdirs[] = substr($hash, $i * 2, 2);
         }
 
-        $directory = $this->baseDirectory . implode(DIRECTORY_SEPARATOR, $subdirs) . DIRECTORY_SEPARATOR;
+        $directory = $this->baseDirectory . implode(DIRECTORY_SEPARATOR, $subdirs);
 
         if (!$this->ensureExists($directory)) {
             throw FilesystemException::directoryCreationFailed($directory);
@@ -139,84 +157,34 @@ final class DirectoryManager implements DirectoryManagerContract
     private function initializeBaseDirectory(): void
     {
         if (!$this->ensureExists($this->baseDirectory)) {
-            throw FilesystemException::directoryCreationFailed($this->baseDirectory);
+            // Exception is already thrown by ensureExists
+            return;
         }
-
         if (!$this->isWritable($this->baseDirectory)) {
-            throw FilesystemException::fileNotWritable($this->baseDirectory);
+            throw FilesystemException::directoryNotWritable($this->baseDirectory);
         }
-
-        $this->logger->info('Directory manager initialized', [
-            'base_directory' => $this->baseDirectory,
-            'key_prefix' => $this->keyPrefix,
-        ]);
     }
 
     private function clearDirectoryRecursive(string $directory): int
     {
         $deletedCount = 0;
+        $iterator = new \RecursiveIteratorIterator(
+            new \RecursiveDirectoryIterator($directory, \RecursiveDirectoryIterator::SKIP_DOTS),
+            \RecursiveIteratorIterator::CHILD_FIRST
+        );
 
-        try {
-            $iterator = new \RecursiveIteratorIterator(
-                new \RecursiveDirectoryIterator($directory, \RecursiveDirectoryIterator::SKIP_DOTS),
-                \RecursiveIteratorIterator::CHILD_FIRST
-            );
-
-            /** @var \SplFileInfo $file */
-            foreach ($iterator as $file) {
-                if ($file->isFile()) {
-                    if (!unlink($file->getPathname())) {
-                        throw FilesystemException::fileDeletionFailed($file->getPathname());
-                    }
+        foreach ($iterator as $file) {
+            if ($file->isDir()) {
+                if (rmdir($file->getRealPath())) {
                     ++$deletedCount;
-                } elseif ($file->isDir()) {
-                    if (!rmdir($file->getPathname())) {
-                        throw FilesystemException::directoryNotEmpty($file->getPathname());
-                    }
+                }
+            } else {
+                if (unlink($file->getRealPath())) {
+                    ++$deletedCount;
                 }
             }
-        } catch (FilesystemException $e) {
-            throw $e; // Re-throw our specific exceptions
-        } catch (\Throwable $e) {
-            $this->logger->error('Failed to clear directory recursively', [
-                'directory' => $directory,
-                'error' => $e->getMessage(),
-            ]);
-
-            throw FilesystemException::directoryCreationFailed($directory, $e);
         }
 
         return $deletedCount;
-    }
-
-    /**
-     * @param array<string> $files
-     */
-    private function scanDirectory(string $directory, string $pattern, array &$files): void
-    {
-        if (!is_dir($directory)) {
-            return;
-        }
-
-        try {
-            $iterator = new \RecursiveIteratorIterator(
-                new \RecursiveDirectoryIterator($directory, \RecursiveDirectoryIterator::SKIP_DOTS),
-                \RecursiveIteratorIterator::LEAVES_ONLY
-            );
-
-            /** @var \SplFileInfo $file */
-            foreach ($iterator as $file) {
-                if ($file->isFile() && fnmatch($pattern, $file->getFilename())) {
-                    $files[] = $file->getPathname();
-                }
-            }
-        } catch (\Throwable $e) {
-            $this->logger->error('Failed to scan directory', [
-                'directory' => $directory,
-                'error' => $e->getMessage(),
-            ]);
-
-            throw FilesystemException::fileNotReadable($directory, $e);
-        }
     }
 }

@@ -4,220 +4,260 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Driver\Redis\Operation;
 
+use KaririCode\Cache\Contract\Provider\ExpirationProvider;
 use KaririCode\Cache\Driver\Redis\Component\RedisConnectionManager;
 use KaririCode\Cache\Driver\Redis\Component\RedisErrorHandler;
 use KaririCode\Cache\Driver\Redis\Config\RedisConfig;
-use KaririCode\Cache\Exception\CacheException;
-use KaririCode\Cache\Operation\Factory\TagNormalizer;
 use KaririCode\Cache\Serializer\Trait\SerializationTrait;
-use KaririCode\Cache\Validation\Trait\CacheKeyValidationTrait;
-use KaririCode\Cache\Validation\Trait\CacheValueValidationTrait;
-use KaririCode\Cache\Validation\Trait\ExpirationManagementTrait;
-use KaririCode\Cache\Validation\Trait\TagValidationTrait;
+use KaririCode\Cache\Service\ValidationService;
 use KaririCode\Cache\ValueObject\Tag;
 
 /**
- * Handles tag-based cache operations with type safety and performance optimization.
+ * Handles tag-based cache operations for the RedisDriver.
  *
- * @see https://redis.io/docs/manual/pipelining/ Redis Pipeline Documentation
+ * This class is solely responsible for tag-related logic, using Redis Sets for
+ * efficient index management. It internally uses the ExpirationProvider to
+ * calculate TTLs for tagged items and their indexes, adhering to SRP and the
+ * Strategy Pattern.
+ *
+ * @category  Cache
+ *
+ * @author    Walmir Silva <walmir.silva@kariricode.org>
+ * @license   MIT
+ *
+ * @see       https://kariricode.org/
  */
 final class RedisTagOperations
 {
     use SerializationTrait;
-    use CacheKeyValidationTrait;
-    use CacheValueValidationTrait;
-    use TagValidationTrait;
-    use ExpirationManagementTrait;
 
+    private const TAG_SET_PREFIX = 'tag:';
+    private const TAG_EXPIRATION_BUFFER = 3600; // 1 hour buffer for tag index expiration
+
+    private readonly ValidationService $validator;
+
+    /**
+     * @param \Redis $redis the Redis client instance
+     * @param RedisConfig $config configuration settings
+     * @param RedisErrorHandler $errorHandler error handling and retry logic
+     * @param RedisConnectionManager $connectionManager connection health management
+     * @param ExpirationProvider $expirationProvider TTL calculation strategy
+     */
     public function __construct(
-        private \Redis $redis,
-        private RedisConfig $config,
-        private RedisErrorHandler $errorHandler,
-        private RedisConnectionManager $connectionManager
+        private readonly \Redis $redis,
+        private readonly RedisConfig $config,
+        private readonly RedisErrorHandler $errorHandler,
+        private readonly RedisConnectionManager $connectionManager,
+        private readonly ExpirationProvider $expirationProvider
     ) {
+        $this->validator = new ValidationService();
     }
 
     /**
-     * @param array<string|Tag> $tags
+     * Stores an item with associated tags, calculating the TTL internally.
+     *
+     * @param string $key the key of the item
+     * @param mixed $value the value to store
+     * @param iterable<string|Tag> $tags the tags to associate
+     *
+     * @return bool true on success
      */
-    public function setWithTags(
-        string $key,
-        mixed $value,
-        array $tags,
-        \DateInterval|int|null $ttl = null
-    ): bool {
-        $this->validateKey($key);
-        $this->validateValue($value);
+    public function setWithTags(string $key, mixed $value, iterable $tags): bool
+    {
+        $this->validator->validateKey($key);
+        $this->validator->validateValue($value);
+        $normalizedTags = $this->normalizeTags($tags);
+        $this->validator->validateTags($normalizedTags);
 
-        // MUDANÇA: Normalização híbrida
-        $normalizedTags = $this->validateAndNormalizeTags($tags);
+        $finalExpiration = $this->expirationProvider->calculateExpiration(null, $key, 'setWithTags');
 
-        $result = $this->errorHandler->executeWithRetry(
-            fn (): bool => $this->performSetWithTags($key, $value, $normalizedTags, $ttl),
+        return (bool) $this->errorHandler->executeWithRetry(
+            fn () => $this->performSetWithTags($key, $value, $normalizedTags, $finalExpiration),
             $this->connectionManager,
             'setWithTags',
             $key
         );
-
-        return is_bool($result) ? $result : false;
     }
 
     /**
-     * @param array<string|Tag> $tags
+     * Retrieves all items that have all of the given tags.
+     *
+     * @param iterable<string|Tag> $tags the tags to search for
+     *
+     * @return iterable<string, mixed> a map of keys to their values
      */
-    public function invalidateTags(array $tags): bool
+    public function getByTags(iterable $tags): iterable
     {
-        $normalizedTags = $this->validateAndNormalizeTags($tags);
+        $normalizedTags = $this->normalizeTags($tags);
+        $this->validator->validateTags($normalizedTags);
 
         $result = $this->errorHandler->executeWithRetry(
-            fn (): bool => $this->performInvalidateTags($normalizedTags),
+            fn () => $this->performGetByTags($normalizedTags),
             $this->connectionManager,
-            'invalidateTags',
-            implode(',', TagNormalizer::toStrings($normalizedTags))
+            'getByTags'
         );
 
-        return is_bool($result) ? $result : false;
+        return is_iterable($result) ? $result : [];
     }
 
     /**
-     * @param array<string|Tag> $tags
+     * Deletes all items associated with any of the given tags.
+     *
+     * @param iterable<string|Tag> $tags the tags to invalidate
+     *
+     * @return bool true on success
      */
-    public function getByTags(array $tags): array
+    public function invalidateTags(iterable $tags): bool
     {
-        $normalizedTags = $this->validateAndNormalizeTags($tags);
+        $normalizedTags = $this->normalizeTags($tags);
+        $this->validator->validateTags($normalizedTags);
 
-        $result = $this->errorHandler->executeWithRetry(
-            fn (): array => $this->performGetByTags($normalizedTags),
+        return (bool) $this->errorHandler->executeWithRetry(
+            fn () => $this->performInvalidateTags($normalizedTags),
             $this->connectionManager,
-            'getByTags',
-            implode(',', TagNormalizer::toStrings($normalizedTags))
+            'invalidateTags'
         );
-
-        return is_array($result) ? $result : [];
     }
 
-    public function getTags(): array
+    /**
+     * Retrieves all unique tags stored in the cache.
+     *
+     * @return iterable<Tag> a list of Tag objects
+     */
+    public function getTags(): iterable
     {
-        $result = $this->errorHandler->executeWithRetry(
-            fn (): array => $this->performGetTags(),
-            $this->connectionManager,
-            'getTags',
-            '*'
-        );
+        $iterator = null;
+        $prefix = $this->config->keyPrefix . self::TAG_SET_PREFIX;
+        $prefixLength = strlen($prefix);
 
-        return is_array($result) ? $result : [];
-    }
-
-    private function performSetWithTags(
-        string $key,
-        mixed $value,
-        array $tags,
-        \DateInterval|int|null $ttl
-    ): bool {
-        $fullKey = $this->config->keyPrefix . $key;
-        $serialized = $this->serialize($value);
-        $expiration = $this->calculateExpiration($ttl);
-
-        try {
-            $pipe = $this->redis->multi(\Redis::PIPELINE);
-
-            if ($expiration) {
-                $ttlSeconds = max(1, $expiration->getTimestamp() - time());
-                $pipe->setex($fullKey, $ttlSeconds, $serialized);
-            } else {
-                $pipe->set($fullKey, $serialized);
+        // Use SCAN to avoid blocking the server with KEYS *.
+        while ($keys = $this->redis->scan($iterator, $prefix . '*')) {
+            foreach ($keys as $key) {
+                yield new Tag(substr($key, $prefixLength));
             }
-
-            foreach ($tags as $tag) {
-                $tagKey = $this->config->tagPrefix . $tag;
-                $pipe->sAdd($tagKey, $fullKey);
-                if ($expiration) {
-                    $pipe->expireAt($tagKey, $expiration->getTimestamp() + 3600);
-                }
-            }
-
-            $results = $pipe->exec();
-
-            return is_array($results) && !in_array(false, $results, true);
-        } catch (\RedisException $e) {
-            throw CacheException::operationFailed('setWithTags', $key, $e);
         }
     }
 
+    /**
+     * @param array<Tag> $tags
+     */
+    private function performSetWithTags(string $key, mixed $value, array $tags, ?\DateTimeInterface $expiration): bool
+    {
+        $fullKey = $this->config->keyPrefix . $key;
+        $serializedValue = $this->serialize($value);
+
+        $pipeline = $this->redis->multi(\Redis::PIPELINE);
+
+        if ($expiration) {
+            $ttl = max(1, $expiration->getTimestamp() - time());
+            $pipeline->setex($fullKey, $ttl, $serializedValue);
+            $tagTtl = $ttl + self::TAG_EXPIRATION_BUFFER;
+        } else {
+            $pipeline->set($fullKey, $serializedValue);
+            $tagTtl = null;
+        }
+
+        foreach ($tags as $tag) {
+            $tagKey = $this->getTagKey($tag);
+            $pipeline->sAdd($tagKey, $fullKey);
+            if ($tagTtl) {
+                $pipeline->expire($tagKey, $tagTtl);
+            }
+        }
+
+        $results = $pipeline->exec();
+
+        return is_array($results) && !in_array(false, $results, true);
+    }
+
+    /**
+     * @param array<Tag> $tags
+     */
     private function performInvalidateTags(array $tags): bool
     {
-        try {
-            $tagKeys = array_map(fn (Tag $tag): string => $this->config->tagPrefix . $tag, $tags);
-            $keysToDelete = $this->redis->sUnion(...$tagKeys);
-
-            if (empty($keysToDelete)) {
-                if (!empty($tagKeys)) {
-                    $this->redis->del($tagKeys);
-                }
-
-                return true;
-            }
-
-            $pipe = $this->redis->multi(\Redis::PIPELINE);
-            $pipe->del($keysToDelete);
-            $pipe->del($tagKeys);
-            $pipe->exec();
-
+        $keysToDelete = $this->getKeysForTags($tags);
+        if (empty($keysToDelete)) {
             return true;
-        } catch (\RedisException $e) {
-            throw CacheException::operationFailed('invalidateTags', implode(',', array_map('strval', $tags)), $e);
         }
+
+        $pipeline = $this->redis->multi(\Redis::PIPELINE);
+        $pipeline->del($keysToDelete); // Delete the actual cache items.
+
+        // Delete the tag index keys themselves.
+        foreach ($tags as $tag) {
+            $pipeline->del($this->getTagKey($tag));
+        }
+
+        $pipeline->exec();
+
+        return true;
     }
 
-    private function performGetByTags(array $tags): array
+    /**
+     * @param array<Tag> $tags
+     *
+     * @return iterable<string, mixed>
+     */
+    private function performGetByTags(array $tags): iterable
     {
-        try {
-            $tagKeys = array_map(fn (Tag $tag): string => $this->config->tagPrefix . $tag, $tags);
-            $itemKeys = $this->redis->sInter(...$tagKeys);
-
-            if (empty($itemKeys)) {
-                return [];
-            }
-
-            $rawValues = $this->redis->mget($itemKeys);
-            if (!is_array($rawValues)) {
-                return [];
-            }
-
-            $valueMap = array_combine($itemKeys, $rawValues);
-
-            $results = [];
-            foreach ($valueMap as $fullKey => $value) {
-                if (is_string($value)) {
-                    $originalKey = str_replace($this->config->keyPrefix, '', (string) $fullKey);
-                    try {
-                        $results[$originalKey] = $this->unserialize($value);
-                    } catch (\Throwable) {
-                        continue;
-                    }
-                }
-            }
-
-            return $results;
-        } catch (\RedisException $e) {
-            throw CacheException::operationFailed('getByTags', implode(',', array_map('strval', $tags)), $e);
+        $keys = $this->getKeysForTags($tags);
+        if (empty($keys)) {
+            return [];
         }
+
+        $values = $this->redis->mget($keys);
+        if (!is_array($values)) {
+            return [];
+        }
+
+        $results = [];
+        $prefixLength = strlen($this->config->keyPrefix);
+        foreach ($keys as $index => $fullKey) {
+            if (isset($values[$index]) && false !== $values[$index]) {
+                $originalKey = substr($fullKey, $prefixLength);
+                $results[$originalKey] = $this->unserialize($values[$index]);
+            }
+        }
+
+        return $results;
     }
 
-    private function performGetTags(): array
+    /**
+     * @param array<Tag> $tags
+     *
+     * @return array<string> a list of full, prefixed keys
+     */
+    private function getKeysForTags(array $tags): array
     {
-        try {
-            $tagKeys = $this->redis->keys($this->config->tagPrefix . '*');
-            if (!is_array($tagKeys)) {
-                return [];
-            }
-
-            return array_map(
-                fn (string $key): string => str_replace($this->config->tagPrefix, '', $key),
-                $tagKeys
-            );
-        } catch (\RedisException $e) {
-            throw CacheException::operationFailed('getTags', '*', $e);
+        if (empty($tags)) {
+            return [];
         }
+
+        $tagKeys = array_map(fn (Tag $tag) => $this->getTagKey($tag), $tags);
+
+        // Get intersection of all tag sets to find keys that have ALL tags.
+        $keys = $this->redis->sInter($tagKeys);
+
+        return is_array($keys) ? $keys : [];
+    }
+
+    private function getTagKey(Tag $tag): string
+    {
+        return $this->config->keyPrefix . self::TAG_SET_PREFIX . (string) $tag;
+    }
+
+    /**
+     * @param iterable<string|Tag> $tags
+     *
+     * @return array<Tag>
+     */
+    private function normalizeTags(iterable $tags): array
+    {
+        $normalized = [];
+        foreach ($tags as $tag) {
+            $normalized[] = $tag instanceof Tag ? $tag : new Tag((string) $tag);
+        }
+
+        return $normalized;
     }
 }

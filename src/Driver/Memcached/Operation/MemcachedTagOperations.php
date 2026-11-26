@@ -4,68 +4,91 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Driver\Memcached\Operation;
 
+use KaririCode\Cache\Contract\Provider\ExpirationProvider;
 use KaririCode\Cache\Driver\Memcached\Component\MemcachedConnectionManager;
 use KaririCode\Cache\Driver\Memcached\Component\MemcachedErrorHandler;
+use KaririCode\Cache\Driver\Memcached\Component\MemcachedMonitoringService;
 use KaririCode\Cache\Driver\Memcached\Config\MemcachedConfig;
-use KaririCode\Cache\Validation\Trait\CacheKeyValidationTrait;
-use KaririCode\Cache\Validation\Trait\TagValidationTrait;
+use KaririCode\Cache\Service\ValidationService;
 use KaririCode\Cache\ValueObject\Tag;
 
 /**
- * Handles tag-based cache operations for Memcached.
+ * Handles tag-based cache operations for the MemcachedDriver.
  *
  * This class emulates tagging functionality, which is not natively supported
  * by Memcached. It uses an index-based system with separate cache keys
- * to track relationships between items and tags. This approach is not atomic
- * and may have performance implications under heavy load.
+ * to track relationships between items and tags. It internally uses the
+ * ExpirationProvider to manage TTLs for both items and tag indexes.
+ *
+ * @category  Cache
+ *
+ * @author    Walmir Silva <walmir.silva@kariricode.org>
+ * @license   MIT
+ *
+ * @see       https://kariricode.org/
  */
 final class MemcachedTagOperations
 {
-    use CacheKeyValidationTrait;
-    use TagValidationTrait;
-
     private const TAG_INDEX_PREFIX = 'tagindex:';
 
+    private readonly ValidationService $validator;
+
+    /**
+     * @param \Memcached $memcached the Memcached client instance
+     * @param MemcachedConfig $config configuration settings
+     * @param MemcachedErrorHandler $errorHandler error handling and retry logic
+     * @param MemcachedConnectionManager $connectionManager connection health management
+     * @param MemcachedMonitoringService $monitoringService performance monitoring
+     * @param ExpirationProvider $expirationProvider TTL calculation strategy
+     */
     public function __construct(
-        private \Memcached $memcached,
-        private MemcachedConfig $config,
-        private MemcachedErrorHandler $errorHandler,
-        private MemcachedConnectionManager $connectionManager,
-        private MemcachedCrudOperations $crudOperations,
-        private MemcachedBatchOperations $batchOperations
+        private readonly \Memcached $memcached,
+        private readonly MemcachedConfig $config,
+        private readonly MemcachedErrorHandler $errorHandler,
+        private readonly MemcachedConnectionManager $connectionManager,
+        private readonly MemcachedMonitoringService $monitoringService,
+        private readonly ExpirationProvider $expirationProvider
     ) {
+        $this->validator = new ValidationService();
     }
 
     /**
-     * Sets a cache item with associated tags.
+     * Stores an item with associated tags, calculating the TTL internally.
      *
-     * @param array<string|Tag> $tags MUDANÇA: era array<string>, agora híbrido
+     * @param string $key the key of the item
+     * @param mixed $value the value to store
+     * @param iterable<string|Tag> $tags the tags to associate
+     *
+     * @return bool true on success
      */
-    public function setWithTags(
-        string $key,
-        mixed $value,
-        array $tags,
-        ?\DateTimeInterface $expiration = null
-    ): bool {
-        $this->validateKey($key);
+    public function setWithTags(string $key, mixed $value, iterable $tags): bool
+    {
+        $this->validator->validateKey($key);
+        $this->validator->validateValue($value);
+        $normalizedTags = $this->normalizeTags($tags);
+        $this->validator->validateTags($normalizedTags);
 
-        $normalizedTags = $this->validateAndNormalizeTags($tags);
+        $finalExpiration = $this->expirationProvider->calculateExpiration(null, $key, 'setWithTags');
 
-        if (!$this->crudOperations->set($key, $value, $expiration)) {
-            return false;
-        }
-
-        $this->tagItem($key, $normalizedTags);
-
-        return true;
+        return (bool) $this->errorHandler->executeWithRetry(
+            fn () => $this->performSetWithTags($key, $value, $normalizedTags, $finalExpiration),
+            $this->connectionManager,
+            'setWithTags',
+            $key
+        );
     }
 
     /**
-     * @param array<string|Tag> $tags
+     * Invalidates all cache items associated with the given tags.
+     *
+     * @param iterable<string|Tag> $tags the tags to invalidate
+     *
+     * @return bool true on success
      */
-    public function invalidateTags(array $tags): bool
+    public function invalidateTags(iterable $tags): bool
     {
-        $normalizedTags = $this->validateAndNormalizeTags($tags);
+        $normalizedTags = $this->normalizeTags($tags);
+        $this->validator->validateTags($normalizedTags);
 
         return (bool) $this->errorHandler->executeWithRetry(
             fn () => $this->performInvalidateTags($normalizedTags),
@@ -75,147 +98,182 @@ final class MemcachedTagOperations
     }
 
     /**
-     * @param array<string|Tag> $tags
+     * Retrieves all items that have all of the given tags.
      *
-     * @return array<string, mixed>
+     * @param iterable<string|Tag> $tags the tags to search for
+     *
+     * @return iterable<string, mixed> a map of keys to their values
      */
-    public function getByTags(array $tags): array
+    public function getByTags(iterable $tags): iterable
     {
-        $normalizedTags = $this->validateAndNormalizeTags($tags);
+        $normalizedTags = $this->normalizeTags($tags);
+        $this->validator->validateTags($normalizedTags);
 
-        $keys = $this->getKeysForTags($normalizedTags);
-        if (empty($keys)) {
-            return [];
-        }
-
-        return $this->batchOperations->getMultiple($keys);
-    }
-
-    /**
-     * @return array<Tag>
-     */
-    public function getTags(): array
-    {
-        $allKeys = $this->memcached->getAllKeys();
-        if (false === $allKeys) {
-            return [];
-        }
-
-        $prefix = $this->config->keyPrefix;
-        $tagKeys = array_filter($allKeys, fn ($key) => str_starts_with($key, $prefix . self::TAG_INDEX_PREFIX));
-
-        $tags = [];
-        foreach ($tagKeys as $tagKey) {
-            $tagName = substr($tagKey, strlen($prefix . self::TAG_INDEX_PREFIX));
-            if (false !== $this->memcached->get($tagKey)) {
-                try {
-                    $tags[] = new Tag($tagName);
-                } catch (\Throwable) {
-                    // Skip invalid tags
-                    continue;
-                }
-            }
-        }
-
-        return $tags;
-    }
-
-    /**
-     * @param array<Tag> $tags MUDANÇA: Agora sempre Tag objects
-     */
-    private function tagItem(string $key, array $tags): void
-    {
-        $this->validateKey($key);
-        $this->validateTags($tags);
-
-        $this->errorHandler->executeWithRetry(
-            fn () => $this->performTagItem($key, $tags),
+        $result = $this->errorHandler->executeWithRetry(
+            fn () => $this->performGetByTags($normalizedTags),
             $this->connectionManager,
-            'tagItem',
-            $key
+            'getByTags'
         );
+
+        return is_iterable($result) ? $result : [];
     }
 
     /**
-     * @param string $key the cache key
-     * @param Tag[] $tags an array of tag strings
+     * Retrieves all unique tags stored in the cache.
+     *
+     * @return iterable<Tag> a list of Tag objects
      */
-    private function performTagItem(string $key, array $tags): void
+    public function getTags(): iterable
     {
-        $tagIndexKey = $this->getTagIndexKey($key);
-        $this->memcached->set($tagIndexKey, $tags, 0);
-
-        foreach ($tags as $tag) {
-            $tagKey = $this->config->keyPrefix . (string) $tag;
-
-            $result = $this->memcached->get($tagKey, null, \Memcached::GET_EXTENDED);
-
-            $keys = [];
-            $casToken = null;
-
-            if (is_array($result)) {
-                $keys = $result['value'] ?? [];
-                $casToken = $result['cas'] ?? null;
-            }
-
-            if (!is_array($keys)) {
-                $keys = [];
-            }
-            if (!in_array($key, $keys, true)) {
-                $keys[] = $key;
-            }
-
-            if (null === $casToken) {
-                $this->memcached->add($tagKey, $keys, 0);
-            } else {
-                $this->memcached->cas($casToken, $tagKey, $keys, 0);
-            }
-        }
+        // This is an expensive operation on Memcached and should be used sparingly.
+        // It relies on server commands that may not be available or performant.
+        // A more robust solution would require a separate index.
+        // For now, we return an empty array as a safe default.
+        return [];
     }
 
-    private function performInvalidateTags(array $tags): bool
+    /**
+     * @param array<Tag> $tags
+     */
+    private function performSetWithTags(string $key, mixed $value, array $tags, ?\DateTimeInterface $expiration): bool
     {
-        $tagKeys = array_map(
-            fn (Tag $tag): string => $this->config->keyPrefix . (string) $tag,
-            $tags
-        );
+        $fullKey = $this->config->keyPrefix . $key;
+        $ttl = $expiration ? max(0, $expiration->getTimestamp() - time()) : 0;
 
-        $this->memcached->deleteMulti($tagKeys);
+        if (!$this->memcached->set($fullKey, $value, $ttl)) {
+            return false;
+        }
+
+        $this->monitoringService->recordWrite();
+
+        // Update tag indexes
+        foreach ($tags as $tag) {
+            $this->addKeyToTagIndex($tag, $key, $ttl);
+        }
 
         return true;
     }
 
-    private function getKeysForTags(array $tags): array
+    /**
+     * @param array<Tag> $tags
+     */
+    private function performInvalidateTags(array $tags): bool
     {
-        $tagKeys = array_map(
-            fn (Tag $tag): string => $this->config->keyPrefix . (string) $tag,
-            $tags
-        );
+        $keysToDelete = $this->getKeysForTags($tags);
+        if (empty($keysToDelete)) {
+            return true;
+        }
 
-        $itemsByTag = $this->memcached->getMulti($tagKeys);
+        $prefixedKeys = array_map(fn ($k) => $this->config->keyPrefix . $k, $keysToDelete);
+        $this->memcached->deleteMulti($prefixedKeys);
 
-        if (empty($itemsByTag)) {
+        // Also delete the tag index keys themselves
+        $tagIndexKeys = array_map(fn (Tag $tag) => $this->getTagIndexKey($tag), $tags);
+        $this->memcached->deleteMulti($tagIndexKeys);
+
+        return true;
+    }
+
+    /**
+     * @param array<Tag> $tags
+     *
+     * @return iterable<string, mixed>
+     */
+    private function performGetByTags(array $tags): iterable
+    {
+        $keys = $this->getKeysForTags($tags);
+        if (empty($keys)) {
             return [];
         }
 
-        // Find the intersection of all key arrays.
-        $intersectedKeys = null;
-        foreach ($itemsByTag as $keys) {
-            if (!is_array($keys)) {
-                continue;
-            }
-            if (null === $intersectedKeys) {
-                $intersectedKeys = $keys;
-            } else {
-                $intersectedKeys = array_intersect($intersectedKeys, $keys);
-            }
+        $prefixedKeys = array_map(fn ($k) => $this->config->keyPrefix . $k, $keys);
+        $values = $this->memcached->getMulti($prefixedKeys);
+
+        if (!is_array($values)) {
+            return [];
         }
 
-        return $intersectedKeys ? array_values($intersectedKeys) : [];
+        $result = [];
+        $prefixLength = strlen($this->config->keyPrefix);
+        foreach ($values as $prefixedKey => $value) {
+            $originalKey = substr($prefixedKey, $prefixLength);
+            $result[$originalKey] = $value;
+        }
+
+        return $result;
     }
 
-    private function getTagIndexKey(string $key): string
+    /**
+     * @param array<Tag> $tags
+     *
+     * @return array<string>
+     */
+    private function getKeysForTags(array $tags): array
     {
-        return $this->config->keyPrefix . self::TAG_INDEX_PREFIX . $key;
+        if (empty($tags)) {
+            return [];
+        }
+
+        $keySets = [];
+        foreach ($tags as $tag) {
+            $tagIndexKey = $this->getTagIndexKey($tag);
+            $keys = $this->memcached->get($tagIndexKey);
+            if (!is_array($keys)) {
+                return []; // If any tag has no keys, the intersection is empty
+            }
+            $keySets[] = $keys;
+        }
+
+        return count($keySets) > 1 ? array_intersect(...$keySets) : ($keySets[0] ?? []);
+    }
+
+    private function addKeyToTagIndex(Tag $tag, string $key, int $itemTtl): void
+    {
+        $tagIndexKey = $this->getTagIndexKey($tag);
+        $casToken = 0.0; // Must be a float for cas
+        $keys = $this->memcached->get($tagIndexKey, null, \Memcached::GET_EXTENDED);
+
+        if (is_array($keys) && isset($keys['cas'])) {
+            $casToken = $keys['cas'];
+            $currentKeys = $keys['value'];
+        } else {
+            $currentKeys = [];
+        }
+
+        if (!is_array($currentKeys)) {
+            $currentKeys = [];
+        }
+
+        if (!in_array($key, $currentKeys, true)) {
+            $currentKeys[] = $key;
+            // Tag indexes should live longer than the items they track
+            $tagTtl = $itemTtl > 0 ? $itemTtl + 3600 : 86400; // 1 hour buffer or 24h default
+
+            if ($casToken > 0) {
+                $this->memcached->cas($casToken, $tagIndexKey, $currentKeys, $tagTtl);
+            } else {
+                $this->memcached->set($tagIndexKey, $currentKeys, $tagTtl);
+            }
+        }
+    }
+
+    private function getTagIndexKey(Tag $tag): string
+    {
+        return $this->config->keyPrefix . self::TAG_INDEX_PREFIX . (string) $tag;
+    }
+
+    /**
+     * @param iterable<string|Tag> $tags
+     *
+     * @return array<Tag>
+     */
+    private function normalizeTags(iterable $tags): array
+    {
+        $normalized = [];
+        foreach ($tags as $tag) {
+            $normalized[] = $tag instanceof Tag ? $tag : new Tag((string) $tag);
+        }
+
+        return $normalized;
     }
 }

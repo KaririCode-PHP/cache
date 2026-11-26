@@ -6,13 +6,13 @@ namespace KaririCode\Cache\Driver\Redis\Component;
 
 use KaririCode\Cache\Contract\DriverStats;
 use KaririCode\Cache\ValueObject\MetricsSnapshot;
-use Psr\Log\LoggerInterface;
+use KaririCode\Contract\Logging\Logger;
 
 final class RedisMonitoringService
 {
     public function __construct(
         private \Redis $redis,
-        private LoggerInterface $logger
+        private Logger $logger
     ) {
     }
 

@@ -4,31 +4,42 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Driver;
 
-use KaririCode\Cache\Contract\AtomicCacheDriver;
-use KaririCode\Cache\Contract\Behavioral\CompareAndSwapAware;
 use KaririCode\Cache\Contract\CacheCapabilities;
+use KaririCode\Cache\Contract\CacheDriver;
 use KaririCode\Cache\Contract\DriverStats;
-use KaririCode\Cache\Contract\TaggableCacheDriver;
 use KaririCode\Cache\Driver\Memcached\Component\MemcachedConnectionManager;
 use KaririCode\Cache\Driver\Memcached\Component\MemcachedMonitoringService;
 use KaririCode\Cache\Driver\Memcached\Operation\MemcachedAtomicOperations;
 use KaririCode\Cache\Driver\Memcached\Operation\MemcachedBatchOperations;
 use KaririCode\Cache\Driver\Memcached\Operation\MemcachedCrudOperations;
 use KaririCode\Cache\Driver\Memcached\Operation\MemcachedTagOperations;
-use KaririCode\Cache\Validation\Trait\ExpirationManagementTrait;
-use KaririCode\Cache\ValueObject\Tag;
+use KaririCode\Cache\Item\CacheItem;
+use Psr\Cache\CacheItemInterface;
 
 /**
- * Acts as a Facade for all Memcached operations, delegating to specialized handlers.
+ * Acts as a pure Facade for all Memcached operations.
+ *
+ * Its single responsibility is to delegate cache operations to the specialized
+ * handler classes it is composed of. It does not contain any business logic,
+ * adhering strictly to the Facade and Single Responsibility principles.
+ *
+ * @category  Cache
+ *
+ * @author    Walmir Silva <walmir.silva@kariricode.org>
+ * @license   MIT
+ *
+ * @see       https://kariricode.org/
  */
-final class MemcachedDriver implements
-    AtomicCacheDriver,
-    TaggableCacheDriver,
-    CompareAndSwapAware
+final class MemcachedDriver implements CacheDriver
 {
-    // FIX: Add the trait to the class.
-    use ExpirationManagementTrait;
-
+    /**
+     * @param MemcachedCrudOperations $crudOperations handles basic get/set/delete operations
+     * @param MemcachedBatchOperations $batchOperations handles multi-key operations
+     * @param MemcachedAtomicOperations $atomicOperations handles increment/decrement/add operations
+     * @param MemcachedTagOperations $tagOperations handles tag-based operations
+     * @param MemcachedMonitoringService $monitoringService provides driver statistics
+     * @param MemcachedConnectionManager $connectionManager manages the connection lifecycle
+     */
     public function __construct(
         private readonly MemcachedCrudOperations $crudOperations,
         private readonly MemcachedBatchOperations $batchOperations,
@@ -39,16 +50,17 @@ final class MemcachedDriver implements
     ) {
     }
 
-    // --- Basic CRUD Operations ---
+    // --- Basic CRUD Operations (Delegated) ---
+
     public function get(string $key): mixed
     {
         return $this->crudOperations->get($key);
     }
 
-    public function set(string $key, mixed $value, ?\DateTimeInterface $expiration = null): bool
+    public function set(string $key, mixed $value): bool
     {
-        // NOTE: This signature is already correct. If a TTL were passed here, it would also need conversion.
-        return $this->crudOperations->set($key, $value, $expiration);
+        // The responsibility of handling TTL is now inside MemcachedCrudOperations.
+        return $this->crudOperations->set($key, $value);
     }
 
     public function has(string $key): bool
@@ -66,92 +78,135 @@ final class MemcachedDriver implements
         return $this->crudOperations->clear();
     }
 
-    // --- Batch Operations ---
-    public function getMultiple(array $keys): array
+    // --- Batch Operations (Delegated) ---
+
+    public function getMultiple(iterable $keys): iterable
     {
         return $this->batchOperations->getMultiple($keys);
     }
 
-    public function setMultiple(array $values, ?\DateTimeInterface $expiration = null): bool
+    public function setMultiple(iterable $values): bool
     {
-        return $this->batchOperations->setMultiple($values, $expiration);
+        // The responsibility of handling TTL is now inside MemcachedBatchOperations.
+        return $this->batchOperations->setMultiple($values);
     }
 
-    public function deleteMultiple(array $keys): bool
+    public function deleteMultiple(iterable $keys): bool
     {
         return $this->batchOperations->deleteMultiple($keys);
     }
 
-    // --- Atomic Operations ---
-    public function increment(string $key, int $step = 1, int $initialValue = 0, \DateInterval|int|null $ttl = null): int
+    public function getItem(string $key): CacheItemInterface
     {
-        return $this->atomicOperations->increment($key, $step, $initialValue, $ttl);
+        $value = $this->crudOperations->get($key);
+
+        return new CacheItem($key, $value, null !== $value);
     }
 
-    public function add(string $key, mixed $value, \DateInterval|int|null $ttl = null): bool
+    public function getItems(iterable $keys = []): iterable
     {
-        return $this->atomicOperations->add($key, $value, $ttl);
+        $items = [];
+        foreach ($keys as $key) {
+            $items[$key] = $this->getItem($key);
+        }
+
+        return $items;
     }
 
-    public function compareAndSwap(string $key, mixed $expected, mixed $value, \DateInterval|int|null $ttl = null): bool
+    public function hasItem(string $key): bool
     {
-        return $this->atomicOperations->compareAndSwap($key, $expected, $value, $ttl);
+        return $this->crudOperations->has($key);
     }
 
-    // --- Tagging Operations (Implementing TaggableCacheDriver) ---
-    /**
-     * @param string $key the cache key
-     * @param mixed $value the value to cache
-     * @param Tag[] $tags an array of Tag objects*
-     * @param \DateInterval|int|null $ttl the time-to-live for the cache item, can be an int (seconds), DateInterval, or null
-     *
-     * @return bool true if the item was successfully cached, false otherwise
-     */
-    public function setWithTags(string $key, mixed $value, array $tags, \DateInterval|int|null $ttl = null): bool
+    public function deleteItem(string $key): bool
     {
-        $expiration = $this->calculateExpiration($ttl);
-
-        return $this->tagOperations->setWithTags($key, $value, $tags, $expiration);
+        return $this->crudOperations->delete($key);
     }
 
-    /**
-     * @param Tag[] $tags an array of Tag objects
-     *
-     * @return bool true if the tags were successfully invalidated, false otherwise
-     */
-    public function invalidateTags(array $tags): bool
+    public function deleteItems(array $keys): bool
     {
-        return $this->tagOperations->invalidateTags($tags);
+        return $this->batchOperations->deleteMultiple($keys);
     }
 
-    /**
-     * @param Tag[] $tags an array of Tag objects
-     *
-     * @return array <string, mixed> an array of cache items indexed by their keys
-     */
-    public function getByTags(array $tags): array
+    public function save(CacheItemInterface $item): bool
+    {
+        return $this->crudOperations->set($item->getKey(), $item->get());
+    }
+
+    // --- Atomic Operations (Delegated) ---
+
+    public function increment(string $key, int $step = 1, int $initialValue = 0): int
+    {
+        return $this->atomicOperations->increment($key, $step, $initialValue);
+    }
+
+    public function decrement(string $key, int $step = 1, int $initialValue = 0): int
+    {
+        return $this->atomicOperations->decrement($key, $step, $initialValue);
+    }
+
+    public function add(string $key, mixed $value): bool
+    {
+        return $this->atomicOperations->add($key, $value);
+    }
+
+    // --- Compare and Swap (Delegated) ---
+
+    public function compareAndSwap(string $key, mixed $expected, mixed $value): bool
+    {
+        return $this->atomicOperations->compareAndSwap($key, $expected, $value);
+    }
+
+    // --- Tag Operations (Delegated) ---
+
+    public function setWithTags(string $key, mixed $value, iterable $tags): bool
+    {
+        return $this->tagOperations->setWithTags($key, $value, $tags);
+    }
+
+    public function getByTags(iterable $tags): iterable
     {
         return $this->tagOperations->getByTags($tags);
     }
 
-    public function getTags(): array
+    public function invalidateTags(iterable $tags): bool
+    {
+        return $this->tagOperations->invalidateTags($tags);
+    }
+
+    public function getTags(): iterable
     {
         return $this->tagOperations->getTags();
     }
 
-    // --- Statistics and Monitoring (Implementing CacheDriver) ---
+    public function saveDeferred(CacheItemInterface $item): bool
+    {
+        // Memcached driver doesn't inherently support deferred saving.
+        // We'll save immediately, effectively making saveDeferred behave like save.
+        return $this->save($item);
+    }
+
+    public function commit(): bool
+    {
+        // No deferred operations to commit for the Memcached driver.
+        return true;
+    }
+    // --- Statistics, Capabilities, and Connection ---
 
     public function getStats(): DriverStats
     {
-        return $this->monitoringService->getDriverStats();
+        return $this->monitoringService;
     }
 
     public function getCapabilities(): array
     {
-        return [CacheCapabilities::ATOMIC_OPERATIONS, CacheCapabilities::TAGGING];
+        return [
+            CacheCapabilities::ATOMIC_OPERATIONS,
+            CacheCapabilities::TAGGING_OPERATIONS,
+        ];
     }
 
-    public function isHealthy(): bool
+    public function isConnected(): bool
     {
         return $this->connectionManager->isHealthy();
     }

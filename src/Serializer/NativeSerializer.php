@@ -11,12 +11,14 @@ use KaririCode\Cache\ValueObject\SerializationScheme;
 use KaririCode\Contract\ImmutableValue;
 
 /**
- * Native PHP serializer hardened against object‑injection and runtime errors.
- *
- * @psalm-type Serializable = scalar|array|object|null
+ * Native PHP serializer hardened against object-injection and runtime errors.
  */
-final class NativeSerializer implements CacheSerializer, ImmutableValue
+final class NativeSerializer implements CacheSerializer
 {
+    /**
+     * @param array<class-string> $allowedClasses a list of classes that are allowed to be unserialized
+     * @param array<string, mixed> $options options to pass to the native serialize() function
+     */
     public function __construct(
         private readonly array $allowedClasses = [],
         private readonly array $options = []
@@ -31,7 +33,6 @@ final class NativeSerializer implements CacheSerializer, ImmutableValue
         try {
             return serialize($data);
         } catch (\Throwable $e) {
-            // get_debug_type() gives a precise textual representation of the value's type.
             throw CacheException::serializationFailed(get_debug_type($data), $e);
         }
     }
@@ -42,13 +43,9 @@ final class NativeSerializer implements CacheSerializer, ImmutableValue
     public function unserialize(string $data): mixed
     {
         try {
-            // Prevent object‑injection by disallowing object instantiation.
-            $result = @unserialize($data, [
-                'allowed_classes' => false,
-            ]);
+            $unserializeOptions = ['allowed_classes' => $this->allowedClasses];
+            $result = @unserialize($data, $unserializeOptions);
 
-            // When unserialize() fails it returns false *and* raises a warning. However, the
-            // serialized boolean false ("b:0;") also evaluates to false. We distinguish the two.
             if (false === $result && 'b:0;' !== $data) {
                 throw SerializationException::deserializationFailed($data, new \UnexpectedValueException('Malformed serialized data'));
             }
@@ -61,6 +58,11 @@ final class NativeSerializer implements CacheSerializer, ImmutableValue
 
     public function canSerialize(mixed $data): bool
     {
+        // Explicitly check for resources, as serialize() does not throw for them.
+        if (is_resource($data)) {
+            return false;
+        }
+
         try {
             serialize($data);
 
@@ -77,10 +79,10 @@ final class NativeSerializer implements CacheSerializer, ImmutableValue
 
     public function getConfiguration(): ImmutableValue
     {
-        return new SerializationScheme([
-            'type' => 'native',
-            'allowed_classes' => $this->allowedClasses,
-            'options' => $this->options,
-        ]);
+        return new SerializationScheme(
+            type: 'native',
+            allowedClasses: $this->allowedClasses,
+            options: $this->options
+        );
     }
 }
