@@ -1,5 +1,7 @@
-# Spec V4.3.3 quality gate (§29.1) in CI. Actions and the service image are
-# pinned by commit SHA / digest (§32; OWASP Top 10:2025 A03, CVE-2025-30066).
+# Spec V4.3.3 quality gate (§29.1) through KaririCode Devkit with the root
+# configs (ADR-015). Actions and the service image are pinned by commit SHA
+# and digest (§32; OWASP Top 10:2025 A03, CVE-2025-30066); kcode is pinned
+# by version and SHA-256, and devkit.php pins the tools it installs.
 name: CI
 
 on:
@@ -9,6 +11,14 @@ on:
 
 permissions:
   contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  KCODE_VERSION: 1.2.1
+  KCODE_SHA256: 1bc43b06798b4e7fc1df341cc505f316549f0dd5efb9c8d80031415b0cdf3e3b
 
 jobs:
   gate:
@@ -38,14 +48,21 @@ jobs:
           extensions: redis, apcu, igbinary, zlib
           ini-values: apc.enable_cli=1
           coverage: pcov
-          tools: composer:v2
+          tools: none
 
-      # kariricode/contract 2.11.0 comes from tools/contract-2.11-fixture
-      # (path repository) until it is published on Packagist.
-      - name: Install
+      - name: Install the runtime (kariricode/contract, psr/clock)
         run: composer install --no-interaction --no-progress --prefer-dist
 
-      - name: Style, PHPStan (+ cognitive), Psalm, complexity, Unit, Conformance, security
+      - name: Install kcode ${{ env.KCODE_VERSION }}, checksum verified
+        run: |
+          curl -fsSLo kcode.phar "https://github.com/KaririCode-PHP/devkit/releases/download/v${KCODE_VERSION}/kcode.phar"
+          echo "${KCODE_SHA256}  kcode.phar" | sha256sum -c -
+          sudo install -m 0755 kcode.phar /usr/local/bin/kcode
+
+      - name: Install the toolchain pinned in devkit.php
+        run: kcode init
+
+      - name: Style, PHPStan (+ strict, cognitive), Psalm, complexity, Unit, Conformance, security
         run: composer check
 
       - name: Integration (Redis, APCu, filesystem)
