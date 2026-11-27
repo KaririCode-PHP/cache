@@ -1,10 +1,7 @@
 /vendor/
-# Not committed while kariricode/contract comes from the path fixture
-# (sibling rule; Spec §32 lock commit resumes once 2.11.0 is on Packagist).
-/composer.lock
+/.kcode/
 /.phpunit.cache/
 /.php-cs-fixer.cache
+/build/
 /coverage/
-/infection.log
-/infection-summary.log
 /sbom.cdx.json

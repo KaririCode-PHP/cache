@@ -16,6 +16,5 @@ return (new PhpCsFixer\Config())
     ->setFinder(
         PhpCsFixer\Finder::create()
             ->in([__DIR__ . '/src', __DIR__ . '/tests', __DIR__ . '/benchmark', __DIR__ . '/tools'])
-            ->exclude('contract-2.11-fixture')
-            ->append([__FILE__]),
+            ->append([__FILE__, __DIR__ . '/devkit.php']),
     );

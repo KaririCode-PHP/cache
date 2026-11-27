@@ -6,7 +6,7 @@
     findUnusedCode="false"
     xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
     xmlns="https://getpsalm.org/schema/config"
-    xsi:schemaLocation="https://getpsalm.org/schema/config vendor/vimeo/psalm/config.xsd"
+    xsi:schemaLocation="https://getpsalm.org/schema/config .kcode/vendor/vimeo/psalm/config.xsd"
 >
     <projectFiles>
         <directory name="src"/>
@@ -14,6 +14,11 @@
             <directory name="vendor"/>
         </ignoreFiles>
     </projectFiles>
+    <!-- psr/cache and psr/simple-cache come with the toolchain (ADR-015); scanned, not analysed. -->
+    <extraFiles>
+        <directory name=".kcode/vendor/psr/cache/src"/>
+        <directory name=".kcode/vendor/psr/simple-cache/src"/>
+    </extraFiles>
     <issueHandlers>
         <!-- A cache stores values of any type: mixed is the honest type of a
              cached value (read(), get(), remember() results). Every use that

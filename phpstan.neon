@@ -1,6 +1,7 @@
+# kcode installs the toolchain, extensions included, into .kcode/ (ADR-015).
 includes:
-    - vendor/phpstan/phpstan-strict-rules/rules.neon
-    - vendor/tomasvotruba/cognitive-complexity/config/extension.neon
+    - .kcode/vendor/phpstan/phpstan-strict-rules/rules.neon
+    - .kcode/vendor/tomasvotruba/cognitive-complexity/config/extension.neon
 
 parameters:
     level: max
@@ -8,6 +9,12 @@ parameters:
     paths:
         - src
         - tools/complexity.php
+    # psr/cache and psr/simple-cache for the PSR bridges, nikic/php-parser
+    # for tools/complexity.php: all come with the toolchain (ADR-015).
+    scanDirectories:
+        - .kcode/vendor/psr/cache/src
+        - .kcode/vendor/psr/simple-cache/src
+        - .kcode/vendor/nikic/php-parser/lib
     # Spec V4.3.3 §13: cognitive complexity <= 15 per method. The spec sets no
     # class or dependency-tree budget, so those are neutralised.
     cognitive_complexity:
