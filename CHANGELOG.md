@@ -6,7 +6,13 @@ All notable changes to this package are documented here. The format follows
 
 ## [Unreleased]
 
-### Changed
+## [4.1.0] - 2026-11-27
+
+First published version. The code is the 4.1.0 reviewed on 2026-10-02,
+never tagged then; the toolchain and the lock file below were added when
+it was imported.
+
+### Toolchain
 
 - Toolchain through KaririCode Devkit with the root configs (ADR-015): no
   `require-dev`; `devkit.php` pins PHPUnit 12.5.37, PHPStan 2.3.7 with
@@ -21,7 +27,7 @@ All notable changes to this package are documented here. The format follows
 - CI installs kcode 1.2.1 by version and SHA-256; Redis stays pinned by
   digest.
 
-## [4.1.0] - 2026-10-02
+### Reviewed on 2026-10-02
 
 First release that installs with Composer and whose test suite runs on a
 real PHP 8.4 toolchain with real Redis and APCu backends. 4.0.0 required a
