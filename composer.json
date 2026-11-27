@@ -55,7 +55,10 @@
         "cs-check": "kcode cs:fix --check",
         "cs-fix": "kcode cs:fix",
         "complexity": "@php tools/complexity.php src",
-        "infection": "kcode run infection --threads=max --no-progress",
+        "infection": [
+            "Composer\\Config::disableProcessTimeout",
+            "kcode run infection --threads=max --no-progress"
+        ],
         "security": [
             "@composer validate --strict --no-check-publish",
             "@composer audit --locked",
