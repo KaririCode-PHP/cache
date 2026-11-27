@@ -42,18 +42,8 @@ not claimed.
 composer require kariricode/cache
 ```
 
-`kariricode/contract` 2.11.0 is not on Packagist yet (2.8.6 is the latest
-release). Until it is published:
-
-- in a clone of this repository, `composer install` takes it from
-  `tools/contract-2.11-fixture/` — the 2.11 interfaces this package uses,
-  wired as a `path` repository in `composer.json`;
-- an application that requires `kariricode/cache` must declare the same kind
-  of repository in its own `composer.json`, because Composer ignores
-  repositories declared by dependencies.
-
-`composer.lock` is not committed while the contract comes from a path
-repository, as in the sibling packages.
+The runtime needs `kariricode/contract` ^2.11 and `psr/clock` ^1.0, both
+interface packages; Composer installs them from Packagist.
 
 ## 4. Architecture
 
@@ -383,7 +373,22 @@ packages and are retired. The 8400–8499 block used by 4.1.0 drafts moved to
 
 ## 9. Testing and Quality Gates
 
-The gate is the command set of Spec V4.3.3 §29.1:
+The toolchain is installed by [KaririCode Devkit](https://github.com/KaririCode-PHP/devkit)
+(`kcode`) at the versions `devkit.php` pins, and runs with the configs at the
+root of this repository (ADR-015):
+
+```bash
+# kcode 1.2.1, checked against its published SHA-256
+curl -fsSLo kcode.phar https://github.com/KaririCode-PHP/devkit/releases/download/v1.2.1/kcode.phar
+echo "1bc43b06798b4e7fc1df341cc505f316549f0dd5efb9c8d80031415b0cdf3e3b  kcode.phar" | sha256sum -c -
+sudo install -m 0755 kcode.phar /usr/local/bin/kcode
+
+composer install   # runtime from composer.lock: kariricode/contract, psr/clock
+kcode init         # toolchain into .kcode/
+```
+
+APCu runs in the CLI only with `apc.enable_cli=1` in `php.ini` (CI sets it
+through setup-php). The gate is the command set of Spec V4.3.3 §29.1:
 
 ```bash
 composer check             # cs-check, phpstan, psalm, complexity, test, test-conformance, security
@@ -395,7 +400,8 @@ composer infection         # mutation testing; fails below 80 % MSI or covered M
 composer sbom              # CycloneDX 1.5 SBOM in sbom.cdx.json
 ```
 
-`security` runs `composer validate --strict`, `composer audit`, the secret
+`security` runs `composer validate --strict`, `composer audit` of the
+runtime and of the toolchain, the secret
 scan (with its self-test) and the `security` test group (fail-closed
 behaviour: payload allowlist, undecodable entries, key rules, messages that
 never echo input). Integration tests use Redis at

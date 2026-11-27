@@ -6,6 +6,21 @@ All notable changes to this package are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- Toolchain through KaririCode Devkit with the root configs (ADR-015): no
+  `require-dev`; `devkit.php` pins PHPUnit 12.5.37, PHPStan 2.3.7 with
+  phpstan-strict-rules 2.1.2 and cognitive-complexity 1.2.0, Psalm 6.19.1,
+  PHP-CS-Fixer 3.95.27 and Infection 0.35.5, plus psr/cache and
+  psr/simple-cache for the bridge tests. The scripts call kcode and
+  `composer security` also audits the toolchain; APCu needs
+  `apc.enable_cli=1` in `php.ini`.
+- kariricode/contract comes from Packagist: the path fixture is removed and
+  `composer.lock` is committed with contract 2.12.0 and psr/clock 1.0.0
+  (ADR-013, Amendment).
+- CI installs kcode 1.2.1 by version and SHA-256; Redis stays pinned by
+  digest.
+
 ## [4.1.0] - 2026-10-02
 
 First release that installs with Composer and whose test suite runs on a

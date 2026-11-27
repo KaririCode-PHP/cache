@@ -21,12 +21,12 @@ Measured on 2026-10-02 with PHP 8.4.26, Redis 7.0.15 and APCu, 1 vCPU.
 | §29.2 | magic methods, static state | `CodeBudgetConformanceTest` | met |
 | §30 | named arguments at three or more arguments | `tools/complexity.php`: 0 positional calls | met |
 | §31 | coupling through contract and PSR only | runtime `require`: `php`, `kariricode/contract`, `psr/clock` (`ArfaConformanceTest`) | met |
-| §32 | supply chain | actions pinned by SHA, image by digest, `persist-credentials: false`, CycloneDX SBOM | partial — lock not committed while the contract comes from the path fixture; signing open |
+| §32 | supply chain | actions pinned by SHA, image by digest, `persist-credentials: false`, kcode pinned by version and SHA-256, committed `composer.lock`, CycloneDX SBOM | partial — signing open |
 | E-040 | value objects expose derived values as query methods | `CacheEntry`, `AdapterStats` | met |
 | E-044 | `extra.kariricode.spec` | `"spec": "4.3.3"` | met |
 | E-045/E-046 | PER Coding Style 3.1 | `@PER-CS3x0` (php-cs-fixer has no 3.1 set): 0 of 124 files to fix | met with the documented deviation |
 | E-047 | no echoed values in messages | `ExceptionTest::testMessagesNeverEchoARejectedValue` | met |
-| Contract 2.11 | exception families, DI provider | ADR-013; `ExceptionTest`, `CacheServiceProviderTest` | met against the path fixture |
+| Contract 2.11 | exception families, DI provider | ADR-013; `ExceptionTest`, `CacheServiceProviderTest` | met against kariricode/contract 2.12.0 from Packagist |
 
 ## Mutation Testing
 
@@ -58,12 +58,33 @@ run: `ApcuAdapter::stats()` reported `memoryBytes: 0` (APCu returns
 `mem_size` as a float), and `RedisConnection` ignored a refused `SELECT` or
 `AUTH`, staying on database 0.
 
+## Re-measured with the kcode toolchain (2026-11-27)
 
+The import into the KaririCode-PHP repository moved the toolchain to
+KaririCode Devkit with the root configs (ADR-015) and installed
+`kariricode/contract` 2.12.0 from Packagist. Measured with PHP 8.4.28,
+Redis 7.0.15 and APCu, against `composer.lock`, with the tools `devkit.php`
+pins (PHPUnit 12.5.37, PHPStan 2.3.7 with phpstan-strict-rules 2.1.2 and
+cognitive-complexity 1.2.0, Psalm 6.19.1, PHP-CS-Fixer 3.95.27, Infection
+0.35.5):
 
-1. `kariricode/contract` 2.11.0 on Packagist; then remove the path fixture
-   and commit `composer.lock`.
+| Gate | Result |
+|---|---|
+| `composer cs-check` | 0 of 126 files to fix |
+| `composer phpstan` | level max, strict rules, cognitive ≤ 15: 0 errors |
+| `composer psalm` | errorLevel 1: 0 errors |
+| `composer complexity` | 376 methods within budgets; the two 11-method contracts reported, not failing |
+| `composer test`, `test-integration`, `test-conformance` | 503 tests, 29 689 assertions, nothing skipped |
+| `composer security` | manifest and lock valid; no advisories in the runtime or the toolchain; secret scan self-test (8 patterns) and scan clean |
+| `composer infection` | runs in CI on every push and fails below 80 % MSI or covered MSI; the 4.1.0 measurement above (88.4 %) is the reference |
+
+## Open
+
+1. Done (2026-11-27): kariricode/contract is on Packagist; the path fixture
+   is removed and `composer.lock` is committed (ADR-013, Amendment).
 2. Signed tag and release artifacts.
 3. Mapping of ASVS 5.0 requirement IDs (the applicable areas are listed in
    `SECURITY.md`).
-4. Error-code registry owned by the contract or the Specification; the
-   collisions between other packages remain open.
+4. Done (2026-11-27): the registry of record is `CODE-BLOCKS.md` of
+   kariricode/exception, where this package holds 8600–8699; the collisions
+   between other packages are resolved there.

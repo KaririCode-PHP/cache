@@ -82,10 +82,10 @@ properties above:
 |---|---|
 | CI actions pinned by commit SHA, Redis image by digest | done (`.github/workflows/ci.yml`) |
 | `persist-credentials: false` on checkout | done |
-| Dependency advisories | `composer audit` in `composer security` |
+| Dependency advisories | `composer audit` of the runtime and of the toolchain, in `composer security` |
 | Secret scanning | `tools/secret-scan.php`, with a self-test of every pattern |
 | SBOM | `composer sbom` → CycloneDX 1.5 `sbom.cdx.json` (CI artifact) |
-| Lock file | not committed while `kariricode/contract` 2.11 comes from the path fixture; committed again once 2.11.0 is on Packagist |
+| Lock file | committed with the runtime only (kariricode/contract 2.12.0, psr/clock 1.0.0); the toolchain is pinned in `devkit.php` and audited from `.kcode/composer.lock` (ADR-015) |
 | Signed releases and tags | pending — release time |
 
 ## References

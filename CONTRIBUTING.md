@@ -11,14 +11,16 @@
 ## Setup
 
 ```bash
-git clone git@github.com:kariricode-framework/kariricode-cache.git
-cd kariricode-cache
-composer install
+git clone git@github.com:KaririCode-PHP/cache.git
+cd cache
+composer install   # runtime from composer.lock: kariricode/contract, psr/clock
+kcode init         # the toolchain devkit.php pins, into .kcode/
 ```
 
-`kariricode/contract` 2.11 is installed from `tools/contract-2.11-fixture`
-(path repository) until it is published; `composer.lock` is not committed
-meanwhile.
+[KaririCode Devkit](https://github.com/KaririCode-PHP/devkit) (`kcode`)
+installs the tools and runs this repository's configs (ADR-015). Install
+1.2.1 and check it against its published SHA-256, as the README shows. APCu
+needs `apc.enable_cli=1` in `php.ini` for the CLI.
 
 ## Quality Gates
 
@@ -36,8 +38,8 @@ composer infection         # MSI and covered MSI >= 80 %
 | Static analysis | `composer phpstan` | `phpstan.neon` — level max, phpstan-strict-rules, cognitive complexity ≤ 15; no baseline, no inline ignores |
 | Static analysis | `composer psalm` | `psalm.xml` — error level 1; every exemption is justified in the file |
 | Budgets | `composer complexity` | `tools/complexity.php` — §13 budgets and §30 named arguments |
-| Tests | `composer test`, `test-integration`, `test-conformance` | `phpunit.xml.dist`; APCu needs `apc.enable_cli=1` (the scripts set it) |
-| Security | `composer security` | `validate --strict`, `audit`, secret scan with self-test, `security` test group |
+| Tests | `composer test`, `test-integration`, `test-conformance` | `phpunit.xml.dist`; APCu needs `apc.enable_cli=1` in `php.ini` |
+| Security | `composer security` | `validate --strict`, `audit` of the runtime and the toolchain, secret scan with self-test, `security` test group |
 | Mutation | `composer infection` | `infection.json5` — `src/`, Unit and Integration suites |
 | SBOM | `composer sbom` | CycloneDX 1.5 |
 

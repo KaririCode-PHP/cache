@@ -113,3 +113,11 @@ local fixture through a `path` repository and do not commit `composer.lock`.
 - PHP SPL exceptions — https://www.php.net/manual/en/spl.exceptions.php
 - Composer, path repositories — https://getcomposer.org/doc/05-repositories.md#path
 - Composer, repositories are root-only — https://getcomposer.org/doc/04-schema.md#repositories
+
+## Amendment (2026-11-27)
+
+kariricode/contract 2.12.0 is on Packagist, so decision 5 is closed: the
+path fixture is gone, `composer.lock` is committed with contract 2.12.0 and
+psr/clock 1.0.0, and the constraint stays `^2.11`. The toolchain moved to
+KaririCode Devkit in the same import (ADR-015).
+
