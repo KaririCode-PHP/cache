@@ -4,240 +4,321 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache;
 
-use KaririCode\Cache\Builder\CacheOperationBuilder;
-use KaririCode\Cache\Command\CommandExecutor;
-use KaririCode\Cache\Command\CommandFactory;
-use KaririCode\Cache\Contract\AdvancedCache;
-use KaririCode\Cache\Contract\Behavioral\Taggable;
-use KaririCode\Cache\Contract\Behavioral\TopicSubscribable;
-use KaririCode\Cache\Driver\LayeredDriver;
-use KaririCode\Cache\Metrics\CacheMetrics;
-use KaririCode\Cache\Service\EventService;
-use KaririCode\Cache\Service\HealthCheckService;
-use KaririCode\Cache\Service\LockService;
-use KaririCode\Cache\Service\MetricsService;
-use KaririCode\Cache\Service\SerializationService;
-use KaririCode\Cache\Service\ValidationService;
-use KaririCode\Contract\Logging\Logger;
-use KaririCode\Logging\SilentLogger;
+use KaririCode\Cache\Clock\SystemClock;
+use KaririCode\Cache\Contract\Cache as CacheContract;
+use KaririCode\Cache\Contract\CacheAdapter;
+use KaririCode\Cache\Contract\CacheEventListener;
+use KaririCode\Cache\Contract\EvictionPolicy;
+use KaririCode\Cache\Contract\StampedePrevention;
+use KaririCode\Cache\Event\NullEventListener;
+use KaririCode\Cache\Eviction\SievePolicy;
+use KaririCode\Cache\Exception\ConfigurationException;
+use KaririCode\Cache\Exception\InvalidKeyException;
+use KaririCode\Cache\Scope\ScopedCache;
+use KaririCode\Cache\Stampede\XFetchPrevention;
+use KaririCode\Cache\ValueObject\CacheEntry;
+use Psr\Clock\ClockInterface;
 
 /**
- * Main Cache Facade.
+ * Primary cache: one adapter plus capacity policy, stampede prevention and
+ * observation hooks.
  *
- * Provides a simple, unified public API for interacting with the complex caching subsystem.
- * It follows the Facade pattern, delegating all operations to specialized command
- * objects, which are created by a factory and executed by an executor.
+ * Every write persists a CacheEntry envelope, so any worker reading the key
+ * receives the logical expiry and the measured recompute cost that XFetch
+ * needs (ADR-009), and a cached null is distinguishable from a miss.
  *
- * @category  Cache
+ * Capacity is the eviction policy's `capacity` (default SIEVE with 10 000
+ * entries; 0 = unbounded). It is tracked in process memory: it bounds
+ * process-local stores and long-running workers; with a shared backend
+ * under PHP-FPM, size the backend instead (ADR-010).
  *
- * @author    Walmir Silva <walmir.silva@kariricode.org>
- * @license   MIT
+ * ARFA 1.3 P4 (Protocol Agnosticism): any CacheAdapter, any policy.
+ * ARFA 1.3 P5 (Continuous Observability): CacheEventListener on every outcome.
+ * Spec V4: Entity (composes collaborators; state lives in them).
  *
- * @see       https://kariricode.org/
+ * Preconditions: keys follow the native key rule; TTL null = no expiry, <= 0 deletes (ADR-010).
+ * Thread-safety: no state of its own; the adapter, policy and listener decide; one instance per worker under level 2.
+ *
+ * Side effects: backend reads and writes, policy bookkeeping, listener hooks and, in remember(), the factory call.
+ *
+ * Example:
+ *     $report = (new Cache(new RedisAdapter(prefix: 'app:')))->remember('report:daily', fn () => buildReport(), 600);
+ *
+ * References: ADR-001; ADR-002; ADR-009; ADR-010; SPEC-001 §6.
+ *
+ * @see https://www.vldb.org/pvldb/vol8/p886-vattani.pdf
  */
-final class Cache implements AdvancedCache, Taggable, TopicSubscribable
+final readonly class Cache implements CacheContract
 {
-    private readonly CommandExecutor $commandExecutor;
-    private readonly CommandFactory $commandFactory;
-
-    /**
-     * Constructor with dependency injection of all required services.
-     */
     public function __construct(
-        private readonly string $name,
-        private readonly LayeredDriver $driver,
-        // Services
-        private readonly ValidationService $validator,
-        private readonly SerializationService $serializer,
-        private readonly EventService $events,
-        private readonly MetricsService $metrics,
-        private readonly HealthCheckService $health,
-        private readonly LockService $locks,
-        private readonly Logger $logger = new SilentLogger()
-    ) {
-        $this->commandExecutor = new CommandExecutor($this->logger);
-        $this->commandFactory = new CommandFactory(
-            $this->driver,
-            $this->validator,
-            $this->serializer,
-            $this->events,
-            $this->metrics
-        );
-    }
+        private CacheAdapter $adapter,
+        private EvictionPolicy $evictionPolicy = new SievePolicy(),
+        private StampedePrevention $stampedePrevention = new XFetchPrevention(),
+        private CacheEventListener $eventListener = new NullEventListener(),
+        private ClockInterface $clock = new SystemClock(),
+    ) {}
 
-    // --- Fluent Interface ---
+    // ── Core Operations ──────────────────────────────────────────────────
 
-    public function with(): CacheOperationBuilder
-    {
-        return new CacheOperationBuilder($this->commandFactory, $this->commandExecutor);
-    }
-
-    // --- Basic Operations (Delegated to Command Pattern) ---
-
+    #[\Override]
     public function get(string $key, mixed $default = null): mixed
     {
-        $command = $this->commandFactory->createGetCommand($key, $default);
+        InvalidKeyException::validate($key);
 
-        return $this->commandExecutor->execute($command);
+        $stored = $this->adapter->read($key);
+
+        if (null === $stored) {
+            $this->recordMiss($key);
+
+            return $default;
+        }
+
+        $this->evictionPolicy->recordAccess($key);
+        $this->eventListener->onHit($key);
+
+        return $stored instanceof CacheEntry ? $stored->value : $stored;
     }
 
-    public function set(string $key, mixed $value): bool
+    #[\Override]
+    public function set(string $key, mixed $value, ?int $ttl = null): bool
     {
-        $command = $this->commandFactory->createSetCommand($key, $value);
+        InvalidKeyException::validate($key);
 
-        return $this->commandExecutor->execute($command);
+        if (null !== $ttl && $ttl <= 0) {
+            $this->delete($key);
+
+            return true;
+        }
+
+        return $this->store(key: $key, entry: CacheEntry::withTtl(value: $value, ttl: $ttl, now: $this->now()), ttl: $ttl);
     }
 
+    #[\Override]
     public function delete(string $key): bool
     {
-        $command = $this->commandFactory->createDeleteCommand($key);
+        InvalidKeyException::validate($key);
 
-        return $this->commandExecutor->execute($command);
+        $result = $this->adapter->remove($key);
+        $this->evictionPolicy->recordRemoval($key);
+        $this->eventListener->onDelete($key);
+
+        return $result;
     }
 
-    public function clear(): bool
-    {
-        $command = $this->commandFactory->createClearCommand();
-
-        return $this->commandExecutor->execute($command);
-    }
-
+    #[\Override]
     public function has(string $key): bool
     {
-        $command = $this->commandFactory->createHasCommand($key);
+        InvalidKeyException::validate($key);
 
-        return $this->commandExecutor->execute($command);
+        return $this->adapter->exists($key);
     }
 
-    // --- Batch Operations (Delegated to Command Pattern) ---
-
-    public function getMultiple(iterable $keys): iterable
+    #[\Override]
+    public function clear(): bool
     {
-        $command = $this->commandFactory->createGetMultipleCommand($keys);
+        $this->evictionPolicy->clear();
 
-        return $this->commandExecutor->execute($command);
+        return $this->adapter->flush();
     }
 
-    public function setMultiple(iterable $values): bool
+    // ── Batch Operations ─────────────────────────────────────────────────
+
+    #[\Override]
+    public function getMultiple(iterable $keys, mixed $default = null): iterable
     {
-        $command = $this->commandFactory->createSetMultipleCommand($values);
+        $results = [];
 
-        return $this->commandExecutor->execute($command);
+        foreach ($keys as $key) {
+            $results[$key] = $this->get($key, $default);
+        }
+
+        return $results;
     }
 
+    #[\Override]
+    public function setMultiple(iterable $values, ?int $ttl = null): bool
+    {
+        $success = true;
+
+        foreach ($values as $key => $value) {
+            $success = $this->set(key: (string) $key, value: $value, ttl: $ttl) && $success;
+        }
+
+        return $success;
+    }
+
+    #[\Override]
     public function deleteMultiple(iterable $keys): bool
     {
-        $command = $this->commandFactory->createDeleteMultipleCommand($keys);
+        $success = true;
 
-        return $this->commandExecutor->execute($command);
+        foreach ($keys as $key) {
+            $success = $this->delete($key) && $success;
+        }
+
+        return $success;
     }
 
-    // --- Atomic Operations (Delegated to Command Pattern) ---
+    // ── Fetch-or-Compute (XFetch) ────────────────────────────────────────
 
-    public function increment(string $key, int $step = 1, int $initialValue = 0): int
+    #[\Override]
+    public function remember(string $key, callable $factory, ?int $ttl = null, array $tags = []): mixed
     {
-        $command = $this->commandFactory->createIncrementCommand($key, $step, $initialValue);
+        InvalidKeyException::validate($key);
 
-        return $this->commandExecutor->execute($command);
+        if (null !== $ttl && $ttl <= 0) {
+            $this->delete($key);
+
+            return $factory();
+        }
+
+        $stored = $this->adapter->read($key);
+
+        if ($stored instanceof CacheEntry && !$this->mustRecompute($key, $stored)) {
+            return $this->hit($key, $stored);
+        }
+
+        $this->announceRecompute($key, $stored);
+        $entry = $this->compute(factory: $factory, logicalTtl: $ttl, tags: $tags);
+        $this->store(key: $key, entry: $entry, ttl: $ttl);
+
+        return $entry->value;
     }
 
-    public function decrement(string $key, int $step = 1, int $initialValue = 0): int
-    {
-        $command = $this->commandFactory->createDecrementCommand($key, $step, $initialValue);
+    // ── Stale-While-Revalidate ───────────────────────────────────────────
 
-        return $this->commandExecutor->execute($command);
+    #[\Override]
+    public function rememberStale(string $key, callable $factory, int $freshTtl, int $staleTtl): mixed
+    {
+        InvalidKeyException::validate($key);
+        ConfigurationException::validateStaleWindow($freshTtl, $staleTtl);
+
+        $stored = $this->adapter->read($key);
+
+        if ($stored instanceof CacheEntry && !$this->mustRecompute($key, $stored)) {
+            return $this->hit($key, $stored);
+        }
+
+        // Logical (fresh) horizon drives stampede prevention; the physical
+        // (stale) horizon keeps the value servable meanwhile.
+        $this->announceRecompute($key, $stored);
+        $entry = $this->compute(factory: $factory, logicalTtl: $freshTtl, tags: []);
+        $this->store(key: $key, entry: $entry, ttl: $staleTtl);
+
+        return $entry->value;
     }
 
-    public function add(string $key, mixed $value): bool
-    {
-        $command = $this->commandFactory->createAddCommand($key, $value);
+    // ── Scoping ──────────────────────────────────────────────────────────
 
-        return $this->commandExecutor->execute($command);
+    #[\Override]
+    public function withScope(string $scope): CacheContract
+    {
+        return new ScopedCache($this, $scope);
     }
 
-    public function compareAndSwap(string $key, mixed $expected, mixed $value): bool
-    {
-        $command = $this->commandFactory->createCompareAndSwapCommand($key, $expected, $value);
+    // ── Internal ─────────────────────────────────────────────────────────
 
-        return $this->commandExecutor->execute($command);
+    private function mustRecompute(string $key, CacheEntry $entry): bool
+    {
+        if (null === $entry->expiresAt) {
+            return false;
+        }
+
+        return $this->stampedePrevention->shouldRecompute(key: $key, currentTime: $this->now(), expiryTime: $entry->expiresAt, delta: $entry->delta);
     }
 
-    // --- Taggable Operations (Delegated to Command Pattern) ---
-
-    public function setWithTags(string $key, mixed $value, iterable $tags = []): bool
+    private function hit(string $key, CacheEntry $entry): mixed
     {
-        $command = $this->commandFactory->createSetWithTagsCommand($key, $value, $tags);
+        $this->evictionPolicy->recordAccess($key);
+        $this->eventListener->onHit($key);
 
-        return $this->commandExecutor->execute($command);
+        return $entry->value;
     }
 
-    public function invalidateTags(iterable $tags): bool
+    /**
+     * A stored entry selected for early recomputation is reported as such;
+     * anything else is a miss.
+     */
+    private function announceRecompute(string $key, mixed $stored): void
     {
-        $command = $this->commandFactory->createInvalidateTagsCommand($tags);
+        if ($stored instanceof CacheEntry) {
+            $gap = null === $stored->expiresAt ? 0.0 : max(0.0, $stored->expiresAt - $this->now());
+            $this->eventListener->onStampedeRecompute($key, $gap);
 
-        return $this->commandExecutor->execute($command);
+            return;
+        }
+
+        $this->recordMiss($key);
     }
 
-    public function getByTags(iterable $tags): iterable
+    /**
+     * Run the factory and measure its cost (δ) with the monotonic clock.
+     *
+     * @param list<string> $tags
+     */
+    private function compute(callable $factory, ?int $logicalTtl, array $tags): CacheEntry
     {
-        $command = $this->commandFactory->createGetByTagsCommand($tags);
+        // δ is a duration: measured on the monotonic clock, not on the wall clock.
+        $start = hrtime(true);
+        $value = $factory();
+        $delta = (float) (hrtime(true) - $start) / 1e9;
+        $now = $this->now();
 
-        return $this->commandExecutor->execute($command);
+        return new CacheEntry(value: $value, createdAt: $now, expiresAt: null === $logicalTtl ? null : $now + (float) $logicalTtl, delta: $delta, tags: $tags);
     }
 
-    public function getTags(): iterable
+    private function store(string $key, CacheEntry $entry, ?int $ttl): bool
     {
-        return $this->driver->getTags();
+        $isUpdate = $this->adapter->exists($key);
+
+        if (!$isUpdate) {
+            $this->enforceCapacity();
+        }
+
+        if (!$this->adapter->write(key: $key, value: $entry, ttl: $ttl)) {
+            return false;
+        }
+
+        $isUpdate
+            ? $this->evictionPolicy->recordAccess($key)
+            : $this->evictionPolicy->recordInsertion($key);
+        $this->eventListener->onWrite($key, $ttl);
+
+        return true;
     }
 
-    // --- Topic Operations (Delegated to Driver) ---
-
-    public function subscribeTo(string $key, iterable $topics): void
+    /**
+     * A miss also drops the key from the policy, so entries that expired in
+     * the backend stop occupying tracked capacity.
+     */
+    private function recordMiss(string $key): void
     {
-        $this->driver->subscribeTo($key, $topics);
+        $this->evictionPolicy->recordRemoval($key);
+        $this->eventListener->onMiss($key);
     }
 
-    public function unsubscribeFrom(string $key, iterable $topics): void
+    private function enforceCapacity(): void
     {
-        if (method_exists($this->driver, 'unsubscribeFrom')) {
-            $this->driver->unsubscribeFrom($key, $topics);
+        $capacity = $this->evictionPolicy->capacity;
+
+        if (0 === $capacity) {
+            return;
+        }
+
+        while ($this->evictionPolicy->count() >= $capacity) {
+            $result = $this->evictionPolicy->evict();
+
+            if (!$result->success || null === $result->evictedKey) {
+                return;
+            }
+
+            $this->adapter->remove($result->evictedKey);
+            $this->eventListener->onEviction($result->evictedKey, $this->evictionPolicy->name());
         }
     }
 
-    public function invalidateTopics(iterable $topics): bool
+    private function now(): float
     {
-        return $this->driver->invalidateTopics($topics);
-    }
-
-    public function getSubscribedTopics(string $key): array
-    {
-        return $this->driver->getSubscribedTopics($key);
-    }
-
-    public function getSubscribersForTopic(string $topic): array
-    {
-        return $this->driver->getSubscribersForTopic($topic);
-    }
-
-    // --- Metadata and Health ---
-
-    public function getName(): string
-    {
-        return $this->name;
-    }
-
-    public function isHealthy(): bool
-    {
-        return $this->health->isHealthy();
-    }
-
-    public function getMetrics(): CacheMetrics
-    {
-        return new CacheMetrics($this->metrics->getMetrics());
-    }
-
-    public function getCapabilities(): array
-    {
-        return $this->driver->getCapabilities();
+        return (float) $this->clock->now()->format('U.u');
     }
 }

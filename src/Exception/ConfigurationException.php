@@ -4,134 +4,57 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Exception;
 
-use KaririCode\Exception\AbstractException;
+use KaririCode\Contract\Exception\Configuration;
 
 /**
- * Configuration-related cache exceptions.
+ * An impossible configuration, found at construction or call time: an
+ * option outside its range, a stale window shorter than the fresh window,
+ * an empty scope, or a required PHP extension that is not loaded.
+ *
+ * Messages name the option and its constraint, never the rejected value
+ * (E-047).
+ *
+ * ARFA 1.3 P5 (Continuous Observability): codes 8640-8641.
+ * Spec V4: exception, family Configuration (§8.4); fail fast.
+ *
+ * Preconditions: none.
+ * Thread-safety: stateless; the validate*() guards are pure.
+ *
+ * Side effects: none.
+ *
+ * Example:
+ *     ConfigurationException::validateStaleWindow(freshTtl: 60, staleTtl: 600);
+ *
+ * References: ADR-010; SPEC-001 §11.
+ *
+ * @see https://martinfowler.com/ieeeSoftware/failFast.pdf
  */
-final class ConfigurationException extends AbstractException
+final class ConfigurationException extends \LogicException implements CacheException, Configuration
 {
-    private const CODE_MISSING_DRIVER = 1220;
-    private const CODE_INVALID_CONFIGURATION = 1221;
-    private const CODE_FACTORY_NOT_FOUND = 1222;
-    private const CODE_INVALID_FACTORY = 1223;
-    private const CODE_MISSING_EXTENSION = 1224;
-    private const CODE_MISSING_STORE = 1225;
-    private const CODE_MISSING_CONFIGURATION = 1226;
-    private const CODE_INVALID_OPTION = 1227;
-    private const CODE_DIRECTORY_NOT_WRITABLE = 1228;
-    private const CODE_INVALID_HOST = 1229;
-    private const CODE_INVALID_PORT = 1230;
-    private const CODE_CONNECTION_TIMEOUT = 1231;
+    public const int INVALID_OPTION = 8640;
+    public const int EXTENSION_MISSING = 8641;
 
-    public static function missingDriver(string $driver): static
+    public static function invalidOption(string $option, string $constraint): self
     {
-        return static::createException(
-            self::CODE_MISSING_DRIVER,
-            'MISSING_DRIVER',
-            "Cache driver '{$driver}' is not configured"
-        );
+        return new self(message: "Invalid cache option {$option}: {$constraint}.", code: self::INVALID_OPTION);
     }
 
-    public static function invalidConfiguration(string $setting, string $reason): static
+    public static function extensionMissing(string $extension): self
     {
-        return static::createException(
-            self::CODE_INVALID_CONFIGURATION,
-            'INVALID_CONFIGURATION',
-            "Invalid cache configuration for '{$setting}': {$reason}"
-        );
+        return new self(message: "The PHP extension {$extension} is required but not loaded or not enabled.", code: self::EXTENSION_MISSING);
     }
 
-    public static function factoryNotFound(string $factoryClass): static
+    /**
+     * Throw unless 1 <= $freshTtl <= $staleTtl (rememberStale window).
+     */
+    public static function validateStaleWindow(int $freshTtl, int $staleTtl): void
     {
-        return static::createException(
-            self::CODE_FACTORY_NOT_FOUND,
-            'FACTORY_NOT_FOUND',
-            "Cache factory class not found: '{$factoryClass}'"
-        );
-    }
+        if ($freshTtl < 1) {
+            throw self::invalidOption(option: 'freshTtl', constraint: 'must be at least 1 second');
+        }
 
-    public static function invalidFactory(string $name, string $factoryClass, string $expectedInterface): static
-    {
-        return static::createException(
-            self::CODE_INVALID_FACTORY,
-            'INVALID_FACTORY',
-            "Cache factory '{$name}' must implement '{$expectedInterface}', got '{$factoryClass}'"
-        );
-    }
-
-    public static function missingExtension(string $extension): static
-    {
-        return static::createException(
-            self::CODE_MISSING_EXTENSION,
-            'MISSING_EXTENSION',
-            "Required PHP extension '{$extension}' is not loaded"
-        );
-    }
-
-    public static function missingStore(string $name): static
-    {
-        return static::createException(
-            self::CODE_MISSING_STORE,
-            'MISSING_STORE',
-            "Cache store '{$name}' is not configured"
-        );
-    }
-
-    public static function missingConfiguration(string $reason): static
-    {
-        return static::createException(
-            self::CODE_MISSING_CONFIGURATION,
-            'MISSING_CONFIGURATION',
-            $reason
-        );
-    }
-
-    public static function invalidOption(string $option, mixed $value, string $expected): static
-    {
-        $type = is_object($value) ? get_class($value) : gettype($value);
-
-        return static::createException(
-            self::CODE_INVALID_OPTION,
-            'INVALID_OPTION',
-            "Invalid value for option '{$option}': expected {$expected}, got {$type}"
-        );
-    }
-
-    public static function directoryNotWritable(string $directory): static
-    {
-        return static::createException(
-            self::CODE_DIRECTORY_NOT_WRITABLE,
-            'DIRECTORY_NOT_WRITABLE',
-            "Cache directory is not writable: {$directory}"
-        );
-    }
-
-    public static function invalidHost(string $host): static
-    {
-        return static::createException(
-            self::CODE_INVALID_HOST,
-            'INVALID_HOST',
-            "Invalid cache server host: {$host}"
-        );
-    }
-
-    public static function invalidPort(int $port, int $min = 1, int $max = 65535): static
-    {
-        return static::createException(
-            self::CODE_INVALID_PORT,
-            'INVALID_PORT',
-            "Invalid cache server port: {$port}. Must be between {$min} and {$max}"
-        );
-    }
-
-    public static function connectionTimeout(string $server, int $timeout, ?\Throwable $previous = null): static
-    {
-        return static::createException(
-            self::CODE_CONNECTION_TIMEOUT,
-            'CONNECTION_TIMEOUT',
-            "Connection timeout to cache server '{$server}' after {$timeout} seconds",
-            $previous
-        );
+        if ($staleTtl < $freshTtl) {
+            throw self::invalidOption(option: 'staleTtl', constraint: 'must not be shorter than freshTtl');
+        }
     }
 }

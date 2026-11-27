@@ -1,0 +1,17 @@
+includes:
+    - vendor/phpstan/phpstan-strict-rules/rules.neon
+    - vendor/tomasvotruba/cognitive-complexity/config/extension.neon
+
+parameters:
+    level: max
+    phpVersion: 80400
+    paths:
+        - src
+        - tools/complexity.php
+    # Spec V4.3.3 §13: cognitive complexity <= 15 per method. The spec sets no
+    # class or dependency-tree budget, so those are neutralised.
+    cognitive_complexity:
+        function: 15
+        class: 1000
+        dependency_tree: 1000
+        dependency_tree_types: []

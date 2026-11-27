@@ -1,0 +1,38 @@
+<?xml version="1.0"?>
+<psalm
+    errorLevel="1"
+    resolveFromConfigFile="true"
+    findUnusedBaselineEntry="true"
+    findUnusedCode="false"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xmlns="https://getpsalm.org/schema/config"
+    xsi:schemaLocation="https://getpsalm.org/schema/config vendor/vimeo/psalm/config.xsd"
+>
+    <projectFiles>
+        <directory name="src"/>
+        <ignoreFiles>
+            <directory name="vendor"/>
+        </ignoreFiles>
+    </projectFiles>
+    <issueHandlers>
+        <!-- A cache stores values of any type: mixed is the honest type of a
+             cached value (read(), get(), remember() results). Every use that
+             needs a specific type narrows it first. Same exemption as
+             kariricode/observability. -->
+        <MixedAssignment errorLevel="suppress"/>
+        <MixedReturnStatement errorLevel="suppress"/>
+        <!-- Psalm's phpredis stubs declare del()/exists()/mget()/info()/ping()
+             without the false and Redis (multi mode) returns that phpredis 6
+             declares, so the defensive checks look redundant to it. -->
+        <RedundantCondition>
+            <errorLevel type="suppress">
+                <file name="src/Adapter/RedisAdapter.php"/>
+            </errorLevel>
+        </RedundantCondition>
+        <TypeDoesNotContainType>
+            <errorLevel type="suppress">
+                <file name="src/Adapter/RedisAdapter.php"/>
+            </errorLevel>
+        </TypeDoesNotContainType>
+    </issueHandlers>
+</psalm>

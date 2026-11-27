@@ -1,0 +1,18 @@
+{
+    "$schema": "vendor/infection/infection/resources/schema.json",
+    "source": {
+        "directories": ["src"]
+    },
+    "timeout": 20,
+    "logs": {
+        "text": "infection.log",
+        "summary": "infection-summary.log"
+    },
+    "initialTestsPhpOptions": "-d apc.enable_cli=1 -d pcov.enabled=1",
+    "testFrameworkOptions": "--testsuite=Unit,Integration",
+    "mutators": {
+        "@default": true
+    },
+    "minMsi": 80,
+    "minCoveredMsi": 80
+}

@@ -1,52 +1,121 @@
 {
-  "name": "kariricode/cache",
-  "description": "A flexible and efficient caching library for PHP with support for multiple drivers and plugin system",
-  "keywords": [
-    "cache",
-    "caching",
-    "psr-6",
-    "psr-16",
-    "redis",
-    "memcached",
-    "file-cache",
-    "multi-layer-cache",
-    "plugin-system",
-    "php",
-    "framework",
-    "kariri"
-  ],
-  "homepage": "https://kariricode.org",
-  "type": "library",
-  "license": "MIT",
-  "authors": [
-    {
-      "name": "Walmir Silva",
-      "email": "community@kariricode.org"
-    }
-  ],
-  "require": {
-    "php": "^8.3",
-    "psr/simple-cache": "^3.0",
-    "psr/cache": "^3.0",
-    "kariricode/exception": "^1.2",
-    "kariricode/configurator": "^1.0",
-    "kariricode/dotenv": "^1.1",
-    "kariricode/contract": "^2.8",
-    "kariricode/logging": "^1.1",
-    "kariricode/data-structure": "^1.1"
-  },
-  "autoload": {
-    "psr-4": {
-      "KaririCode\\Cache\\": "src"
-    }
-  },
-  "autoload-dev": {
-    "psr-4": {
-      "KaririCode\\Cache\\Tests\\": "tests"
-    }
-  },
-  "support": {
-    "issues": "https://github.com/KaririCode-Framework/kariricode-cache/issues",
-    "source": "https://github.com/KaririCode-Framework/kariricode-cache"
-  }
+    "name": "kariricode/cache",
+    "description": "Multi-tier cache for PHP 8.4+: SIEVE eviction, XFetch probabilistic early recomputation, stale-while-revalidate, tag invalidation and PSR-6/PSR-16 bridges. Zero runtime dependencies.",
+    "type": "library",
+    "license": "MIT",
+    "keywords": [
+        "cache",
+        "psr-6",
+        "psr-16",
+        "sieve",
+        "xfetch",
+        "stale-while-revalidate",
+        "stampede-prevention",
+        "tag-invalidation",
+        "multi-tier",
+        "kariricode"
+    ],
+    "homepage": "https://kariricode.org",
+    "authors": [
+        {
+            "name": "Walmir Silva",
+            "email": "walmir.silva@kariricode.org"
+        }
+    ],
+    "require": {
+        "php": "^8.4",
+        "kariricode/contract": "^2.11",
+        "psr/clock": "^1.0"
+    },
+    "require-dev": {
+        "friendsofphp/php-cs-fixer": "^3.64",
+        "infection/infection": "^0.35.5",
+        "nikic/php-parser": "^5.7",
+        "phpstan/phpstan": "^2.1",
+        "phpstan/phpstan-strict-rules": "^2.0",
+        "phpunit/phpunit": "^12.0",
+        "psr/cache": "^3.0",
+        "psr/simple-cache": "^3.0",
+        "tomasvotruba/cognitive-complexity": "^1.2",
+        "vimeo/psalm": "^6.19"
+    },
+    "suggest": {
+        "ext-apcu": "Required by ApcuAdapter (shared-memory cache)",
+        "ext-igbinary": "Required by IgbinarySerializer (compact binary serialization)",
+        "ext-redis": "Required by RedisAdapter (distributed, persistent cache)",
+        "ext-zlib": "Required by ZlibCompressor",
+        "psr/cache": "Required by Psr6Bridge (PSR-6 interoperability)",
+        "psr/simple-cache": "Required by Psr16Bridge (PSR-16 interoperability)"
+    },
+    "autoload": {
+        "psr-4": {
+            "KaririCode\\Cache\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "KaririCode\\Cache\\Tests\\": "tests/"
+        }
+    },
+    "scripts": {
+        "test": "@php -d apc.enable_cli=1 vendor/bin/phpunit --testsuite Unit",
+        "test-integration": "@php -d apc.enable_cli=1 vendor/bin/phpunit --testsuite Integration",
+        "test-conformance": "@php -d apc.enable_cli=1 vendor/bin/phpunit --testsuite Conformance",
+        "test-coverage": "@php -d apc.enable_cli=1 -d pcov.enabled=1 vendor/bin/phpunit --coverage-text",
+        "phpstan": "phpstan analyse --no-progress --memory-limit=1G",
+        "psalm": "psalm --no-cache --no-progress",
+        "cs-check": "php-cs-fixer fix --dry-run --diff",
+        "cs-fix": "php-cs-fixer fix",
+        "complexity": "@php tools/complexity.php src",
+        "infection": "@php -d apc.enable_cli=1 vendor/bin/infection --threads=max --no-progress",
+        "security": [
+            "@composer validate --strict --no-check-publish --no-check-lock",
+            "@composer audit",
+            "@php tools/secret-scan.php --self-test",
+            "@php tools/secret-scan.php",
+            "@php -d apc.enable_cli=1 vendor/bin/phpunit --group security"
+        ],
+        "sbom": "@php tools/sbom.php",
+        "check": [
+            "@cs-check",
+            "@phpstan",
+            "@psalm",
+            "@complexity",
+            "@test",
+            "@test-conformance",
+            "@security"
+        ]
+    },
+    "config": {
+        "sort-packages": true,
+        "allow-plugins": {
+            "infection/extension-installer": true
+        }
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true,
+    "extra": {
+        "kariricode": {
+            "component": "cache",
+            "spec": "4.3.3",
+            "arfa": {
+                "version": "1.3",
+                "level": 1
+            },
+            "asvs": {
+                "version": "5.0",
+                "level": 1
+            },
+            "error-code-range": "8600–8699"
+        }
+    },
+    "repositories": [
+        {
+            "type": "path",
+            "url": "tools/contract-2.11-fixture",
+            "options": {
+                "symlink": false
+            }
+        }
+    ]
 }

@@ -5,53 +5,43 @@ declare(strict_types=1);
 namespace KaririCode\Cache\Contract;
 
 /**
- * Interface CacheEventListener.
+ * Observation hooks fired by Cache on every operation.
  *
- * Defines the contract for listeners that handle cache-related events.
- * Implementations of this interface can be used to monitor cache operations
- * such as hits, misses, sets, and deletes for logging or metrics purposes.
+ * Implement it to emit metrics, traces or logs (for example through
+ * kariricode/observability). Hooks run synchronously on the hot path:
+ * keep them cheap and never throw from them. NullEventListener is the
+ * no-op default.
  *
- * @category  Cache
+ * ARFA 1.3 P5 (Continuous Observability): one hook per cache outcome.
+ * Spec V4: contract (observer port).
  *
- * @author    Walmir Silva <walmir.silva@kariricode.org>
- * @license   MIT
+ * Preconditions: hooks are cheap and never throw; they run synchronously on every call.
+ * Thread-safety: implementation-defined.
  *
- * @see       https://kariricode.org/
+ * Side effects: whatever the listener emits (metrics, logs, traces).
+ *
+ * Example:
+ *     $cache = new Cache($adapter, eventListener: new MetricsListener());
+ *
+ * References: ADR-007.
+ *
+ * @see https://opentelemetry.io/docs/specs/semconv/
  */
 interface CacheEventListener
 {
-    /**
-     * Handles the event of a cache hit.
-     *
-     * @param string $key the key of the item found in the cache
-     * @param mixed $value the value of the item
-     */
-    public function onCacheHit(string $key, mixed $value): void;
+    public function onHit(string $key): void;
+
+    public function onMiss(string $key): void;
+
+    public function onWrite(string $key, ?int $ttl): void;
+
+    public function onDelete(string $key): void;
+
+    public function onEviction(string $key, string $policyName): void;
 
     /**
-     * Handles the event of a cache miss.
-     *
-     * @param string $key the key of the item not found in the cache
+     * @param float $gapSeconds Seconds left before the logical expiry when
+     *                          stampede prevention chose to recompute.
      */
-    public function onCacheMiss(string $key): void;
-
-    /**
-     * Handles the event when a cache item is set.
-     *
-     * @param string $key the key of the item being set
-     * @param mixed $value the value of the item being set
-     */
-    public function onCacheSet(string $key, mixed $value): void;
-
-    /**
-     * Handles the event when a cache item is deleted.
-     *
-     * @param string $key the key of the item being deleted
-     */
-    public function onCacheDelete(string $key): void;
-
-    /**
-     * Handles the event when the cache is cleared.
-     */
-    public function onCacheClear(): void;
+    public function onStampedeRecompute(string $key, float $gapSeconds): void;
 }

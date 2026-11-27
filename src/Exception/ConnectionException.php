@@ -4,30 +4,36 @@ declare(strict_types=1);
 
 namespace KaririCode\Cache\Exception;
 
-use KaririCode\Exception\AbstractException;
+use KaririCode\Contract\Exception\Runtime;
 
-final class ConnectionException extends AbstractException
+/**
+ * The backend could not be reached: connection refused, authentication or
+ * database selection rejected at connect time.
+ *
+ * ARFA 1.3 P5 (Continuous Observability): code 8610.
+ * Spec V4: exception, family Runtime (§8.4); semantic factory.
+ *
+ * Preconditions: none.
+ * Thread-safety: immutable once thrown.
+ *
+ * Side effects: none.
+ *
+ * Example:
+ *     throw ConnectionException::connectionFailed('redis', $redisException);
+ *
+ * References: ADR-013; SPEC-001 §7, §11.
+ *
+ * @see https://www.php.net/manual/en/class.runtimeexception.php
+ */
+final class ConnectionException extends \RuntimeException implements CacheException, Runtime
 {
-    private const CODE_CONNECTION_FAILED = 1290;
-    private const CODE_AUTHENTICATION_FAILED = 1291;
+    public const int CONNECTION_FAILED = 8610;
 
-    public static function connectionFailed(string $backend, string $details, ?\Throwable $previous = null): self
+    /**
+     * @param string $backend Adapter name ("redis"), never a host or credential.
+     */
+    public static function connectionFailed(string $backend, ?\Throwable $previous = null): self
     {
-        return self::createException(
-            self::CODE_CONNECTION_FAILED,
-            'CONNECTION_FAILED',
-            "Failed to connect to {$backend}: {$details}",
-            $previous
-        );
-    }
-
-    public static function authenticationFailed(string $backend, string $details, ?\Throwable $previous = null): self
-    {
-        return self::createException(
-            self::CODE_AUTHENTICATION_FAILED,
-            'AUTHENTICATION_FAILED',
-            "Authentication failed for {$backend}: {$details}",
-            $previous
-        );
+        return new self(message: "Could not connect to the {$backend} cache backend.", code: self::CONNECTION_FAILED, previous: $previous);
     }
 }
